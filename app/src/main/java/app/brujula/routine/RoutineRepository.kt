@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import app.brujula.core.theme.ThemeMode
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.time.LocalTime
 
@@ -21,9 +22,17 @@ class RoutineRepository(private val dataStore: DataStore<Preferences>) {
         val goalMin = intPreferencesKey("work_goal_min")
         val goalMax = intPreferencesKey("work_goal_max")
         val theme = stringPreferencesKey("theme_mode")
+        val seeded = booleanPreferencesKey("defaults_seeded")
     }
 
     val routine: Flow<Routine> = dataStore.data.map(::read)
+
+    /** Marca de primer arranque: los datos por defecto ya se sembraron una vez. */
+    suspend fun isSeeded(): Boolean = dataStore.data.first()[Keys.seeded] ?: false
+
+    suspend fun markSeeded() {
+        dataStore.edit { it[Keys.seeded] = true }
+    }
 
     suspend fun update(transform: (Routine) -> Routine) {
         dataStore.edit { p ->

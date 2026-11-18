@@ -24,14 +24,19 @@ class AppContainer(val context: Context) {
     val routineRepository: RoutineRepository by lazy { RoutineRepository(context.applicationContext.routineDataStore) }
 }
 
-class BrujulaApp : Application() {
+open class BrujulaApp : Application() {
     val container: AppContainer by lazy { AppContainer(this) }
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()
+        startBackgroundWork()
+    }
+
+    /** Trabajo de arranque en segundo plano; las pruebas lo anulan. */
+    protected open fun startBackgroundWork() {
         appScope.launch {
-            Seed.ensureDefaults(container.activityRepository, container.habitRepository, LocalDate.now())
+            Seed.ensureDefaults(container.database, container.routineRepository, LocalDate.now())
         }
     }
 }

@@ -8,13 +8,21 @@ import app.brujula.habits.Habit
 import app.brujula.habits.HabitIcon
 import app.brujula.habits.HabitRepository
 import app.brujula.habits.HabitSchedule
+import androidx.room.withTransaction
+import app.brujula.routine.RoutineRepository
 import java.time.LocalDate
 import java.time.LocalTime
 
 object Seed {
-    /** Inserta los valores por defecto solo si las tablas estan vacias. */
-    suspend fun ensureDefaults(activities: ActivityRepository, habits: HabitRepository, today: LocalDate) {
-        if (habits.count() == 0) {
+    /**
+     * Siembra los valores por defecto una sola vez (marca "seeded" en DataStore), de forma atomica:
+     * si algo falla se revierte todo y la marca no se escribe. Borrar los datos despues no los repone.
+     */
+    suspend fun ensureDefaults(db: BrujulaDatabase, routine: RoutineRepository, today: LocalDate) {
+        if (routine.isSeeded()) return
+        val activities = ActivityRepository(db.activityDao())
+        val habits = HabitRepository(db.habitDao())
+        db.withTransaction {
             habits.upsert(
                 Habit(name = "Agua", icon = HabitIcon.WATER, schedule = HabitSchedule.Every(90), dailyTarget = 8),
             )
@@ -25,8 +33,6 @@ object Seed {
                     dailyTarget = 4,
                 ),
             )
-        }
-        if (activities.count() == 0) {
             activities.upsert(
                 Activity(
                     title = "Ejercicio en casa", type = ActivityType.EXERCISE, date = today,
@@ -34,5 +40,6 @@ object Seed {
                 ),
             )
         }
+        routine.markSeeded()
     }
 }
