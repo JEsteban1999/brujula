@@ -4,23 +4,13 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import app.brujula.container
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 /** Reprograma todo tras reinicio, cambio de hora o zona, o actualizacion de la app. */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action !in HANDLED) return
         val app = context.applicationContext
-        val pending: PendingResult? = goAsync()
-        CoroutineScope(Dispatchers.Default).launch {
-            try {
-                app.container.reminderSync.resync()
-            } finally {
-                pending?.finish()
-            }
-        }
+        launchAsync("BootReceiver") { app.container.reminderSync.resync() }
     }
 
     private companion object {

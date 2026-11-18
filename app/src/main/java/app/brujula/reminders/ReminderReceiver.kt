@@ -4,23 +4,19 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import app.brujula.container
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val reminder = ReminderExtras.read(intent)
         // Mostrar primero y de forma sincrona: lo critico es que suene a su hora.
-        if (reminder != null) Notifications.show(context, reminder)
-        val app = context.applicationContext
-        val pending: PendingResult? = goAsync()
-        CoroutineScope(Dispatchers.Default).launch {
+        if (reminder != null) {
             try {
-                app.container.reminderSync.resync()
-            } finally {
-                pending?.finish()
+                Notifications.show(context, reminder)
+            } catch (e: Exception) {
+                android.util.Log.w("ReminderReceiver", "No se pudo mostrar el aviso", e)
             }
         }
+        val app = context.applicationContext
+        launchAsync("ReminderReceiver") { app.container.reminderSync.resync() }
     }
 }

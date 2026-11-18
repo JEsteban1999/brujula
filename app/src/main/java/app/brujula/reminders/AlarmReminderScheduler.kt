@@ -10,39 +10,55 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 
-class AlarmReminderScheduler(private val context: Context) : ReminderScheduler {
+class AlarmReminderScheduler(
+    private val context: Context,
+    private val nowMillis: () -> Long = System::currentTimeMillis,
+) : ReminderScheduler {
     private val alarms = context.getSystemService(AlarmManager::class.java)
     private val prefs = context.getSharedPreferences("scheduled_reminders", Context.MODE_PRIVATE)
 
     /**
-     * Los avisos "En 15 min" (clave con sufijo :s) no los conoce el planificador: se guardan completos
-     * y se reprograman en cada replaceAll (asi sobreviven a un reinicio) hasta que suenan.
+     * Cancela solo lo futuro que ya no se planea: un aviso vencido pero aun no entregado (Doze puede
+     * retrasar las alarmas inexactas) se deja sonar. Los "En 15 min" (clave con sufijo :s) no los conoce
+     * el planificador: se guardan completos y se reprograman aqui (sobreviven a un reinicio) mientras sean futuros.
      */
     @Synchronized
     override fun replaceAll(reminders: List<Reminder>) {
-        val nowMillis = System.currentTimeMillis()
-        val snoozes = loadSnoozes().filter { millis(it) > nowMillis }
-        val wanted = reminders.map { it.key }.toSet()
-        val keep = snoozes.map { it.key }.toSet()
-        for (stale in prefs.getStringSet(KEYS, emptySet()).orEmpty() - wanted - keep) cancel(stale)
+        val now = nowMillis()
+        val snoozes = loadSnoozes().filter { millis(it) > now - OVERDUE_KEEP_MS }
+        val futureSnoozes = snoozes.filter { millis(it) > now }
+        val wanted = reminders.associate { it.key to millis(it) }
+        val snoozeTimes = snoozes.associate { it.key to millis(it) }
+        val previous = loadAlarms()
+        val retained = mutableMapOf<String, Long>()
+        for ((key, at) in previous) {
+            if (key in wanted || key in snoozeTimes) continue
+            if (at > now) cancel(key) else if (at > now - OVERDUE_KEEP_MS) retained[key] = at
+        }
         reminders.forEach { set(it) }
-        snoozes.forEach { set(it) }
-        prefs.edit()
-            .putStringSet(KEYS, wanted + keep)
-            .putStringSet(SNOOZES, snoozes.map { encode(it) }.toSet())
-            .apply()
+        futureSnoozes.forEach { set(it) }
+        saveAlarms(retained + snoozeTimes + wanted)
+        prefs.edit().putStringSet(SNOOZES, snoozes.map { encode(it) }.toSet()).apply()
     }
 
     @Synchronized
     override fun scheduleOne(reminder: Reminder) {
         set(reminder)
-        val editor = prefs.edit()
-            .putStringSet(KEYS, prefs.getStringSet(KEYS, emptySet()).orEmpty() + reminder.key)
+        saveAlarms(loadAlarms() + (reminder.key to millis(reminder)))
         if (reminder.key.endsWith(NotificationActionReceiver.SNOOZE_SUFFIX)) {
             val all = loadSnoozes().filter { it.key != reminder.key } + reminder
-            editor.putStringSet(SNOOZES, all.map { encode(it) }.toSet())
+            prefs.edit().putStringSet(SNOOZES, all.map { encode(it) }.toSet()).apply()
         }
-        editor.apply()
+    }
+
+    private fun loadAlarms(): Map<String, Long> =
+        prefs.getStringSet(ALARMS, emptySet()).orEmpty().mapNotNull {
+            val at = it.substringAfterLast('|').toLongOrNull() ?: return@mapNotNull null
+            it.substringBeforeLast('|') to at
+        }.toMap()
+
+    private fun saveAlarms(m: Map<String, Long>) {
+        prefs.edit().putStringSet(ALARMS, m.map { (k, v) -> "$k|$v" }.toSet()).apply()
     }
 
     private fun millis(r: Reminder) = r.at.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -96,7 +112,8 @@ class AlarmReminderScheduler(private val context: Context) : ReminderScheduler {
     }
 
     private companion object {
-        const val KEYS = "keys"
+        const val ALARMS = "alarms"
+        const val OVERDUE_KEEP_MS = 6 * 60 * 60 * 1000L
         const val SNOOZES = "snoozes"
     }
 }

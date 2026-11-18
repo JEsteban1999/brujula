@@ -136,4 +136,50 @@ class ReceiversTest {
         val n = shadowOf(nm).allNotifications.single()
         assertEquals(listOf("Hecho", "En 15 min", "Saltar"), n.actions.map { it.title.toString() })
     }
+
+    private class ThrowingSync : ReminderResync {
+        val calls = AtomicInteger()
+        override suspend fun resync() { calls.incrementAndGet(); throw IllegalStateException("boom") }
+    }
+
+    private fun assertNoCrash(block: () -> Unit, calls: AtomicInteger, expected: Int) {
+        val uncaught = CopyOnWriteArrayList<Throwable>()
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught.add(e) }
+        try {
+            block()
+            val end = System.currentTimeMillis() + 5000
+            while (calls.get() < expected && System.currentTimeMillis() < end) Thread.sleep(10)
+            Thread.sleep(300)
+            assertEquals(expected, calls.get())
+            assertTrue("uncaught: $uncaught", uncaught.isEmpty())
+        } finally {
+            Thread.setDefaultUncaughtExceptionHandler(previous)
+        }
+    }
+
+    @Test fun failingResyncDoesNotCrashBootReceiver() {
+        val bad = ThrowingSync()
+        ctx.container.reminderSync = bad
+        assertNoCrash({ BootReceiver().onReceive(ctx, Intent(Intent.ACTION_BOOT_COMPLETED)) }, bad.calls, 1)
+    }
+
+    @Test fun failingResyncDoesNotCrashActionOrReminderReceivers() {
+        val bad = ThrowingSync()
+        ctx.container.reminderSync = bad
+        assertNoCrash({
+            NotificationActionReceiver().onReceive(ctx, actionIntent(NotificationActionReceiver.ACTION_SKIP, "habit:1:202611181245", 1))
+            ReminderReceiver().onReceive(ctx, Intent(ctx, ReminderReceiver::class.java))
+        }, bad.calls, 2)
+    }
+
+    @Test fun failingHandlerStillResyncsAndDoesNotCrash() {
+        ctx.container.reminderScheduler = object : ReminderScheduler {
+            override fun replaceAll(reminders: List<Reminder>) = Unit
+            override fun scheduleOne(reminder: Reminder) = throw SecurityException("no exact alarms")
+        }
+        assertNoCrash({
+            NotificationActionReceiver().onReceive(ctx, actionIntent(NotificationActionReceiver.ACTION_SNOOZE_15, "habit:1:202611181245", 1))
+        }, sync.calls, 1)
+    }
 }

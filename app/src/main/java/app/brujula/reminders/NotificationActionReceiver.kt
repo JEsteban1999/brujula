@@ -4,9 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import app.brujula.container
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 /** Acciones de la notificacion; funcionan sin abrir la app. */
 class NotificationActionReceiver : BroadcastReceiver() {
@@ -19,17 +16,9 @@ class NotificationActionReceiver : BroadcastReceiver() {
         Notifications.cancel(context, key)
 
         val app = context.applicationContext
-        val pending: PendingResult? = goAsync()
-        CoroutineScope(Dispatchers.Default).launch {
-            try {
-                handle(app, action, key, reminder)
-            } finally {
-                try {
-                    app.container.reminderSync.resync()
-                } finally {
-                    pending?.finish()
-                }
-            }
+        launchAsync("NotificationAction") {
+            safely("NotificationAction") { handle(app, action, key, reminder) }
+            app.container.reminderSync.resync()
         }
     }
 
