@@ -1,0 +1,58 @@
+package app.brujula.routine
+
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import app.brujula.core.theme.ThemeMode
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import java.time.LocalTime
+
+/** Rutina en DataStore Preferences; las horas se guardan como "HH:mm". */
+class RoutineRepository(private val dataStore: DataStore<Preferences>) {
+    private object Keys {
+        val wake = stringPreferencesKey("wake")
+        val bed = stringPreferencesKey("bed")
+        val workBlocks = stringPreferencesKey("work_blocks")
+        val flexible = booleanPreferencesKey("flexible_work")
+        val goalMin = intPreferencesKey("work_goal_min")
+        val goalMax = intPreferencesKey("work_goal_max")
+        val theme = stringPreferencesKey("theme_mode")
+    }
+
+    val routine: Flow<Routine> = dataStore.data.map(::read)
+
+    suspend fun update(transform: (Routine) -> Routine) {
+        dataStore.edit { p ->
+            val r = transform(read(p))
+            p[Keys.wake] = r.wake.toString()
+            p[Keys.bed] = r.bed.toString()
+            p[Keys.workBlocks] = r.workBlocks.joinToString(",") { "${it.first}-${it.second}" }
+            p[Keys.flexible] = r.flexibleWork
+            p[Keys.goalMin] = r.workGoalMin.first
+            p[Keys.goalMax] = r.workGoalMin.last
+            p[Keys.theme] = r.themeMode.name
+        }
+    }
+
+    private fun read(p: Preferences): Routine {
+        val d = Routine()
+        return Routine(
+            wake = p[Keys.wake]?.let(LocalTime::parse) ?: d.wake,
+            bed = p[Keys.bed]?.let(LocalTime::parse) ?: d.bed,
+            workBlocks = p[Keys.workBlocks]?.let(::decodeBlocks) ?: d.workBlocks,
+            flexibleWork = p[Keys.flexible] ?: d.flexibleWork,
+            workGoalMin = (p[Keys.goalMin] ?: d.workGoalMin.first)..(p[Keys.goalMax] ?: d.workGoalMin.last),
+            themeMode = p[Keys.theme]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: d.themeMode,
+        )
+    }
+
+    private fun decodeBlocks(text: String): List<Pair<LocalTime, LocalTime>> =
+        text.split(",").filter { it.isNotBlank() }.map {
+            val (a, b) = it.split("-")
+            LocalTime.parse(a) to LocalTime.parse(b)
+        }
+}
