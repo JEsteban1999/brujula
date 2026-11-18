@@ -1,0 +1,40 @@
+package app.brujula.habits
+
+import app.brujula.routine.Routine
+import java.time.DayOfWeek
+import java.time.LocalDate
+import java.time.LocalTime
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class HabitTimesTest {
+    private val d = LocalDate.of(2026, 11, 18)
+    private val water = Habit(1, "Agua", HabitIcon.WATER, HabitSchedule.Every(90), 8)
+
+    @Test fun waterEvery90WithinAwakeWindow() {
+        val t = water.timesFor(d, Routine())
+        assertEquals(d.atTime(9, 45), t.first())
+        assertEquals(d.atTime(23, 15), t.last())
+        assertEquals(10, t.size)
+        assertTrue(t.none { it.toLocalTime() in LocalTime.of(0, 31)..LocalTime.of(8, 14) })
+    }
+
+    @Test fun earlyBedtimeCutsReminders() {
+        assertEquals(d.atTime(21, 45), water.timesFor(d, Routine(bed = LocalTime.of(22, 0))).last())
+    }
+
+    @Test fun balmFixedTimes() {
+        val balm = Habit(2, "Bálsamo labial", HabitIcon.LIP_BALM, HabitSchedule.AtTimes(listOf(9, 13, 17, 21).map { LocalTime.of(it, 0) }), 4)
+        assertEquals(listOf(9, 13, 17, 21), balm.timesFor(d, Routine()).map { it.hour })
+        assertEquals(listOf(13, 17, 21), balm.timesFor(d, Routine(wake = LocalTime.of(10, 0))).map { it.hour })
+    }
+
+    @Test fun respectsDaysAndActive() {
+        val mondayOnly = water.copy(days = setOf(DayOfWeek.MONDAY))
+        assertEquals(DayOfWeek.WEDNESDAY, d.dayOfWeek)
+        assertTrue(mondayOnly.timesFor(d, Routine()).isEmpty())
+        assertTrue(mondayOnly.timesFor(d.minusDays(2), Routine()).isNotEmpty())
+        assertTrue(water.copy(active = false).timesFor(d, Routine()).isEmpty())
+    }
+}
