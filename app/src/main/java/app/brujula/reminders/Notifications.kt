@@ -1,0 +1,102 @@
+package app.brujula.reminders
+
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import androidx.core.app.NotificationCompat
+import app.brujula.R
+import java.time.LocalDate
+import java.time.LocalDateTime
+
+/** Ida y vuelta de un [Reminder] por extras de Intent (alarma y botones de la notificacion). */
+object ReminderExtras {
+    fun put(intent: Intent, r: Reminder): Intent = intent
+        .putExtra(NotificationActionReceiver.EXTRA_KEY, r.key)
+        .putExtra(NotificationActionReceiver.EXTRA_KIND, r.kind.name)
+        .putExtra(NotificationActionReceiver.EXTRA_TITLE, r.title)
+        .putExtra(NotificationActionReceiver.EXTRA_BODY, r.body)
+        .putExtra(NotificationActionReceiver.EXTRA_DAY, r.day.toString())
+        .putExtra(NotificationActionReceiver.EXTRA_HABIT_ID, r.habitId ?: -1L)
+        .putExtra(NotificationActionReceiver.EXTRA_ACTIVITY_ID, r.activityId ?: -1L)
+
+    fun read(intent: Intent): Reminder? {
+        val key = intent.getStringExtra(NotificationActionReceiver.EXTRA_KEY) ?: return null
+        val kind = intent.getStringExtra(NotificationActionReceiver.EXTRA_KIND)
+            ?.let { runCatching { ReminderKind.valueOf(it) }.getOrNull() } ?: return null
+        val day = intent.getStringExtra(NotificationActionReceiver.EXTRA_DAY)
+            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: return null
+        val habit = intent.getLongExtra(NotificationActionReceiver.EXTRA_HABIT_ID, -1L).takeIf { it >= 0 }
+        val act = intent.getLongExtra(NotificationActionReceiver.EXTRA_ACTIVITY_ID, -1L).takeIf { it >= 0 }
+        return Reminder(
+            key = key, at = LocalDateTime.now(), kind = kind,
+            title = intent.getStringExtra(NotificationActionReceiver.EXTRA_TITLE).orEmpty(),
+            body = intent.getStringExtra(NotificationActionReceiver.EXTRA_BODY).orEmpty(),
+            habitId = habit, activityId = act, day = day,
+        )
+    }
+}
+
+object Notifications {
+    const val CHANNEL_HABITS = "habitos"
+    const val CHANNEL_ACTIVITIES = "actividades"
+
+    fun notificationId(key: String): Int = key.hashCode()
+
+    fun ensureChannels(context: Context) {
+        val nm = context.getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_HABITS, "Hábitos", NotificationManager.IMPORTANCE_HIGH)
+                .apply { description = "Avisos de agua, bálsamo y otros hábitos" },
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_ACTIVITIES, "Actividades", NotificationManager.IMPORTANCE_HIGH)
+                .apply { description = "Avisos antes de tus actividades" },
+        )
+    }
+
+    fun show(context: Context, r: Reminder) {
+        ensureChannels(context)
+        val channel = if (r.kind == ReminderKind.HABIT) CHANNEL_HABITS else CHANNEL_ACTIVITIES
+        val b = NotificationCompat.Builder(context, channel)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(r.title)
+            .setContentText(r.body)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+        context.packageManager.getLaunchIntentForPackage(context.packageName)?.let { launch ->
+            b.setContentIntent(
+                PendingIntent.getActivity(context, notificationId(r.key), launch, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT),
+            )
+        }
+        b.addAction(0, "Hecho", actionIntent(context, r, NotificationActionReceiver.ACTION_DONE))
+        b.addAction(0, "En 15 min", actionIntent(context, r, NotificationActionReceiver.ACTION_SNOOZE_15))
+        if (r.kind == ReminderKind.HABIT) {
+            b.addAction(0, "Saltar", actionIntent(context, r, NotificationActionReceiver.ACTION_SKIP))
+        }
+        try {
+            context.getSystemService(NotificationManager::class.java).notify(notificationId(r.key), b.build())
+        } catch (_: SecurityException) {
+            // Sin permiso de notificaciones; Hoy mostrara el aviso para arreglarlo.
+        }
+    }
+
+    fun cancel(context: Context, key: String) {
+        context.getSystemService(NotificationManager::class.java).cancel(notificationId(key))
+    }
+
+    /** URI unico por accion+clave, asi dos botones o dos avisos nunca comparten PendingIntent. */
+    private fun actionIntent(context: Context, r: Reminder, action: String): PendingIntent {
+        val intent = Intent(context, NotificationActionReceiver::class.java)
+            .setAction(action)
+            .setData(Uri.parse("brujula://action/${Uri.encode(action)}/${Uri.encode(r.key)}"))
+        ReminderExtras.put(intent, r)
+        return PendingIntent.getBroadcast(
+            context, (action + r.key).hashCode(), intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
+}
