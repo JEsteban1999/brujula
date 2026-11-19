@@ -58,7 +58,7 @@ class DictationInterpreter(
 
     companion object {
         const val REFUSED = "No pude interpretar eso. Prueba diciéndolo de otra forma."
-        const val CONFIG_ERROR = "No pude hablar con Claude (error de configuración). Inténtalo más tarde."
+        const val CONFIG_ERROR = "Claude rechazó la solicitud. Revisa tu saldo y tu clave en platform.claude.com."
         const val OFFLINE = "Sin conexión. Lo interpreto en cuanto vuelva internet."
         const val UNAVAILABLE = "Claude no está disponible ahora. Inténtalo de nuevo en un momento."
         const val NOTHING_HEARD = "No te escuché. Inténtalo de nuevo."

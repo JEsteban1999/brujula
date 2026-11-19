@@ -115,6 +115,9 @@ class AppContainer(val context: Context) {
                     val text = labels.joinToString(NEWLINE) + problems.joinToString("") { NEWLINE + it }
                     Notifications.showText(app, id(), PendingCopy.successTitle(labels), text)
                 }
+                override fun configStalled(count: Int) {
+                    Notifications.showText(app, CONFIG_NOTICE_ID, "Dictados pendientes", PendingCopy.configNotice(count))
+                }
                 override fun needsKey(count: Int) {
                     Notifications.showText(app, KEY_NOTICE_ID, "Dictados pendientes", PendingCopy.keyNotice(count))
                 }
@@ -172,6 +175,7 @@ class AppContainer(val context: Context) {
 
 private const val NEWLINE = "\n"
 private const val KEY_NOTICE_ID = 0x4B4559
+private const val CONFIG_NOTICE_ID = 0x434647
 
 /** Hay internet utilizable ahora mismo (validado, no solo conectado). */
 fun isOnline(context: Context): Boolean = try {

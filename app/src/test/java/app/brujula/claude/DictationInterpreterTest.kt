@@ -56,7 +56,7 @@ class DictationInterpreterTest {
         val out = interpreter.interpret("algo") as InterpretOutcome.Failed
         assertTrue(out.config)
         assertEquals(false, out.retryable)
-        assertEquals("No pude hablar con Claude (error de configuración). Inténtalo más tarde.", out.message)
+        assertEquals("Claude rechazó la solicitud. Revisa tu saldo y tu clave en platform.claude.com.", out.message)
         assertTrue(!out.message.contains("otra forma"))
     }
 

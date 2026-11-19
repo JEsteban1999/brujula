@@ -45,7 +45,7 @@ class PromptBuilderTest {
         val mon = LocalDate.of(2026, 11, 23)
         val ctx = dictationCtx(now = mon.plusDays(1).atTime(8, 0), dictatedAt = mon.atTime(23, 0))
         val out = PromptBuilder.user(ctx, "mañana dentista")
-        assertTrue(out, out.contains("El usuario dictó esto el lunes 23 de noviembre de 2026 a las 23:00 (día lógico lunes 23); interpreta hoy/mañana/el viernes desde ese momento."))
+        assertTrue(out, out.contains("- El usuario dictó esto el lunes 23 de noviembre de 2026 a las 23:00 (día lógico lunes 23); interpreta hoy/mañana/el viernes desde ese momento."))
         assertTrue(out, out.contains("Hoy (día lógico) es lunes 23 de noviembre de 2026 (2026-11-23)"))
         assertTrue(out, out.contains("Mañana es martes 24 de noviembre de 2026 (2026-11-24)"))
         assertTrue(out, out.contains("miércoles 25 = 2026-11-25"))

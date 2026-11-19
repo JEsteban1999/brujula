@@ -87,7 +87,7 @@ En español colombiano neutro, tuteando, en una o dos frases, sin emojis ni form
             appendLine("- Reloj: ${longDay(ctx.now.toLocalDate())}, ${hm(ctx.now.toLocalTime())} (zona ${ctx.zone.id}).")
             ctx.dictatedAt?.let { at ->
                 appendLine(
-                    "El usuario dictó esto el ${longDay(at.toLocalDate())} a las ${hm(at.toLocalTime())} (día lógico ${shortDay(today)}); " +
+                    "- El usuario dictó esto el ${longDay(at.toLocalDate())} a las ${hm(at.toLocalTime())} (día lógico ${shortDay(today)}); " +
                         "interpreta hoy/mañana/el viernes desde ese momento.",
                 )
             }

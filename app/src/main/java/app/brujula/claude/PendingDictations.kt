@@ -23,6 +23,8 @@ interface PendingNotifier {
     fun dropped(text: String, reason: String)
     /** La cola espera pero no hay clave utilizable (falta o la rechazan); [count] dictados pendientes. */
     fun needsKey(count: Int) = Unit
+    /** La cola se detuvo porque Claude rechazó la solicitud (HTTP 400/404, p. ej. saldo agotado); [count] pendientes. */
+    fun configStalled(count: Int) = Unit
 
     object None : PendingNotifier {
         override fun scheduled(labels: List<String>, problems: List<String>) = Unit
@@ -32,6 +34,10 @@ interface PendingNotifier {
 
 /** Textos de las notificaciones de la cola. */
 object PendingCopy {
+    fun configNotice(count: Int): String =
+        (if (count == 1) "No pude procesar 1 dictado pendiente" else "No pude procesar $count dictados pendientes") +
+            ": Claude rechazó la solicitud. Revisa tu saldo y tu clave en platform.claude.com."
+
     fun successTitle(labels: List<String>): String = "Agendé tu dictado pendiente: " + labels.joinToString("; ")
 
     fun keyNotice(count: Int): String =
@@ -105,6 +111,7 @@ class PendingDictations(
 
     @Volatile private var rerunRequested = false
     private val keyNoticeSent = AtomicBoolean(false)
+    private val configNoticeSent = AtomicBoolean(false)
 
     /** Devuelve true si la pasada terminó porque la cola quedó vacía; false si se detuvo en un fallo recuperable. */
     private suspend fun pass(interpreter: TextInterpreter, executor: ActionApplier): Boolean {
@@ -127,7 +134,8 @@ class PendingDictations(
                         is InterpretOutcome.Refused -> { drop(item, outcome.message); true }
                         is InterpretOutcome.Failed -> when {
                             // Red o configuración: no es culpa del dictado; se conserva y no cuenta como intento.
-                            outcome.network || outcome.config -> false
+                            outcome.config -> { noticeConfigStall(); false }
+                            outcome.network -> false
                             outcome.retryable -> failedAttempt(item, outcome.message)
                             else -> { drop(item, outcome.message); true }
                         }
@@ -140,6 +148,11 @@ class PendingDictations(
         } finally {
             if (labels.isNotEmpty()) notifier.scheduled(labels.toList(), problems.toList())
         }
+    }
+
+    private suspend fun noticeConfigStall() {
+        val count = all().size
+        if (count > 0 && configNoticeSent.compareAndSet(false, true)) notifier.configStalled(count)
     }
 
     /** Una sola vez por proceso: avisa que los pendientes esperan una clave que sirva. */

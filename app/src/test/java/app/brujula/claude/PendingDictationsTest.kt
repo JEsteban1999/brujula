@@ -325,6 +325,17 @@ class PendingDictationsTest {
         assertTrue(p.all().isEmpty())
     }
 
+    @Test fun configErrorStopWithAQueueNotifiesOncePerProcess() = runTest {
+        val p = store()
+        p.add("a", 1); p.add("b", 2)
+        val cfg = InterpretOutcome.Failed("config", retryable = false, config = true)
+        p.drain(FakeInterpreter(cfg), FakeExecutor())
+        p.drain(FakeInterpreter(cfg), FakeExecutor())
+        assertEquals(listOf(2), notes.configStalled)
+        assertEquals("No pude procesar 2 dictados pendientes: Claude rechazó la solicitud. Revisa tu saldo y tu clave en platform.claude.com.", PendingCopy.configNotice(2))
+        assertEquals("No pude procesar 1 dictado pendiente: Claude rechazó la solicitud. Revisa tu saldo y tu clave en platform.claude.com.", PendingCopy.configNotice(1))
+    }
+
     // --- M1: aviso de clave ---
 
     @Test fun stoppingOnMissingOrInvalidKeyNotifiesOncePerProcessWithTheQueueSize() = runTest {
