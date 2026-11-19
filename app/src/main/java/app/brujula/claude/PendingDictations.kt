@@ -74,6 +74,8 @@ class ValidatedTransition(initiallyValidated: Boolean = false) {
 class PendingDictations(
     private val dataStore: DataStore<Preferences>,
     private val notifier: PendingNotifier = PendingNotifier.None,
+    /** La tarjeta de Claude en Hoy: un pedido de plan deja ahí su nota por si la notificación está bloqueada. */
+    private val notes: ClaudeNotes? = null,
 ) {
     private val key = stringPreferencesKey("pending_dictations")
     private val backupKey = stringPreferencesKey("pending_dictations_backup")
@@ -178,6 +180,7 @@ class PendingDictations(
         if (!work && plans.isNotEmpty()) {
             update { it.drop(1) }
             plans.forEach { notifier.planRequested(it.day, it.text.ifBlank { item.text }) }
+            plans.firstOrNull()?.let { writePlanNote(it.day, it.text.ifBlank { item.text }) }
             return true
         }
         if (!work) {
@@ -199,6 +202,16 @@ class PendingDictations(
         update { it.drop(1) }
         plans.forEach { notifier.planRequested(it.day, it.text.ifBlank { item.text }) }
         return true
+    }
+
+    private suspend fun writePlanNote(day: LocalDate, text: String) {
+        try {
+            notes?.set(ClaudeNote("Pediste: «$text». Toca para que Claude lo arme.", day, null))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // La nota es un extra: el pedido ya salió de la cola con su aviso.
+        }
     }
 
     /** Cuenta un intento fallido; devuelve true (seguir) solo si el elemento se descartó tras el último intento. */

@@ -78,6 +78,17 @@ class VoiceViewModelTest {
         assertTrue(r.exec.undone.isEmpty())
     }
 
+    @Test fun planOnlyWithMessagesShowsThemBeforeOfferingProposal() = runTest {
+        val plan = Validated.PlanRequest(friday, "pasa el gym y borra el hábito")
+        val r = rig(outcomes = arrayOf(InterpretOutcome.Ok(listOf(plan, Validated.Unsupported("Los hábitos se cambian a mano.")), "ok")))
+        r.vm.submitText("pasa el gym y borra el hábito")
+        runCurrent()
+        val s = r.vm.state.value as VoiceState.Result
+        assertEquals(listOf("Los hábitos se cambian a mano."), s.messages)
+        assertEquals(plan, s.proposal)
+        assertTrue(r.exec.applied.isEmpty())
+    }
+
     @Test fun mixedAppliesCreatesAndOffersProposal() = runTest {
         val plan = Validated.PlanRequest(friday, "agenda dentista y pasa el gym a la tarde")
         val r = rig(outcomes = arrayOf(InterpretOutcome.Ok(listOf(activity("Dentista"), plan), "Listo")))

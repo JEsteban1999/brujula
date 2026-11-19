@@ -131,5 +131,11 @@ class PromptBuilderTest {
         assertFalse(unsupported.contains("reorganizar"))
         assertTrue(unsupported.contains("consultar la agenda"))
         assertTrue(unsupported.contains("no son de agenda"))
+        // Hábitos y series completas siguen siendo unsupported; plan_request cubre solo un día concreto.
+        assertTrue(unsupported.contains("cambiar o borrar hábitos"))
+        assertTrue(unsupported.contains("\"para siempre\""))
+        assertTrue(unsupported.contains("toda la serie"))
+        assertTrue(s.lines().first { it.startsWith("- plan_request:") }.contains("en un día concreto"))
+        assertFalse(s.contains("eso es siempre un plan_request"))
     }
 }

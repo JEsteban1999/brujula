@@ -158,6 +158,8 @@ class AppContainer(val context: Context) {
         val app = context.applicationContext
         PendingDictations(
             app.routineDataStore,
+            notes = claudeNotes,
+            notifier =
             object : PendingNotifier {
                 private fun id() = (System.nanoTime() / 1000).toInt()
                 override fun scheduled(labels: List<String>, problems: List<String>) {

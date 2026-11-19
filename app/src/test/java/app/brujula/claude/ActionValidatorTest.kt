@@ -210,7 +210,7 @@ class ActionValidatorTest {
 
     @Test fun planRequestPastUnsupported() {
         val v = ActionValidator.validate(plan("2026-11-17"), ctx, "ayer")
-        assertEquals(Validated.Unsupported("Por ahora puedo reorganizar hasta 6 días adelante."), v)
+        assertEquals(Validated.Unsupported(app.brujula.planning.PlanValidator.PAST_DAY), v)
         assertTrue(ActionValidator.validate(plan("no-es-fecha"), ctx, "x") is Validated.Invalid)
     }
 }

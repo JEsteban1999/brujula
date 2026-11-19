@@ -76,6 +76,17 @@ class PendingDictationsTest {
         assertTrue(notes.scheduled.isEmpty())
     }
 
+    @Test fun planRequestLeavesATodayCardNote() = runTest {
+        val cn = ClaudeNotes(dataStore("cn"))
+        val p = PendingDictations(dataStore("q"), notes, cn)
+        p.add("hoy no voy a entrenar", 1)
+        p.drain(FakeInterpreter(InterpretOutcome.Ok(listOf(Validated.PlanRequest(friday, "hoy no voy a entrenar")), "x")), FakeExecutor())
+        assertEquals(
+            ClaudeNote("Pediste: «hoy no voy a entrenar». Toca para que Claude lo arme.", friday, null),
+            cn.note.first(),
+        )
+    }
+
     @Test fun mixedSchedulesAndNotifiesPlan() = runTest {
         val p = store()
         p.add("dentista y pasa el gym", 1)

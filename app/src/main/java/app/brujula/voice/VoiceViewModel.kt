@@ -245,6 +245,25 @@ class VoiceViewModel(
         val creatable = outcome.items.any { it is Validated.Activity || it is Validated.Habit }
         val question = outcome.items.filterIsInstance<Validated.Question>().firstOrNull()
         val plan = outcome.items.filterIsInstance<Validated.PlanRequest>().firstOrNull()
+        val notes = outcome.items.mapNotNull {
+            when (it) {
+                is Validated.Question -> it.text
+                is Validated.Unsupported -> it.text
+                is Validated.Invalid -> it.reason
+                else -> null
+            }
+        }
+        if (!creatable && plan != null && notes.isNotEmpty()) {
+            // Hay avisos que el usuario debe leer: un Resultado corto antes de pasar a la Propuesta.
+            base = null
+            lastText = null
+            undoToken = null
+            _state.value = VoiceState.Result(
+                created = emptyList(), reply = outcome.reply, messages = notes, undoAvailable = false,
+                proposal = plan.copy(text = plan.text.ifBlank { full }),
+            )
+            return
+        }
         if (!creatable && plan != null) {
             // Nada se aplica: la propuesta la genera y la acepta el usuario en su pantalla.
             base = null

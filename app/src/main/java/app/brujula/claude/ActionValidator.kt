@@ -59,7 +59,8 @@ object ActionValidator {
         // El rango se mide contra el presente (como "ya pasó"): un dictado de la cola de ayer no arma un día que ya terminó.
         val today = logicalDay(ctx.now)
         val day = if (a.date.isNullOrBlank()) today else parseDate(a.date) ?: return Validated.Invalid("La fecha del cambio no es válida (${a.date}).")
-        if (day < today || day > today.plusDays(MAX_PLAN_DAYS_AHEAD)) return Validated.Unsupported(PLAN_TOO_FAR)
+        if (day < today) return Validated.Unsupported(app.brujula.planning.PlanValidator.PAST_DAY)
+        if (day > today.plusDays(MAX_PLAN_DAYS_AHEAD)) return Validated.Unsupported(PLAN_TOO_FAR)
         return Validated.PlanRequest(day, dictated)
     }
 

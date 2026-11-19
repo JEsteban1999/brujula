@@ -307,10 +307,8 @@ fun BrujulaNavHost(
                         navController.navigate(Routes.VOICE) { popUpTo(entry.destination.id) { inclusive = true }; launchSingleTop = true }
                     },
                     onAskClaude = { day, request ->
-                        navController.navigate(Routes.proposal(day, request.take(DeepLinks.MAX_REQUEST))) {
-                            popUpTo(entry.destination.id) { inclusive = true }
-                            launchSingleTop = true
-                        }
+                        // El formulario queda en la pila: Atrás vuelve al borrador.
+                        navController.navigate(Routes.proposal(day, request.take(DeepLinks.MAX_REQUEST))) { launchSingleTop = true }
                     },
                 )
             }

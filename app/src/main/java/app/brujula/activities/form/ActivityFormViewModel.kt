@@ -279,6 +279,8 @@ class ActivityFormViewModel(
     fun askClaudeRequest(): Pair<LocalDate, String>? {
         val s = _state.value
         if (editingId != null || s.isEdit || s.repeat != Repeat.NONE) return null
+        // La Propuesta nunca crea ni mueve citas (D11).
+        if (s.type == ActivityType.APPOINTMENT) return null
         val clash = s.conflict?.activity?.title ?: s.externalConflict?.title?.ifBlank { "un evento sin título" } ?: return null
         val day = logicalDay(s.date.atTime(s.start))
         if (day < today || day > today.plusDays(ASK_DAYS_AHEAD)) return null

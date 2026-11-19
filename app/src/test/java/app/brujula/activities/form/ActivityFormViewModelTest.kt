@@ -126,8 +126,21 @@ class ActivityFormViewModelTest {
     }
 
     @Test fun askClaudeNullOutsideSevenDays() = runTest {
+        for (offset in listOf(6L, 7L)) {
+            repo.upsert(Activity(title = "Bloque $offset", type = ActivityType.PERSONAL, date = today.plusDays(offset), start = LocalTime.of(19, 0), durationMin = 60))
+        }
         val vm = conflictingVm()
-        vm.setDate(today.plusDays(7)) // sin choque ahí
+        vm.setDate(today.plusDays(7))
+        vm.state.first { it.conflict?.activity?.title == "Bloque 7" }
+        assertNull(vm.askClaudeRequest())
+        vm.setDate(today.plusDays(6))
+        vm.state.first { it.conflict?.activity?.title == "Bloque 6" }
+        assertEquals(today.plusDays(6), vm.askClaudeRequest()?.first)
+    }
+
+    @Test fun askClaudeNullForAppointments() = runTest {
+        val vm = conflictingVm()
+        vm.setType(ActivityType.APPOINTMENT)
         assertNull(vm.askClaudeRequest())
     }
 
