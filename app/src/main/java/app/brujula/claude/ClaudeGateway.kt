@@ -24,4 +24,7 @@ interface ClaudeGateway {
 
     /** Interpreta un dictado con salida estructurada. Nunca lanza (salvo cancelación). */
     suspend fun interpret(system: String, user: String): GatewayResult<DictationResult>
+
+    /** Clasifica títulos de eventos como trabajo o no (Haiku, salida estructurada). Nunca lanza (salvo cancelación). */
+    suspend fun classify(system: String, user: String): GatewayResult<ClassificationResult>
 }

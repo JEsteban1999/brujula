@@ -73,7 +73,7 @@ class MigrationTest {
         })
     }
 
-    private fun assertV3Data(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+    private fun assertV3Data(db: androidx.sqlite.db.SupportSQLiteDatabase, insertWorkRow: Boolean = true) {
         db.query("SELECT name, groupName FROM habits").use { c ->
             assertEquals(1, c.count); c.moveToFirst(); assertEquals("Agua", c.getString(0)); assertEquals("ESSENTIAL", c.getString(1))
         }
@@ -87,10 +87,10 @@ class MigrationTest {
         db.query("SELECT day FROM activity_completions WHERE activityId = 1").use { c ->
             assertEquals(1, c.count); c.moveToFirst(); assertEquals("2026-11-20", c.getString(0))
         }
-        db.query("SELECT COUNT(*) FROM work_classifications").use { c ->
+        if (insertWorkRow) db.query("SELECT COUNT(*) FROM work_classifications").use { c ->
             c.moveToFirst(); assertEquals(0, c.getInt(0))
         }
-        db.execSQL("INSERT INTO work_classifications(`key`, isWork) VALUES ('x', 1)")
+        if (insertWorkRow) db.execSQL("INSERT INTO work_classifications(`key`, isWork) VALUES ('x', 1)")
     }
 
     @Test fun v2ToV3KeepsEverythingAndLeavesGoogleEventIdNull() {
@@ -101,5 +101,38 @@ class MigrationTest {
     @Test fun v1ToV3ChainedKeepsEverything() {
         helper.createDatabase("mig13.db", 1).apply { insertV1Rows(this); close() }
         assertV3Data(helper.runMigrationsAndValidate("mig13.db", 3, true))
+    }
+
+    private fun assertV4Data(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        assertV3Data(db, insertWorkRow = false)
+        db.query("SELECT `key`, isWork, source FROM work_classifications ORDER BY `key`").use { c ->
+            assertEquals(2, c.count)
+            c.moveToFirst()
+            assertEquals("reunion", c.getString(0)); assertEquals(1, c.getInt(1)); assertEquals("USER", c.getString(2))
+            c.moveToNext()
+            assertEquals("yoga", c.getString(0)); assertEquals(0, c.getInt(1)); assertEquals("USER", c.getString(2))
+        }
+        db.execSQL("INSERT INTO work_classifications(`key`, isWork, source) VALUES ('z', 1, 'AUTO')")
+        db.query("SELECT source FROM work_classifications WHERE `key` = 'z'").use { c ->
+            c.moveToFirst(); assertEquals("AUTO", c.getString(0))
+        }
+    }
+
+    private fun insertV3Marks(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("INSERT INTO work_classifications(`key`, isWork) VALUES ('reunion', 1)")
+        db.execSQL("INSERT INTO work_classifications(`key`, isWork) VALUES ('yoga', 0)")
+    }
+
+    @Test fun v3ToV4MarksExistingRowsAsUser() {
+        helper.createDatabase("mig34.db", 3).apply { insertV1Rows(this); insertV3Marks(this); close() }
+        assertV4Data(helper.runMigrationsAndValidate("mig34.db", 4, true))
+    }
+
+    @Test fun v1ToV4ChainedKeepsEverything() {
+        helper.createDatabase("mig14.db", 1).apply { insertV1Rows(this); close() }
+        val mid = helper.runMigrationsAndValidate("mig14.db", 3, true)
+        insertV3Marks(mid)
+        mid.close()
+        assertV4Data(helper.runMigrationsAndValidate("mig14.db", 4, true))
     }
 }

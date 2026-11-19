@@ -69,7 +69,10 @@ class TodayViewModelTest {
         PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, file) },
     )
 
-    private fun TestScope.vm(routine: RoutineRepository = routineRepo()) = TodayViewModel(
+    private fun TestScope.vm(
+        routine: RoutineRepository = routineRepo(),
+        auto: app.brujula.claude.AutoClassifier? = null,
+    ) = TodayViewModel(
         clock = clock,
         routineRepository = routine,
         activityRepository = activities,
@@ -77,6 +80,7 @@ class TodayViewModelTest {
         readPermissions = { perms },
         calendarSource = calendar,
         classifications = classifications,
+        autoClassifier = auto,
         scopeOverride = backgroundScope,
         tickMs = 0,
     )
@@ -344,11 +348,11 @@ class TodayViewModelTest {
     private fun ext(id: Long, title: String, s: LocalDateTime, e: LocalDateTime, allDay: Boolean = false) =
         ExternalEvent(id, 0, 1, "Personal", "Google", title, TimeSpan(s, e), allDay, null)
 
-    private suspend fun TestScope.vmWithCalendar(events: List<ExternalEvent>): TodayViewModel {
+    private suspend fun TestScope.vmWithCalendar(events: List<ExternalEvent>, auto: app.brujula.claude.AutoClassifier? = null): TodayViewModel {
         calendar.eventList = events
         val routine = routineRepo("rx.preferences_pb")
         routine.calendarPrefs.setSelectedCalendarIds(setOf(1L))
-        return vm(routine)
+        return vm(routine, auto)
     }
 
     @Test fun externalEventLinkedToAnActivityIsNotShown() = runTest {
@@ -456,5 +460,33 @@ class TodayViewModelTest {
         assertEquals(0, s.workMinutes)
         Thread.sleep(200)
         assertTrue(classifications.observe().first().isEmpty())
+    }
+
+    @Test fun unknownExternalTitlesAreClassifiedOnceAndUserMarksWin() = runTest {
+        val gateway = app.brujula.claude.FakeClaudeGateway(
+            classification = app.brujula.claude.GatewayResult.Ok(
+                app.brujula.claude.ClassificationResult(
+                    listOf(app.brujula.claude.TitleMark("Reunión de equipo", true), app.brujula.claude.TitleMark("Dentista", true)),
+                ),
+            ),
+        )
+        val auto = app.brujula.claude.AutoClassifier(app.brujula.claude.EventClassifier(gateway), classifications, backgroundScope)
+        classifications.set("dentista", false)
+        val vm = vmWithCalendar(
+            listOf(
+                ext(1, "Reunión de equipo", day.atTime(15, 0), day.atTime(16, 0)),
+                ext(2, "Dentista", day.atTime(17, 0), day.atTime(18, 0)),
+                ext(3, "  ", day.atTime(19, 0), day.atTime(20, 0)),
+            ),
+            auto,
+        )
+        val s = vm.state.first { it.workMinutes == 60 }
+        assertEquals(60, s.workMinutes)
+        assertEquals(1, gateway.classifyCalls)
+        assertFalse(gateway.classifyUsers.single().contains("Dentista"))
+        assertEquals(false, classifications.observe().first()["dentista"])
+        vm.refreshExternal()
+        testScheduler.advanceUntilIdle()
+        assertEquals(1, gateway.classifyCalls)
     }
 }

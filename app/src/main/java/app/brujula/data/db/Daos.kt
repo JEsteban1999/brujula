@@ -93,4 +93,15 @@ interface WorkClassificationDao {
     fun observeAll(): Flow<List<WorkClassificationEntity>>
 
     @Upsert suspend fun upsert(e: WorkClassificationEntity)
+
+    /** Escritura automatica atomica en una sola sentencia: nunca pisa una fila `USER` (REPLACE solo corre si no hay una). */
+    @Query(
+        "INSERT OR REPLACE INTO work_classifications(`key`, isWork, source) " +
+            "SELECT :key, :isWork, 'AUTO' " +
+            "WHERE NOT EXISTS (SELECT 1 FROM work_classifications WHERE `key` = :key AND source = 'USER')",
+    )
+    suspend fun upsertAuto(key: String, isWork: Boolean)
+
+    @Query("SELECT source FROM work_classifications WHERE `key` = :key")
+    suspend fun sourceOf(key: String): String?
 }

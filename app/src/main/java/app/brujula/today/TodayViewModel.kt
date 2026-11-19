@@ -97,6 +97,8 @@ class TodayViewModel(
     private val readPermissions: () -> PermissionStatus,
     private val calendarSource: CalendarSource = NoCalendarSource,
     private val classifications: WorkClassificationRepository? = null,
+    /** Clasifica con Claude los títulos desconocidos de hoy (una vez por clave); nulo en pruebas que no lo usan. */
+    private val autoClassifier: app.brujula.claude.AutoClassifier? = null,
     scopeOverride: CoroutineScope? = null,
     private val tickMs: Long = TICK_MS,
 ) : ViewModel() {
@@ -160,6 +162,19 @@ class TodayViewModel(
             }
         }
         .stateIn(scope, SharingStarted.Eagerly, initial())
+
+    init {
+        val auto = autoClassifier
+        if (auto != null) {
+            // Solo los títulos de los eventos del día lógico; el AutoClassifier decide qué falta y corre fuera del hilo principal.
+            scope.launch {
+                combine(state, classificationMap) { s, marks ->
+                    val events = s.timeline.filterIsInstance<TimelineBlock.External>().map { it.event } + s.allDay
+                    events.associate { classificationKey(it) to it.title } to marks.keys
+                }.distinctUntilChanged().collect { (titles, known) -> auto.request(titles, known) }
+            }
+        }
+    }
 
     private fun initial(): TodayUiState {
         val day = logicalDay(clock.now())

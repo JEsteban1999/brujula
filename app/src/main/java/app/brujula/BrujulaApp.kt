@@ -11,6 +11,8 @@ import app.brujula.calendar.DeviceGoogleCalendarWriter
 import app.brujula.calendar.GoogleCalendarWriter
 import app.brujula.calendar.GoogleCopySync
 import app.brujula.claude.AnthropicClaudeGateway
+import app.brujula.claude.AutoClassifier
+import app.brujula.claude.EventClassifier
 import app.brujula.claude.ClaudeGateway
 import app.brujula.claude.ClaudeKeyStore
 import app.brujula.claude.DictationContext
@@ -121,6 +123,11 @@ class AppContainer(val context: Context) {
 
     /** Procesa los dictados pendientes (idempotente; nunca dos a la vez). */
     suspend fun drainPendingDictations() = pendingDictations.drain(interpreter, executor)
+
+    /** Clasificacion automatica de eventos importados; el conjunto de claves ya intentadas vive aqui (una vez por proceso). */
+    val autoClassifier: AutoClassifier by lazy {
+        AutoClassifier(EventClassifier(claudeGateway), workClassificationRepository, syncScope) { isOnline(context) }
+    }
 
     /** Ambito de la app para la copia a Google: sobrevive al formulario (SupervisorJob + IO). */
     val syncScope = CoroutineScope(

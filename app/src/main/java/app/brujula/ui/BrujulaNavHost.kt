@@ -105,6 +105,7 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                                 readPermissions = { readPermissionStatus(appContext) },
                                 calendarSource = container.calendarSource,
                                 classifications = container.workClassificationRepository,
+                                autoClassifier = container.autoClassifier,
                             )
                         }
                     },

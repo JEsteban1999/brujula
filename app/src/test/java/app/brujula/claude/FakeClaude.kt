@@ -16,7 +16,19 @@ class FakeSecretCipher : SecretCipher {
 class FakeClaudeGateway(
     var result: KeyTestResult = KeyTestResult.OK,
     var dictation: GatewayResult<DictationResult> = GatewayResult.Error(retryable = false),
+    var classification: GatewayResult<ClassificationResult> = GatewayResult.Error(retryable = false),
 ) : ClaudeGateway {
+    var classifyCalls = 0
+    val classifyUsers = mutableListOf<String>()
+    var classifySystem: String? = null
+    /** Si se pone, calcula la respuesta a partir del texto enviado (en lugar de [classification]). */
+    var classifyWith: ((String) -> GatewayResult<ClassificationResult>)? = null
+    override suspend fun classify(system: String, user: String): GatewayResult<ClassificationResult> {
+        classifyCalls++
+        classifySystem = system
+        classifyUsers += user
+        return classifyWith?.invoke(user) ?: classification
+    }
     var calls = 0
     var interpretCalls = 0
     var lastSystem: String? = null

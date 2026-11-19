@@ -21,6 +21,11 @@ import com.anthropic.models.beta.messages.StructuredMessage
 import com.anthropic.models.beta.messages.StructuredMessageCreateParams
 import com.anthropic.models.beta.messages.StructuredOutputConfig
 import com.anthropic.models.messages.MessageCreateParams
+import com.anthropic.models.messages.OutputConfig
+import com.anthropic.models.messages.StopReason
+import com.anthropic.models.messages.StructuredMessage as NonBetaStructuredMessage
+import com.anthropic.models.messages.StructuredMessageCreateParams as NonBetaStructuredParams
+import com.anthropic.models.messages.StructuredOutputConfig as NonBetaStructuredOutputConfig
 import com.anthropic.models.beta.messages.MessageCreateParams as BetaMessageCreateParams
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -67,6 +72,21 @@ class AnthropicClaudeGateway(private val keyStore: ClaudeKeyStore) : ClaudeGatew
             throw e
         } catch (e: Exception) {
             DictationCall.failureOf(e)
+        }
+    }
+
+    override suspend fun classify(system: String, user: String): GatewayResult<ClassificationResult> = withContext(Dispatchers.IO) {
+        try {
+            val key = keyStore.read()
+            if (key == null) {
+                dropClient()
+                return@withContext GatewayResult.NoKey
+            }
+            ClassificationCall.read(clientFor(key).messages().create(ClassificationCall.params(system, user)))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            DictationCall.failureOf(e, "Clasificación")
         }
     }
 
@@ -156,9 +176,9 @@ internal object DictationCall {
     }
 
     /** Clasifica por tipo de excepción, nunca por el texto del mensaje. */
-    fun failureOf(e: Exception): GatewayResult<Nothing> {
+    fun failureOf(e: Exception, what: String = "Dictado"): GatewayResult<Nothing> {
         val status = (e as? AnthropicServiceException)?.statusCode()
-        warn("Dictado falló: ${e.javaClass.simpleName}" + (status?.let { " (HTTP $it)" } ?: ""))
+        warn("$what falló: ${e.javaClass.simpleName}" + (status?.let { " (HTTP $it)" } ?: ""))
         return when (e) {
             is UnauthorizedException, is PermissionDeniedException -> GatewayResult.InvalidKey
             // OkHttp señala el tiempo agotado con InterruptedIOException (SocketTimeoutException es una subclase).
@@ -171,4 +191,41 @@ internal object DictationCall {
     }
 
     private fun Throwable.causes(): Sequence<Throwable> = generateSequence(cause) { it.cause?.takeIf { c -> c !== it } }
+}
+
+/**
+ * Petición de clasificación (Haiku 5.5) y lectura de su respuesta. Va por el endpoint NO beta: sin respaldo en el servidor,
+ * un rechazo (stopReason == REFUSAL) significa simplemente "sin clasificar". Esfuerzo bajo, sin `thinking`, sin temperatura ni prefill.
+ */
+internal object ClassificationCall {
+    private const val MAX_TOKENS = 4096L
+
+    fun params(system: String, user: String): NonBetaStructuredParams<ClassificationResult> =
+        MessageCreateParams.builder()
+            .model(ClaudeModels.CLASSIFICATION)
+            .maxTokens(MAX_TOKENS)
+            .system(system)
+            .addUserMessage(user)
+            .outputConfig(
+                NonBetaStructuredOutputConfig.builder<ClassificationResult>()
+                    .effort(OutputConfig.Effort.LOW)
+                    .format(ClassificationResult::class.java)
+                    .build(),
+            )
+            .build()
+
+    /** Revisa stopReason antes de leer el contenido. */
+    fun read(response: NonBetaStructuredMessage<ClassificationResult>): GatewayResult<ClassificationResult> {
+        val stop = response.stopReason().orElse(null)
+        if (stop == StopReason.REFUSAL) return GatewayResult.Refused
+        if (stop == StopReason.MAX_TOKENS) return GatewayResult.Error(retryable = true)
+        if (stop != StopReason.END_TURN) return GatewayResult.Error(retryable = false)
+        return try {
+            val block = response.content().lastOrNull { it.isText() } ?: return GatewayResult.Error(retryable = false)
+            GatewayResult.Ok(block.asText().text())
+        } catch (e: RuntimeException) {
+            DictationCall.warn("Respuesta de clasificación ilegible: ${e.javaClass.simpleName}")
+            GatewayResult.Error(retryable = false)
+        }
+    }
 }
