@@ -181,8 +181,84 @@ class HolidaysTest {
 
 ---
 
-### Task 6: Verificación en el teléfono
+### Task 6: Modelo de bienestar — grupos, ventana de trabajo, "antes de dormir" y migración de base de datos
 
-- [ ] **Step 1:** `.\gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:installDebug` → todo verde, instalado en el Samsung (`adb devices` lo lista).
-- [ ] **Step 2:** En el teléfono: Ajustes muestra la sección `Fines de semana y festivos` con 10:00 / 1:00; `adb shell dumpsys alarm` muestra el aviso de ejercicio del sábado 21 nov a las 12:00 y el bálsamo del sábado a las 10:00 (no a las 09:00); el ejercicio de las 18:30 sigue programado para mañana jueves.
+(Spec §12. Se ejecuta después de la Task 5.)
+
+**Files:**
+- Modify: `habits/Habit.kt`, `habits/HabitTimes.kt`, `data/db/Entities.kt`, `data/db/Converters.kt`, `data/db/BrujulaDatabase.kt`, `habits/HabitRepository.kt`, `app/build.gradle.kts` (room-testing para la prueba de migración si falta)
+- Create: `app/schemas/app.brujula.data.db.BrujulaDatabase/2.json` (generado)
+- Test: `habits/HabitTimesTest.kt`, `data/HabitRepositoryTest.kt`, `data/MigrationTest.kt`
+
+**Interfaces:**
+- Consumes: `Routine.wakeFor/bedFor/awakeWindow`, `dayTypeOf` (Tasks 1–2).
+- Produces:
+  - `enum class HabitGroup { ESSENTIAL, WELLNESS }`, `enum class HabitWindow { AWAKE, WORK }`.
+  - `Habit` gana `val group: HabitGroup = HabitGroup.ESSENTIAL` y `val window: HabitWindow = HabitWindow.AWAKE`.
+  - `HabitSchedule.BeforeBed(val minutes: Int)`; codificación `"bed:45"`.
+  - `HabitIcon` gana `EYE, WALK, POSTURE, FOOD, SCREEN_OFF, PILL, SUN, BOOK` (el `STRETCH` ya existe).
+  - `timesFor(day, routine)`: con `WORK`, en días de descanso → vacío; en laborales, `Every(n)` genera desde el inicio de cada bloque de trabajo + n mientras sea `< fin del bloque` (cada bloque por separado), y `AtTimes` conserva solo las horas dentro de algún bloque. `BeforeBed(m)` → una hora: `fin de la vigilia − m`, si cae dentro de la vigilia.
+  - Room `version = 2` con `AutoMigration(from = 1, to = 2)`; columnas nuevas `groupName` y `window` con `@ColumnInfo(defaultValue = "ESSENTIAL")` / `"AWAKE"`. Los hábitos existentes quedan como básicos y "despierto".
+
+- [ ] **Step 1: Pruebas que fallan**
+  - `HabitTimesTest`: `Every(30)` WORK el miércoles → 08:30…11:30 y 14:30…17:30 (14 horas: 7 + 7); el sábado → vacío; `Every(60)` WORK → 09:00,10:00,11:00,15:00,16:00,17:00; `AtTimes(10:15,16:15)` WORK miércoles → ambas, sábado → vacío; `BeforeBed(45)` miércoles → 23:45, sábado → 00:15 del domingo.
+  - `HabitRepositoryTest`: `group`, `window` y `BeforeBed` sobreviven ida y vuelta.
+  - `MigrationTest` (MigrationTestHelper con el esquema 1 exportado): una base v1 con agua y bálsamo migra a v2 y los hábitos quedan `ESSENTIAL`/`AWAKE` con sus registros intactos.
+- [ ] **Step 2:** FAIL. **Step 3:** Implementar (generar y commitear `2.json`). **Step 4:** Suite → PASS.
+- [ ] **Step 5:** Commit `feat: wellness habit groups, work-hours window and before-bed schedule`.
+
+---
+
+### Task 7: Los nueve hábitos de bienestar y sus avisos agrupados
+
+**Files:**
+- Modify: `data/db/Seed.kt` (o un `Migrations.seedWellness`), `BrujulaApp.kt`, `routine/RoutineRepository.kt` (bandera), `reminders/Reminder.kt`, `reminders/ReminderPlanner.kt`, `reminders/Notifications.kt`, `reminders/NotificationActionReceiver.kt`
+- Test: `data/SeedTest.kt`, `reminders/ReminderPlannerTest.kt`, `reminders/ReceiversTest.kt`
+
+**Interfaces:**
+- Consumes: Task 6.
+- Produces:
+  - `Migrations.seedWellness(db, routine)`: una sola vez (bandera `wellness_seeded`), en una transacción, crea los nueve hábitos de spec §12 con `group = WELLNESS`, su ventana, horario, ícono y `active` (Vitaminas inactivo). `dailyTarget` = número de horas que `timesFor` da para un miércoles con la rutina por defecto (mínimo 1). Instalaciones nuevas: `Seed` también los crea (misma función, misma bandera).
+  - Nombres y copia de los avisos (título → cuerpo corto): `Descanso visual 20-20-20` → `Mira algo lejano 20 segundos.`; `Pararte y moverte` → `Párate y camina 2 minutos.`; `Estiramientos` → `Estira cuello, espalda y muñecas.`; `Postura` → `Endereza la espalda y relaja los hombros.`; `Comer a horas` → `Hora de comer algo.`; `Desconectar pantallas` → `Deja las pantallas: en 45 min te acuestas.`; `Vitaminas` → `Tómate las vitaminas.`; `Protector solar` → `Ponte protector solar.`; `Lectura sin pantalla` → `Un rato de lectura sin pantalla.`
+  - `Reminder` gana `val habitIds: List<Long> = emptyList()` (para agrupados; `habitId` sigue siendo el primero). El planificador une los recordatorios de hábitos `WELLNESS` que caen en el mismo minuto en uno solo: clave `"wellness:{yyyyMMddHHmm}"`, título `Pausa`, cuerpo con los cuerpos cortos unidos por ` · ` si son 2 o más (si es uno solo, queda como un recordatorio normal de hábito).
+  - Canal `pausas` ("Pausas y bienestar", `IMPORTANCE_DEFAULT`) para todos los avisos `WELLNESS`; acciones `Hecho` y `En 15 min` (sin "Saltar" en agrupados).
+  - `ACTION_DONE` en un agrupado registra uno por cada `habitId` con la clave de cada hábito (`habit:{id}:{minuto}`), de modo que repetir el toque no duplica.
+
+- [ ] **Step 1: Pruebas que fallan**
+  - `SeedTest`: tras `seedWellness`, hay 9 hábitos `WELLNESS` con los nombres exactos, Vitaminas inactivo; llamarla otra vez no duplica; borrar uno y volver a llamarla no lo recrea.
+  - `ReminderPlannerTest`: miércoles a las 08:00 con 20-20-20 y Pararte activos → a las 09:00 hay un solo recordatorio `wellness:202611180900` con dos `habitIds` y cuerpo `Mira algo lejano 20 segundos. · Párate y camina 2 minutos.`; a las 08:30 uno normal solo de 20-20-20; el sábado ninguno de los de ventana de trabajo.
+  - `ReceiversTest`: `ACTION_DONE` sobre el agrupado de las 09:00 suma 1 a cada hábito; repetirlo no cambia nada.
+- [ ] **Step 2:** FAIL. **Step 3:** Implementar. **Step 4:** Suite → PASS.
+- [ ] **Step 5:** Commit `feat: seed wellness habits and group same-minute wellness reminders`.
+
+---
+
+### Task 8: Sección "Pausas y bienestar" en Hábitos y formulario
+
+**Files:**
+- Modify: `habits/HabitsViewModel.kt`, `habits/HabitsScreen.kt` (o un nuevo `habits/WellnessSection.kt`), `habits/HabitFormViewModel.kt`, `habits/HabitFormScreen.kt`, `ui/BrujulaNavHost.kt` (ruta del formulario con grupo), `today/TodayViewModel.kt` (tarjetas solo `ESSENTIAL`)
+- Test: `habits/HabitsViewModelTest.kt`, `habits/HabitFormViewModelTest.kt`, `today/TodayViewModelTest.kt`
+
+**Interfaces:**
+- Produces:
+  - `HabitsUiState` gana `val wellness: List<WellnessRow>`; `data class WellnessRow(val habit: Habit, val count: Int, val target: Int, val summary: String)`. `cards` queda solo con `ESSENTIAL`.
+  - `summary` en español: `Cada 30 min en horario de trabajo`, `Cada 2 h en horario de trabajo`, `10:15 y 16:15 en horario de trabajo`, `12:30 y 16:00`, `45 min antes de dormir`, `9:00`.
+  - `HabitsViewModel`: `fun setActive(habitId: Long, active: Boolean)` (resincroniza); `add`/`undo` ya existentes sirven para el "+".
+  - Pantalla: sección `Pausas y bienestar` bajo la racha; fila compacta por hábito (ícono, nombre, resumen, `x de y`, botón "+" de 48 dp, `Switch` con etiqueta accesible), inactivos atenuados; al final `Agregar a pausas y bienestar` abre el formulario con `group = WELLNESS`.
+  - Formulario: interruptor `Solo en horario de trabajo` (window) y modo de horario `Antes de dormir` con pasos de 15 min (15–180); la ruta `habit?id={id}&group={group}`.
+  - Hoy: las tarjetas de hábito usan solo `ESSENTIAL` activos.
+
+- [ ] **Step 1: Pruebas que fallan**
+  - `HabitsViewModelTest`: con los 9 sembrados, `wellness` tiene 9 filas en el orden de spec §12 y `cards` sigue con agua y bálsamo; `setActive(vitaminas, true)` lo activa y resincroniza; los resúmenes coinciden con los textos de arriba.
+  - `HabitFormViewModelTest`: crear con `group = WELLNESS`, `window = WORK` y `BeforeBed(60)` guarda esos valores.
+  - `TodayViewModelTest`: con hábitos de bienestar activos, las tarjetas de Hoy siguen siendo agua y bálsamo.
+- [ ] **Step 2:** FAIL. **Step 3:** Implementar. **Step 4:** Suite + `:app:assembleDebug :app:lintDebug` → PASS, 0 errores de lint.
+- [ ] **Step 5:** Commit `feat: wellness section in Habits and work-hours/before-bed options in habit form`.
+
+---
+
+### Task 9: Verificación en el teléfono
+
+- [ ] **Step 1:** `.\gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:installDebug` → todo verde, instalado en el Samsung (`adb devices` lo lista). La instalación es una actualización: los datos del usuario y la migración de base de datos 1→2 deben conservar sus registros.
+- [ ] **Step 2:** En el teléfono (capturas con `adb exec-out screencap`): Ajustes muestra `Fines de semana y festivos` con 10:00 / 1:00; Hábitos muestra la sección `Pausas y bienestar` con los 9 (Vitaminas apagado); `adb shell dumpsys alarm` muestra el aviso de ejercicio del sábado 21 nov a las 12:00, el bálsamo del sábado a las 10:00 (no a las 09:00), el ejercicio de las 18:30 del jueves y un aviso agrupado de pausa a las 09:00 del jueves.
 - [ ] **Step 3:** Commit de ajustes si los hubo.

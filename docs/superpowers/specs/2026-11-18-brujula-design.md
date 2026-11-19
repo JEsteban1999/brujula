@@ -197,3 +197,40 @@ Razón: la app es personal, en Android, y lo más importante (no olvidar nada) d
 - **Hoy muestra el tipo de día:** etiqueta "Descanso" los fines de semana, o "Festivo · {nombre}" en festivos.
 
 **Fuera de alcance:** festivos de otros países; festivos leídos desde Google Calendar (posible en Fase 2 como complemento); horarios distintos para sábado vs domingo.
+
+## 12. Pausas y bienestar (agregado 18-nov-2026; el usuario pidió agregar todos los hábitos sugeridos en una sección propia y delegó el diseño)
+
+**Por qué:** el usuario trabaja en casa frente al PC muchas horas. Además de agua y bálsamo quiere hábitos de pausa y bienestar, agrupados en una sección aparte para que no se mezclen con lo básico.
+
+**Grupos de hábitos**
+- **Básicos:** agua, bálsamo y los que el usuario cree desde "Nuevo hábito" (por defecto). Son los que aparecen en las tarjetas de Hoy.
+- **Pausas y bienestar:** los nueve de abajo. Viven en su propia sección en la pantalla Hábitos y no ocupan las tarjetas de Hoy.
+
+**Ventana de cada hábito**
+- **Mientras estás despierto** (como hoy).
+- **Solo en horario de trabajo:** dentro de los bloques de trabajo preferidos (08:00–12:00 y 14:00–18:00) y solo en días laborales. En días de descanso no suenan.
+
+**Nuevo tipo de horario:** "antes de dormir": una vez al día, N minutos antes de la hora de acostarse de ese día (laboral o descanso).
+
+**Los nueve hábitos de bienestar (se crean una sola vez)**
+| Hábito | Horario | Ventana | Activo al crearse |
+|---|---|---|---|
+| Descanso visual 20-20-20 | cada 30 min | trabajo | sí |
+| Pararte y moverte | cada 60 min | trabajo | sí |
+| Estiramientos | cada 120 min | trabajo | sí |
+| Postura | 10:15 y 16:15 | trabajo | sí |
+| Comer a horas | 12:30 (almuerzo) y 16:00 (snack) | despierto | sí |
+| Desconectar pantallas | 45 min antes de dormir | despierto | sí |
+| Vitaminas | 09:00 | despierto | **no** (se activa con un toque si toma alguna) |
+| Protector solar | 09:00 y 12:30 | despierto | sí |
+| Lectura sin pantalla | 21:30 | despierto | sí |
+La meta diaria de cada uno es el número de avisos que le tocan ese día (como en §5.5); al cumplirla se pausan sus avisos del día.
+
+**Que no sea una lluvia de notificaciones**
+- Los avisos de bienestar van en un canal propio, "Pausas y bienestar", con prioridad normal (suenan pero no aparecen encima de lo que estás haciendo). El usuario puede ajustarlo en los ajustes de Android.
+- Si varios avisos de bienestar caen en el mismo minuto, llegan **juntos en una sola notificación** ("Pausa: mira lejos 20 s · párate y muévete"), con "Hecho" (marca todos) y "En 15 min".
+- Cada hábito de la sección tiene un interruptor para activarlo o desactivarlo sin borrarlo.
+
+**Sección en Hábitos:** debajo de agua, bálsamo y la racha, una sección "Pausas y bienestar" con una fila compacta por hábito: ícono, nombre, resumen del horario ("Cada 30 min en horario de trabajo"), avance de hoy (x de y), botón "+" e interruptor de activo. Mantener presionado → editar o borrar, como los demás.
+
+**Formulario de hábito:** gana el interruptor "Solo en horario de trabajo" y el tipo de horario "Antes de dormir (N min)". Los hábitos creados por el usuario son "Básicos" salvo que los cree desde la sección de bienestar ("Agregar a pausas y bienestar").
