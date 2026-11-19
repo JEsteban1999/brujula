@@ -21,6 +21,10 @@ import app.brujula.claude.DictationContextProvider
 import app.brujula.claude.ActionApplier
 import app.brujula.claude.ActionExecutor
 import app.brujula.claude.DictationInterpreter
+import app.brujula.claude.DayPlanner
+import app.brujula.claude.PlanContext
+import app.brujula.claude.PlanContextProvider
+import app.brujula.planning.DaySnapshotProvider
 import app.brujula.claude.PendingDictations
 import app.brujula.claude.PendingCopy
 import app.brujula.claude.PendingNotifier
@@ -90,6 +94,23 @@ class AppContainer(val context: Context) {
     /** Convierte un dictado en acciones validadas (no aplica nada); usa el gateway vigente. */
     val dictationInterpreter: DictationInterpreter
         get() = DictationInterpreter(claudeGateway, { at -> dictationContext(at) }, isOnline = { isOnline(context) })
+
+    /** Foto de un día con las mismas reglas que Hoy; usa las dependencias vigentes (calendarios sustituibles). */
+    val daySnapshots: DaySnapshotProvider
+        get() = DaySnapshotProvider(routineRepository, activityRepository, habitRepository, calendarSource, workClassificationRepository)
+
+    /** Contexto para planificar un día; usa el reloj y los calendarios vigentes. */
+    val planContextProvider: PlanContextProvider
+        get() = PlanContextProvider(clock, daySnapshots, habitRepository, routineRepository)
+
+    suspend fun planContext(day: LocalDate): PlanContext = planContextProvider.forDay(day)
+
+    private var dayPlannerOverride: DayPlanner? = null
+
+    /** Arma propuestas de Claude para un día (no guarda ni aplica); por defecto con el gateway vigente. Sustituible en pruebas. */
+    var dayPlanner: DayPlanner
+        get() = dayPlannerOverride ?: DayPlanner(claudeGateway, { day -> planContext(day) }, isOnline = { isOnline(context) })
+        set(value) { dayPlannerOverride = value }
 
     private var interpreterOverride: TextInterpreter? = null
     private var executorOverride: ActionApplier? = null
