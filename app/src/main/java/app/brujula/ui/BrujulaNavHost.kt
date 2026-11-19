@@ -27,6 +27,8 @@ import app.brujula.habits.HabitFormViewModel
 import app.brujula.habits.HabitsScreen
 import app.brujula.habits.HabitsViewModel
 import app.brujula.reminders.readPermissionStatus
+import app.brujula.settings.RoutineScreen
+import app.brujula.settings.RoutineViewModel
 import app.brujula.today.TodayScreen
 import app.brujula.today.TodayViewModel
 import java.time.LocalDateTime
@@ -117,7 +119,15 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                     onEditHabit = { navController.navigate(Routes.habitForm(it)) },
                 )
             }
-            composable(Routes.ROUTINE) { PlaceholderScreen() }
+            composable(Routes.ROUTINE) {
+                val container = LocalContext.current.container
+                val vm: RoutineViewModel = viewModel(
+                    factory = viewModelFactory {
+                        initializer { RoutineViewModel(container.routineRepository, container.reminderSync) }
+                    },
+                )
+                RoutineScreen(viewModel = vm)
+            }
             composable(
                 Routes.ACTIVITY_FORM,
                 arguments = listOf(

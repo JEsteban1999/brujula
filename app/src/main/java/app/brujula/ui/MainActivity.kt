@@ -11,12 +11,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import app.brujula.container
 import app.brujula.core.theme.BrujulaTheme
-import app.brujula.core.theme.resolveDark
-import app.brujula.routine.Routine
+import app.brujula.core.theme.darkFlow
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -24,11 +24,14 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val container = LocalContext.current.container
-            val routine by container.routineRepository.routine.collectAsState(initial = Routine())
-            val dark = resolveDark(routine.themeMode, container.clock.now().toLocalTime(), routine.wake)
-            BrujulaTheme(dark = dark) {
-                AskNotificationsOnFirstOpen()
-                BrujulaNavHost()
+            val darkState = remember(container) { darkFlow(container.routineRepository.routine, container.clock) }
+            // null hasta que la rutina guardada se carga: así no hay destello del tema por defecto.
+            val dark by darkState.collectAsState(initial = null)
+            dark?.let { isDark ->
+                BrujulaTheme(dark = isDark) {
+                    AskNotificationsOnFirstOpen()
+                    BrujulaNavHost()
+                }
             }
         }
     }
