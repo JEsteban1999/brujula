@@ -1,6 +1,7 @@
 package app.brujula.claude
 
 import app.brujula.activities.Activity
+import app.brujula.activities.ActivityOrigin
 import app.brujula.activities.ActivityType
 import app.brujula.activities.Repeat
 import app.brujula.activities.form.MAX_DURATION
@@ -77,6 +78,7 @@ object ActionValidator {
             Activity(
                 title = title, type = type, date = date, start = start, durationMin = duration, repeat = repeat,
                 remindBeforeMin = REMIND_BEFORE_MIN, copyToGoogle = a.copyToGoogle ?: (type == ActivityType.APPOINTMENT),
+                origin = ActivityOrigin.DICTATION,
             ),
         )
     }

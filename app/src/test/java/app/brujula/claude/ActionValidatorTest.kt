@@ -179,4 +179,9 @@ class ActionValidatorTest {
     }
 
     @Test fun questionWithoutTextIsInvalid() = assertInvalid(DictationAction(type = "need_more_info"))
+
+    @Test fun validActivityComesOutWithDictationOrigin() {
+        val v = ActionValidator.validate(activity(), ctx) as Validated.Activity
+        assertEquals(app.brujula.activities.ActivityOrigin.DICTATION, v.activity.origin)
+    }
 }

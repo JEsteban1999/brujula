@@ -138,4 +138,20 @@ class ReminderPlannerTest {
         val r = prompts(sat.atTime(13, 0), acts = listOf(late))
         assertEquals(listOf("exprompt:20261122"), r.map { it.key })
     }
+
+    @Test fun movedOccurrenceRemindsAtNewTime() {
+        val gym = Activity(5, "Ejercicio en casa", ActivityType.EXERCISE, d, LocalTime.of(18, 30), 30, Repeat.DAILY, remindBeforeMin = 15)
+        val overrides = mapOf((5L to d) to app.brujula.activities.OccurrenceOverride(5, d, d.atTime(19, 30), null, false))
+        val r = ReminderPlanner.plan(d.atTime(12, 0), Routine(), emptyList(), emptyMap(), emptySet(), listOf(gym), emptySet(), overrides = overrides)
+            .single { it.key == "act:5:20261118" }
+        assertEquals(d.atTime(19, 15), r.at)
+        assertEquals("Ejercicio en casa a las 19:30", r.title)
+    }
+
+    @Test fun skippedOccurrenceHasNoReminder() {
+        val gym = Activity(5, "Ejercicio en casa", ActivityType.EXERCISE, d, LocalTime.of(18, 30), 30, Repeat.DAILY, remindBeforeMin = 15)
+        val overrides = mapOf((5L to d) to app.brujula.activities.OccurrenceOverride(5, d, null, null, true))
+        val r = ReminderPlanner.plan(d.atTime(12, 0), Routine(), emptyList(), emptyMap(), emptySet(), listOf(gym), emptySet(), overrides = overrides)
+        assertTrue(r.none { it.key == "act:5:20261118" })
+    }
 }

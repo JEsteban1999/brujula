@@ -2,6 +2,7 @@ package app.brujula.today
 
 import app.brujula.activities.Activity
 import app.brujula.activities.Occurrence
+import app.brujula.activities.Overrides
 import app.brujula.activities.occurrencesOn
 import app.brujula.calendar.CalendarSource
 import app.brujula.calendar.ExternalEvent
@@ -14,13 +15,24 @@ import java.time.LocalTime
 internal val LOGICAL_DAY_START: LocalTime = LocalTime.of(4, 0)
 
 /** Ocurrencias que empiezan en el día lógico [day] (04:00 a 03:59), sea su fecha de calendario ayer, hoy o mañana. */
-fun logicalOccurrences(day: LocalDate, activities: List<Activity>, done: Set<Pair<Long, LocalDate>>): List<Occurrence> =
-    (-1L..1L).flatMap { occurrencesOn(day.plusDays(it), activities, done) }
+fun logicalOccurrences(
+    day: LocalDate,
+    activities: List<Activity>,
+    done: Set<Pair<Long, LocalDate>>,
+    overrides: Overrides = emptyMap(),
+): List<Occurrence> =
+    (-1L..1L).flatMap { occurrencesOn(day.plusDays(it), activities, done, overrides) }
         .filter { logicalDay(it.span.start) == day }
 
 /** Ocurrencias de ayer que no son del día lógico [day] pero aún cruzan su vigilia [window]. */
-fun spillOccurrences(day: LocalDate, activities: List<Activity>, done: Set<Pair<Long, LocalDate>>, window: TimeSpan): List<Occurrence> =
-    occurrencesOn(day.minusDays(1), activities, done)
+fun spillOccurrences(
+    day: LocalDate,
+    activities: List<Activity>,
+    done: Set<Pair<Long, LocalDate>>,
+    window: TimeSpan,
+    overrides: Overrides = emptyMap(),
+): List<Occurrence> =
+    occurrencesOn(day.minusDays(1), activities, done, overrides)
         .filter { logicalDay(it.span.start) != day && it.span.overlaps(window) }
 
 /**

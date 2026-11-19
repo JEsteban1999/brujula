@@ -357,4 +357,16 @@ class ActivityFormViewModelTest {
         assertTrue(testScheduler.currentTime < 5_000)
         assertTrue(repo.observeAll().first().any { it.title == "Dentista" })
     }
+
+    @Test fun conflictUsesMovedOccurrence() = runTest {
+        // "Ejercicio en casa" de manana (19:00-20:00) se mueve a las 21:00 solo manana: 19:00 ya no choca, 21:00 si.
+        val id = repo.observeAll().first().single().id
+        repo.setOverride(app.brujula.activities.OccurrenceOverride(id, tomorrow, tomorrow.atTime(21, 0), null, false))
+        val vm = newVm(); vm.setDateChoice(DateChoice.TOMORROW); vm.shiftStart(495); vm.setDuration(60) // 19:00
+        vm.state.first { it.ready }
+        kotlinx.coroutines.yield()
+        assertNull(vm.state.value.conflict)
+        vm.shiftStart(120) // 21:00
+        assertEquals("Ejercicio en casa", vm.state.first { it.conflict != null }.conflict!!.activity.title)
+    }
 }

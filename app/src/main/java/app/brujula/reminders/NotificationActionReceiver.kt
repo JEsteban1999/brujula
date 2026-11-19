@@ -67,13 +67,14 @@ class NotificationActionReceiver : BroadcastReceiver() {
         if (day in c.routineRepository.exercisePromptAnswered.first()) return@withLock
         val activities = c.activityRepository.observeAll().first()
         val doneKeys = c.activityRepository.observeDoneKeys().first()
-        if (occurrencesOn(day, activities, doneKeys).any { it.activity.type == ActivityType.EXERCISE }) {
+        val overrides = c.activityRepository.observeOverrides().first()
+        if (occurrencesOn(day, activities, doneKeys, overrides).any { it.activity.type == ActivityType.EXERCISE }) {
             c.routineRepository.markExercisePromptAnswered(day)
             return@withLock
         }
         val window = c.routineRepository.routine.first().awakeWindow(day)
         val from = maxOf(ceilToQuarter(now), window.start)
-        val busy = (-1L..1L).flatMap { occurrencesOn(day.plusDays(it), activities, doneKeys) }.map { it.span } +
+        val busy = (-1L..1L).flatMap { occurrencesOn(day.plusDays(it), activities, doneKeys, overrides) }.map { it.span } +
             externalBusy(c, window)
         val slot = freeSlots(TimeSpan(from, window.end), busy, EXERCISE_MIN.toLong()).firstOrNull()
         if (slot == null) {

@@ -9,6 +9,7 @@ import app.brujula.activities.ActivityType
 import app.brujula.activities.Occurrence
 import app.brujula.activities.Repeat
 import app.brujula.activities.findConflict
+import app.brujula.activities.Overrides
 import app.brujula.activities.occurrencesOn
 import app.brujula.calendar.CalendarSource
 import app.brujula.calendar.ExternalEvent
@@ -109,6 +110,7 @@ class ActivityFormViewModel(
     private val scope = scopeOverride ?: viewModelScope
     private var editingId: Long? = null
     private var all: List<Activity> = emptyList()
+    private var overrides: Overrides = emptyMap()
     private var external: List<ExternalEvent> = emptyList()
     private var externalDate: LocalDate? = null
     private var selectedIds: Set<Long>? = null
@@ -122,6 +124,12 @@ class ActivityFormViewModel(
         scope.launch {
             activityRepository.observeAll().collect { list ->
                 all = list
+                _state.update(::withConflict)
+            }
+        }
+        scope.launch {
+            activityRepository.observeOverrides().collect { o ->
+                overrides = o
                 _state.update(::withConflict)
             }
         }
@@ -194,7 +202,7 @@ class ActivityFormViewModel(
     private fun withConflict(s: ActivityFormState): ActivityFormState {
         val begin = s.date.atTime(s.start)
         val candidate = TimeSpan(begin, begin.plusMinutes(s.durationMin.toLong()))
-        val busy = (-1L..1L).flatMap { occurrencesOn(s.date.plusDays(it), all, emptySet()) }
+        val busy = (-1L..1L).flatMap { occurrencesOn(s.date.plusDays(it), all, emptySet(), overrides) }
         val own = findConflict(candidate, busy, editingId)
         val outside = if (own == null) external.firstOrNull { !it.allDay && it.eventId !in linkedEventIds && it.span.overlaps(candidate) } else null
         return s.copy(conflict = own, externalConflict = outside)

@@ -34,6 +34,7 @@ fun reminderChanges(
     habitRepository.observeHabits(),
     habitRepository.observeHandledKeys(),
     habitRepository.observeCountsFor(logicalDay(clock.now())),
+    activityRepository.observeOverrides(),
 ) { _ -> }
 
 /**

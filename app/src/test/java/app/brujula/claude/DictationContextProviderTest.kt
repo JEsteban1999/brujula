@@ -119,4 +119,14 @@ class DictationContextProviderTest {
         assertTrue(ctx.busyTomorrow.isEmpty())
         assertEquals(0, calendar.eventQueries)
     }
+
+    @Test fun skippedOccurrenceIsNotBusy() = runTest {
+        val id = activities.upsert(
+            Activity(title = "Gimnasio", type = ActivityType.EXERCISE, date = wed, start = LocalTime.of(18, 0), durationMin = 60, repeat = app.brujula.activities.Repeat.DAILY),
+        )
+        activities.setOverride(app.brujula.activities.OccurrenceOverride(id, wed, null, null, true))
+        val ctx = provider(wed.atTime(10, 0)).current()
+        assertTrue(ctx.busyToday.none { it.title == "Gimnasio" })
+        assertTrue(ctx.busyTomorrow.any { it.title == "Gimnasio" })
+    }
 }

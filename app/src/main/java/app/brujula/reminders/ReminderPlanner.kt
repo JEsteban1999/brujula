@@ -2,6 +2,7 @@ package app.brujula.reminders
 
 import app.brujula.activities.Activity
 import app.brujula.activities.ActivityType
+import app.brujula.activities.Overrides
 import app.brujula.activities.occurrencesOn
 import app.brujula.core.time.formatTime
 import app.brujula.habits.Habit
@@ -34,6 +35,7 @@ object ReminderPlanner {
         doneKeys: Set<Pair<Long, LocalDate>>,
         horizonHours: Long = 24,
         exercisePromptAnswered: Set<LocalDate> = emptySet(),
+        overrides: Overrides = emptyMap(),
     ): List<Reminder> {
         val limit = now.plusHours(horizonHours)
         // La vigilia de ayer puede cruzar la medianoche; la de manana puede caer dentro del horizonte.
@@ -62,14 +64,14 @@ object ReminderPlanner {
         out += mergeWellness(wellnessOnes)
 
         for (day in days) {
-            for (occ in occurrencesOn(day, activities, doneKeys)) {
+            for (occ in occurrencesOn(day, activities, doneKeys, overrides)) {
                 if (occ.done) continue
                 val before = occ.activity.remindBeforeMin ?: continue
                 val at = occ.span.start.minusMinutes(before.toLong())
                 if (at <= now || at > limit) continue
                 out += Reminder(
                     key = "act:${occ.activity.id}:${day.format(KEY_DAY)}", at = at, kind = ReminderKind.ACTIVITY,
-                    title = "${occ.activity.title} a las ${formatTime(occ.activity.start)}",
+                    title = "${occ.activity.title} a las ${formatTime(occ.span.start.toLocalTime())}",
                     body = "Empieza en $before min.",
                     activityId = occ.activity.id, day = day,
                 )
@@ -78,7 +80,7 @@ object ReminderPlanner {
         for (day in days) {
             if (!dayTypeOf(day).isRest || day in exercisePromptAnswered) continue
             // Cuenta por dia logico: un ejercicio a las 00:30 del dia siguiente es de este dia; el de hoy a las 00:30 no.
-            val exerciseToday = (occurrencesOn(day, activities, doneKeys) + occurrencesOn(day.plusDays(1), activities, doneKeys))
+            val exerciseToday = (occurrencesOn(day, activities, doneKeys, overrides) + occurrencesOn(day.plusDays(1), activities, doneKeys, overrides))
                 .any { it.activity.type == ActivityType.EXERCISE && logicalDay(it.span.start) == day }
             if (exerciseToday) continue
             val at = day.atTime(routine.wakeFor(day)).plusHours(2)

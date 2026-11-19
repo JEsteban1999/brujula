@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import app.brujula.activities.Activity
 import app.brujula.activities.ActivityRepository
 import app.brujula.activities.Occurrence
+import app.brujula.activities.Overrides
 import app.brujula.activities.WorkStatus
 import app.brujula.activities.freeSlots
 import app.brujula.activities.workMinutes
@@ -86,6 +87,13 @@ data class TodayUiState(
     val isLateNight: Boolean = false,
 )
 
+private data class DayData(
+    val routine: Routine,
+    val activities: List<Activity>,
+    val done: Set<Pair<Long, LocalDate>>,
+    val overrides: Overrides,
+)
+
 private const val MAX_VISIBLE_HABITS = 2
 private const val TICK_MS = 30_000L
 
@@ -145,7 +153,8 @@ class TodayViewModel(
         routineRepository.routine,
         activityRepository.observeAll(),
         activityRepository.observeDoneKeys(),
-    ) { routine, activities, done -> Triple(routine, activities, done) }
+        activityRepository.observeOverrides(),
+    ) { routine, activities, done, overrides -> DayData(routine, activities, done, overrides) }
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val state: StateFlow<TodayUiState> = ticker
@@ -157,8 +166,8 @@ class TodayViewModel(
                 habitRepository.observeCountsFor(day),
                 permissions,
                 externalInputs,
-            ) { (routine, activities, done), habits, counts, perms, (rawExternal, marks) ->
-                build(now, day, routine, activities, done, habits, counts, perms, rawExternal, marks)
+            ) { (routine, activities, done, overrides), habits, counts, perms, (rawExternal, marks) ->
+                build(now, day, routine, activities, done, overrides, habits, counts, perms, rawExternal, marks)
             }
         }
         .stateIn(scope, SharingStarted.Eagerly, initial())
@@ -200,6 +209,7 @@ class TodayViewModel(
         routine: Routine,
         activities: List<Activity>,
         done: Set<Pair<Long, LocalDate>>,
+        overrides: Overrides,
         habits: List<app.brujula.habits.Habit>,
         counts: Map<Long, Int>,
         perms: PermissionStatus,
@@ -209,8 +219,8 @@ class TodayViewModel(
         val window = routine.awakeWindow(day)
         // Dia logico: todo lo que empieza en el (04:00 a 03:59), ya sea por fecha de calendario de ayer, hoy o manana,
         // mas lo de ayer que aun cruza la vigilia de hoy.
-        val logical = logicalOccurrences(day, activities, done)
-        val spill = spillOccurrences(day, activities, done, window)
+        val logical = logicalOccurrences(day, activities, done, overrides)
+        val spill = spillOccurrences(day, activities, done, window, overrides)
         val ownBlocks = (spill + logical).map { TimelineBlock.Own(it, now in it.span) }
         val external = eventsOnLogicalDay(day, rawExternal, window)
         val timed = external.filter { !it.allDay }

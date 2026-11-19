@@ -37,6 +37,7 @@ class ReminderSync(
             activities = activityRepo.observeAll().first(),
             doneKeys = activityRepo.observeDoneKeys().first(),
             exercisePromptAnswered = routineRepo.exercisePromptAnswered.first(),
+            overrides = activityRepo.observeOverrides().first(),
         )
         scheduler.replaceAll(reminders)
     }

@@ -508,4 +508,15 @@ class TodayViewModelTest {
         testScheduler.advanceUntilIdle()
         assertEquals(2, gateway.classifyCalls)
     }
+
+    @Test fun overrideMovesBlockInTimeline() = runTest {
+        val id = activities.upsert(act("Ejercicio", ActivityType.EXERCISE, "18:30", 30, repeat = Repeat.DAILY))
+        activities.setOverride(app.brujula.activities.OccurrenceOverride(id, day, day.atTime(20, 0), null, false))
+        val s = vm().state.first { it.own.isNotEmpty() }
+        val occ = s.own.single().occurrence
+        assertEquals(day.atTime(20, 0), occ.span.start)
+        assertEquals(day, occ.day)
+        activities.setOverride(app.brujula.activities.OccurrenceOverride(id, day, null, null, true))
+        assertTrue(vm().state.first { it.own.isEmpty() }.own.isEmpty())
+    }
 }

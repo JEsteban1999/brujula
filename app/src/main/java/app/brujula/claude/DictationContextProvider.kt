@@ -43,12 +43,13 @@ class DictationContextProvider(
         val routine = routineRepository.routine.first()
         val activities = activityRepository.observeAll().first()
         val done = activityRepository.observeDoneKeys().first()
+        val overrides = activityRepository.observeOverrides().first()
         val linked = activityRepository.observeGoogleEventIds().first()
         val raw = externalAround(today).filter { it.eventId !in linked }
 
         fun busyOn(day: LocalDate): List<BusyItem> {
             val window = routine.awakeWindow(day)
-            val own = (spillOccurrences(day, activities, done, window) + logicalOccurrences(day, activities, done))
+            val own = (spillOccurrences(day, activities, done, window, overrides) + logicalOccurrences(day, activities, done, overrides))
                 .map { BusyItem(it.activity.title, it.span.start, it.span.end, external = false) }
             val external = eventsOnLogicalDay(day, raw, window).filter { !it.allDay }
                 .map { BusyItem(it.displayTitle, it.span.start, it.span.end, external = true) }

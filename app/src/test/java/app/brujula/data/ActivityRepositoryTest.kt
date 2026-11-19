@@ -99,4 +99,30 @@ class ActivityRepositoryTest {
         }
         assertEquals(77L, repo.get(id)!!.googleEventId)
     }
+
+    @Test fun upsertKeepsOriginWhenIncomingUnknown() = runTest {
+        val id = repo.upsert(sample.copy(origin = app.brujula.activities.ActivityOrigin.DICTATION))
+        assertEquals(app.brujula.activities.ActivityOrigin.DICTATION, repo.get(id)!!.origin)
+        repo.upsert(sample.copy(id = id, title = "Otro"))
+        assertEquals(app.brujula.activities.ActivityOrigin.DICTATION, repo.get(id)!!.origin)
+        repo.upsert(sample.copy(id = id, origin = app.brujula.activities.ActivityOrigin.PLAN))
+        assertEquals(app.brujula.activities.ActivityOrigin.PLAN, repo.get(id)!!.origin)
+    }
+
+    @Test fun overridesRoundTrip() = runTest {
+        val id = repo.upsert(sample)
+        val day = LocalDate.of(2026, 11, 27)
+        val o = app.brujula.activities.OccurrenceOverride(id, day, day.atTime(19, 30), 45, false)
+        repo.setOverride(o)
+        assertEquals(o, repo.getOverride(id, day))
+        assertEquals(mapOf((id to day) to o), repo.observeOverrides().first())
+        val skipped = o.copy(start = null, durationMin = null, skipped = true)
+        repo.setOverride(skipped)
+        assertEquals(skipped, repo.getOverride(id, day))
+        repo.clearOverride(id, day)
+        assertNull(repo.getOverride(id, day))
+        repo.setOverride(o)
+        repo.delete(id)
+        assertTrue(repo.observeOverrides().first().isEmpty())
+    }
 }
