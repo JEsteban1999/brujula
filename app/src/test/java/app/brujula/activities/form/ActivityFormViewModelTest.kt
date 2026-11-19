@@ -20,6 +20,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -374,6 +375,49 @@ class ActivityFormViewModelTest {
         app.brujula.calendar.GoogleCopyJournal(prefs).drain(sync, repo)
         assertTrue(writer.events.isEmpty())
         assertTrue(journal.pending().isEmpty())
+    }
+
+    private class RecordingJournal(private val fail: Boolean = false) : app.brujula.calendar.GoogleCopyJournal() {
+        var records = 0
+        override fun record(entries: List<Entry>) {
+            records++
+            if (fail) throw IllegalStateException("commit")
+            super.record(entries)
+        }
+    }
+
+    private fun TestScope.deleteVm(id: Long, journal: app.brujula.calendar.GoogleCopyJournal) = ActivityFormViewModel(
+        activityId = id, prefillStart = null, clock = clock, activityRepository = repo,
+        resync = { resyncs++ }, calendarSource = calendar, selectedCalendarIds = flowOf(setOf(1L)),
+        googleCopy = app.brujula.calendar.GoogleCopySync(app.brujula.calendar.FakeGoogleCalendarWriter(), repo),
+        googleScope = realScope, scopeOverride = backgroundScope, googleJournal = journal,
+    )
+
+    @Test fun deleteWithoutAGoogleCopyDoesNotJournal() = runTest {
+        val id = repo.observeAll().first().single().id
+        val journal = RecordingJournal()
+        val vm = deleteVm(id, journal)
+        vm.state.first { it.ready && it.isEdit }
+        vm.delete()
+        vm.state.first { it.saved }
+        assertNull(repo.get(id))
+        assertEquals(0, journal.records)
+    }
+
+    @Test fun deleteThatCannotJournalKeepsTheRowAndShowsAnError() = runTest {
+        val id = repo.upsert(
+            Activity(title = "Dentista", type = ActivityType.APPOINTMENT, date = tomorrow, start = LocalTime.of(9, 0), durationMin = 30, copyToGoogle = true),
+        )
+        val journal = RecordingJournal(fail = true)
+        val vm = deleteVm(id, journal)
+        vm.state.first { it.ready && it.isEdit }
+        vm.delete()
+        val s = vm.state.first { it.deleteError != null }
+        assertEquals(ActivityFormViewModel.DELETE_FAILED, s.deleteError)
+        assertFalse(s.saved)
+        assertEquals(1, journal.records)
+        assertNotNull(repo.get(id))
+        assertEquals(0, resyncs)
     }
 
     @Test fun slowGoogleWriteClosesFormAndFinishesInBackground() = runTest {

@@ -206,7 +206,7 @@ class PendingDictations(
 
     private suspend fun writePlanNote(day: LocalDate, text: String) {
         try {
-            notes?.set(ClaudeNote("Pediste: «$text». Toca para que Claude lo arme.", day, null))
+            notes?.set(ClaudeNote("Pediste: «$text». Toca para que Claude lo arme.", day, null, request = text))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

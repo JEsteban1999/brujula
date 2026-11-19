@@ -39,6 +39,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -402,7 +403,16 @@ class ProposalViewModelTest {
 
     @Test fun emptyProposalIsShownWithNoOps() = runTest {
         proposals.savePending(proposal(ops = emptyList()))
-        assertTrue(showing(vm()).proposal.ops.isEmpty())
+        val v = vm()
+        assertTrue(showing(v).proposal.ops.isEmpty())
+        // "No hace falta cambiar nada" también se puede ajustar (la pantalla muestra Ajustar junto a Listo).
+        v.openAdjust()
+        assertNotNull((v.state.value as ProposalUiState.Showing).adjusting)
+        planner.queue += PlanOutcome.Ok(proposal())
+        v.adjust("pasa el gym a la tarde")
+        showing(v)
+        assertEquals("pasa el gym a la tarde", planner.calls.single().adjustment)
+        assertTrue(planner.calls.single().previous!!.ops.isEmpty())
     }
 
     @Test fun noKeyShowsErrorWithoutRetry() = runTest {

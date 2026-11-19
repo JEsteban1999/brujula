@@ -40,7 +40,7 @@ class MainActivity : ComponentActivity() {
     /** Ruta de un enlace de notificación, ya filtrada; la consume `BrujulaNavHost` al componer. */
     private val pendingRoute = MutableStateFlow<String?>(null)
 
-    /** Solo rutas de la lista blanca: lo demás del extra se ignora. */
+    /** Solo rutas de la lista blanca: lo demás del extra se ignora; un pedido sin el secreto de la app se descarta. */
     private fun deliverRoute(intent: Intent?) {
         // Reabrir la app desde Recientes reutiliza el intent viejo: su enlace ya se siguió una vez.
         if (intent == null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
@@ -49,9 +49,14 @@ class MainActivity : ComponentActivity() {
             NotificationManagerCompat.from(this).cancel(intent.getIntExtra(Notifications.EXTRA_CANCEL_ID, 0))
             intent.removeExtra(Notifications.EXTRA_CANCEL_ID)
         }
-        val route = DeepLinks.parse(intent?.getStringExtra(DeepLinks.EXTRA_ROUTE)) ?: return
-        // Se quita el extra: al recrear la actividad (rotación) el mismo enlace no se vuelve a seguir.
-        intent?.removeExtra(DeepLinks.EXTRA_ROUTE)
+        // Un pedido para Claude solo vale si viene de nuestras notificaciones (llevan el secreto de la app).
+        val route = DeepLinks.fromIntent(
+            intent.getStringExtra(DeepLinks.EXTRA_ROUTE), intent.getStringExtra(DeepLinks.EXTRA_TOKEN), DeepLinks.token(this),
+        )
+        // Se quitan los extras: al recrear la actividad (rotación) el mismo enlace no se vuelve a seguir.
+        intent.removeExtra(DeepLinks.EXTRA_ROUTE)
+        intent.removeExtra(DeepLinks.EXTRA_TOKEN)
+        if (route == null) return
         pendingRoute.value = route
     }
 

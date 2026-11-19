@@ -81,6 +81,22 @@ class ReminderPlannerTest {
         assertEquals(1, prompts(sat.atTime(9, 0), acts = listOf(other)).size)
     }
 
+    @Test fun skippedExerciseThatDayCountsAsAnswered() {
+        // "Hoy no voy a entrenar": el plan saltó el ejercicio del sábado; no se pregunta "¿Te animas…?".
+        val gym = Activity(9, "Gimnasio", ActivityType.EXERCISE, sat.minusDays(3), LocalTime.of(17, 0), 60, Repeat.DAILY)
+        val skipped = mapOf((9L to sat) to app.brujula.activities.OccurrenceOverride(9, sat, null, null, true))
+        val r = ReminderPlanner.plan(
+            sat.atTime(9, 0), Routine(), emptyList(), emptyMap(), emptySet(), listOf(gym), emptySet(), overrides = skipped,
+        ).filter { it.kind == ReminderKind.EXERCISE_PROMPT }
+        assertTrue(r.toString(), r.isEmpty())
+        // Saltar algo que no es ejercicio no cuenta.
+        val walk = gym.copy(type = ActivityType.PERSONAL)
+        val other = ReminderPlanner.plan(
+            sat.atTime(9, 0), Routine(), emptyList(), emptyMap(), emptySet(), listOf(walk), emptySet(), overrides = skipped,
+        ).filter { it.kind == ReminderKind.EXERCISE_PROMPT }
+        assertEquals(1, other.size)
+    }
+
     @Test fun weekdayHolidayGetsPrompt() {
         val holiday = LocalDate.of(2026, 12, 8)
         assertEquals("exprompt:20261208", prompts(holiday.atTime(9, 0)).single().key)
@@ -243,10 +259,17 @@ class ReminderPlannerTest {
     }
 
     @Test fun nightNoticeFollowsAnEarlierBedtime() {
-        // Una cita temprano mañana pulla acostarse a las 22:00: el aviso sale 30 min antes (21:30), no a las 22:45.
+        // Una cita temprano mañana pulla acostarse a las 22:00 (aviso de dormir 21:30): el de armar mañana sale 30 min
+        // antes de ese aviso (21:00), no a las 22:45 ni en el mismo minuto que el de dormir.
         val bed = app.brujula.routine.BedtimeChoice(thu, thu.atTime(22, 0), 480, remind = true)
-        val r = planning(thu.atTime(12, 0), bedtime = bed).single { it.kind == ReminderKind.PLAN_NIGHT }
-        assertEquals(thu.atTime(21, 30), r.at)
+        val all = planning(thu.atTime(12, 0), bedtime = bed)
+        assertEquals(thu.atTime(21, 0), all.single { it.kind == ReminderKind.PLAN_NIGHT }.at)
+        assertEquals(thu.atTime(21, 30), all.single { it.kind == ReminderKind.BEDTIME }.at)
+        // Dormir 23:00 (aviso 22:30): el de armar mañana, 22:00.
+        val eleven = bed.copy(bedtime = thu.atTime(23, 0))
+        assertEquals(thu.atTime(22, 0), planning(thu.atTime(12, 0), bedtime = eleven).single { it.kind == ReminderKind.PLAN_NIGHT }.at)
+        // Solo a futuro: a las 21:10 el de las 21:00 ya pasó.
+        assertTrue(planning(thu.atTime(21, 10), bedtime = bed).none { it.kind == ReminderKind.PLAN_NIGHT && it.day == thu })
         // Una hora de dormir tardía no atrasa el aviso: manda la hora configurada.
         val late = app.brujula.routine.BedtimeChoice(thu, thu.plusDays(1).atTime(0, 15), 480, remind = false)
         assertEquals(thu.atTime(22, 45), planning(thu.atTime(12, 0), bedtime = late).single { it.kind == ReminderKind.PLAN_NIGHT }.at)

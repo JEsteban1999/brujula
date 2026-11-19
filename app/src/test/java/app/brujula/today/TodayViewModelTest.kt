@@ -27,6 +27,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -570,6 +571,23 @@ class TodayViewModelTest {
             accepted = kotlinx.coroutines.flow.flowOf(listOf(app.brujula.planning.AcceptedPlan(9, day.plusDays(1)))),
         ).state.first { it.claude != null }
         assertEquals(ClaudeCardState("Agendé tu cita.", 9L, true), s.claude)
+    }
+
+    @Test fun queuedPlanRequestNoteOpensItsDayWithTheRequest() = runTest {
+        val r = routineRepo()
+        val tomorrow = day.plusDays(1)
+        val queued = app.brujula.claude.ClaudeNote("Pediste: «arma mañana». Toca para que Claude lo arme.", tomorrow, null, request = "arma mañana")
+        val s = vm(routine = r, notes = kotlinx.coroutines.flow.flowOf(queued)).state.first { it.claude != null }
+        assertEquals(ClaudeCardState(queued.text, null, false, askDay = tomorrow, askRequest = "arma mañana"), s.claude)
+
+        // Sin pedido, la tarjeta arma hoy sin texto (como antes).
+        val plain = vm(routine = r, notes = kotlinx.coroutines.flow.flowOf(note("Agendé tu gym.", day))).state.first { it.claude != null }
+        assertNull(plain.claude!!.askDay)
+        assertNull(plain.claude!!.askRequest)
+
+        // Un pedido de un día que ya pasó no se ofrece.
+        val old = vm(routine = r, notes = kotlinx.coroutines.flow.flowOf(queued.copy(day = day.minusDays(1)))).state.first { it.claude != null }
+        assertEquals(ClaudeCardState(null, null, false), old.claude)
     }
 
     @Test fun cardAlwaysTargetsTodayEvenLate() = runTest {

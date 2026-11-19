@@ -40,4 +40,16 @@ class ClaudeNotesTest {
         ds.edit { it[stringPreferencesKey(ClaudeNotes.KEY)] = "{dañado" }
         assertNull(notes.note.first())
     }
+
+    @Test fun requestRoundTripsAndLegacyNotesStillDecode() = runTest {
+        val ds = store()
+        val notes = ClaudeNotes(ds)
+        val fri = LocalDate.of(2026, 11, 20)
+        notes.set(ClaudeNote("Pediste: «arma el viernes».", fri, null, request = "arma el viernes"))
+        assertEquals(ClaudeNote("Pediste: «arma el viernes».", fri, null, request = "arma el viernes"), notes.note.first())
+
+        // Una nota guardada antes de existir `request`.
+        ds.edit { it[stringPreferencesKey(ClaudeNotes.KEY)] = """{"text":"Hola","day":"2026-11-20","proposalId":7}""" }
+        assertEquals(ClaudeNote("Hola", fri, 7, request = null), notes.note.first())
+    }
 }

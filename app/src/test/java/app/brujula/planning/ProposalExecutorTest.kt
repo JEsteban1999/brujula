@@ -10,7 +10,13 @@ import app.brujula.activities.ActivityRepository
 import app.brujula.activities.ActivityType
 import app.brujula.activities.OccurrenceOverride
 import app.brujula.activities.Repeat
+import app.brujula.calendar.ExternalEvent
+import app.brujula.calendar.FakeCalendarSource
 import app.brujula.calendar.FakeGoogleCalendarWriter
+import app.brujula.calendar.WorkClassificationRepository
+import app.brujula.claude.lunchWindow
+import app.brujula.habits.HabitRepository
+import app.brujula.routine.RoutineRepository
 import app.brujula.calendar.GoogleCopyJournal
 import app.brujula.calendar.GoogleCopySync
 import app.brujula.calendar.GoogleEventDraft
@@ -647,6 +653,71 @@ class ProposalExecutorTest {
         assertEquals(AcceptResult.Failed(AcceptResult.FAILED), executor.accept(id))
         assertEquals(before, all())
         assertEquals("PENDING", status(id))
+    }
+
+    // ---- I1: aceptar vuelve a mirar el día (regla C) ----
+
+    private val calendar = FakeCalendarSource()
+
+    /** Ejecutor que toma una foto fresca del día (calendario falso, rutina por defecto: almuerzo 12:00–14:00). */
+    private suspend fun freshExecutor(): ProposalExecutor {
+        val routine = RoutineRepository(PreferenceDataStoreFactory.create(scope = storeScope) { File(tmp.root, "routine.preferences_pb") })
+        routine.calendarPrefs.setSelectedCalendarIds(setOf(1L))
+        val snaps = DaySnapshotProvider(routine, activities, HabitRepository(db.habitDao()), calendar, WorkClassificationRepository(db.workClassificationDao()))
+        return ProposalExecutor(
+            db, activities, proposals, googleSync, ReminderResync { log += "resync" }, notes, clock, scope,
+            reminderScheduler = RecordingScheduler(log), journal = journal,
+            snapshots = snaps, lunchFor = { routine.routine.first().lunchWindow(it) },
+        )
+    }
+
+    private fun outlook(id: Long, s: TimeSpan) = ExternalEvent(id, 0, 1, "Trabajo", "Outlook", "Reunión", s, false, null)
+
+    @Test fun externalEventAddedAfterTheProposalMakesItStale() = run {
+        val s = seed()
+        val ex = freshExecutor()
+        val id = proposals.savePending(proposal(fri, allOps(s)))
+        // Llega una reunión de Outlook durante la noche, encima del bloque nuevo de 9 a 11.
+        calendar.eventList = listOf(outlook(1, span(fri, 9, 30, 30)))
+        val before = all()
+
+        assertTrue(ex.isStale(proposals.get(id)!!))
+        assertEquals(AcceptResult.Stale(AcceptResult.STALE), ex.accept(id))
+        advanceUntilIdle()
+        assertEquals(before, all())
+        assertEquals("PENDING", status(id))
+        assertEquals(0, resyncs)
+        assertTrue(writer.touched.isEmpty())
+    }
+
+    @Test fun moveTargetOnTopOfANewExternalEventIsStale() = run {
+        val s = seed()
+        val ex = freshExecutor()
+        val id = proposals.savePending(proposal(fri, listOf(allOps(s)[1])))
+        assertTrue(!ex.isStale(proposals.get(id)!!))
+        calendar.eventList = listOf(outlook(2, span(fri, 16, 30, 60)))
+        assertTrue(ex.isStale(proposals.get(id)!!))
+        assertEquals(AcceptResult.Stale(AcceptResult.STALE), ex.accept(id))
+        assertEquals(LocalTime.of(15, 0), activities.get(s.bank)!!.start)
+    }
+
+    @Test fun createOnLunchOrOnAnUntouchedOwnBlockIsStale() = run {
+        val s = seed()
+        val ex = freshExecutor()
+        val lunch = proposals.savePending(proposal(fri, listOf(PlanOp.Create(deepWork.copy(start = LocalTime.of(12, 30), durationMin = 30)))))
+        assertEquals(AcceptResult.Stale(AcceptResult.STALE), ex.accept(lunch))
+        // El gimnasio de ese día (18:30–19:15) no lo toca la propuesta: un bloque encima no se acepta.
+        val onGym = proposals.savePending(proposal(fri, listOf(PlanOp.Create(deepWork.copy(start = LocalTime.of(19, 0), durationMin = 30)))))
+        assertTrue(ex.isStale(proposals.get(onGym)!!))
+        assertEquals(AcceptResult.Stale(AcceptResult.STALE), ex.accept(onGym))
+        assertTrue(titled("Trabajo profundo").isEmpty())
+
+        // Donde estaba algo que la propuesta mueve, sí: ese espacio queda libre.
+        val freed = proposals.savePending(
+            proposal(fri, listOf(allOps(s)[1], PlanOp.Create(deepWork.copy(start = LocalTime.of(15, 0), durationMin = 60)))),
+        )
+        assertTrue(!ex.isStale(proposals.get(freed)!!))
+        assertTrue(ex.accept(freed) is AcceptResult.Accepted)
     }
 
     @Test fun oneOffSkipThatWouldCascadeOtherDataIsStale() = run {

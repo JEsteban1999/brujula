@@ -194,6 +194,15 @@ fun ActivityFormScreen(
                 )
             }
 
+            state.deleteError?.let { error ->
+                Text(
+                    error, color = c.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.soft2)
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .semantics { this.liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
+                )
+            }
+
             if (state.isEdit) {
                 if (confirmDelete) {
                     DeleteConfirm(onCancel = { confirmDelete = false }, onConfirm = viewModel::delete)

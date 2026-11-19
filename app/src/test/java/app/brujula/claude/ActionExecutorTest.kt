@@ -205,6 +205,29 @@ class ActionExecutorTest {
         assertTrue(writer.events.isEmpty())
     }
 
+    @Test fun undoJournalsTheCopyDeleteAndALeftoverIsDrained() = run {
+        val prefs = ApplicationProvider.getApplicationContext<Context>().getSharedPreferences("exec-journal", Context.MODE_PRIVATE)
+            .also { it.edit().clear().commit() }
+        val journal = app.brujula.calendar.GoogleCopyJournal(prefs)
+        val sync = GoogleCopySync(writer, activities)
+        val ex = ActionExecutor(db, activities, habits, sync, ReminderResync { }, scope, journal = journal)
+        val r = ex.apply(listOf(Validated.Activity(dentist)))
+        advanceUntilIdle()
+        val id = r.undo!!.activityIds.single()
+        val eventId = activities.get(id)!!.googleEventId!!
+        // Sin permiso, la copia no se puede borrar ahora: el borrado queda en el diario (lleva id de evento).
+        writer.permission = false
+        ex.undo(r.undo!!)
+        assertNull(activities.get(id))
+        assertEquals(setOf(eventId), writer.events.keys)
+        assertEquals(1, journal.pending().size)
+        // Al volver el permiso, el arranque lo termina.
+        writer.permission = true
+        app.brujula.calendar.GoogleCopyJournal(prefs).drain(sync, activities)
+        assertTrue(writer.events.isEmpty())
+        assertTrue(journal.pending().isEmpty())
+    }
+
     @Test fun undoAfterLogRemovesHabitAndItsLogs() = run {
         val r = executor.apply(listOf(Validated.Habit(stretch)))
         val hid = r.undo!!.habitIds.single()

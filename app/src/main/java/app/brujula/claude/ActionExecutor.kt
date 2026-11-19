@@ -6,6 +6,7 @@ import androidx.room.withTransaction
 import app.brujula.activities.Activity
 import app.brujula.activities.ActivityRepository
 import app.brujula.activities.Repeat
+import app.brujula.calendar.GoogleCopyJournal
 import app.brujula.calendar.GoogleCopySync
 import app.brujula.core.time.SystemClock
 import app.brujula.core.time.formatMinutes
@@ -18,6 +19,7 @@ import app.brujula.reminders.ReminderResync
 import app.brujula.activities.ActivityType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -56,6 +58,8 @@ class ActionExecutor(
     private val notes: ClaudeNotes? = null,
     /** Día lógico de hoy, para la nota. */
     private val today: () -> LocalDate = { logicalDay(SystemClock.now()) },
+    /** Borrados de copias pendientes, persistidos antes de borrar la fila (producción: `container.googleCopyJournal`). */
+    private val journal: GoogleCopyJournal = GoogleCopyJournal(),
 ) : ActionApplier {
     /** Solo para pruebas: se invoca tras cada fila insertada, dentro de la transacción. */
     internal var afterInsert: (suspend () -> Unit)? = null
@@ -115,13 +119,17 @@ class ActionExecutor(
 
     /**
      * Idempotente y sin cancelación a medias. Por cada actividad creada se barre la copia de Google aunque la fila ya no
-     * exista (un reintento, o una copia que terminó después de [apply]): `afterDelete` busca por id de actividad.
+     * exista (un reintento, o una copia que terminó después de [apply]): el barrido busca por id de actividad. El borrado
+     * de la copia se anota en el diario antes de borrar la fila: si no se puede hacer ahora (sin permiso) o el proceso
+     * muere, el arranque lo termina.
      */
     override suspend fun undo(token: UndoToken) = withContext(NonCancellable) {
         for (id in token.activityIds) {
             val stored = activityRepo.get(id)
+            val entry = journal.delete(stored ?: stub(id))
+            withContext(Dispatchers.IO) { journal.record(listOf(entry)) }
             if (stored != null) activityRepo.delete(id)
-            googleCopySync.afterDelete(stored ?: stub(id))
+            journal.run(entry, googleCopySync, activityRepo)
         }
         token.habitIds.forEach { habitRepo.delete(it) }
         resyncSafely()

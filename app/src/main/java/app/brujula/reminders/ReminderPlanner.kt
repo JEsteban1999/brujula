@@ -95,6 +95,11 @@ object ReminderPlanner {
         }
         for (day in days) {
             if (!dayTypeOf(day).isRest || day in exercisePromptAnswered) continue
+            // Saltar el ejercicio de ese día (p. ej. "hoy no voy a entrenar" en un plan) ya es una respuesta.
+            val skippedExercise = overrides.any { (key, o) ->
+                o.skipped && key.second == day && activities.any { it.id == key.first && it.type == ActivityType.EXERCISE }
+            }
+            if (skippedExercise) continue
             // Cuenta por dia logico: un ejercicio a las 00:30 del dia siguiente es de este dia; el de hoy a las 00:30 no.
             val exerciseToday = (occurrencesOn(day, activities, doneKeys, overrides) + occurrencesOn(day.plusDays(1), activities, doneKeys, overrides))
                 .any { it.activity.type == ActivityType.EXERCISE && logicalDay(it.span.start) == day }
@@ -123,7 +128,9 @@ object ReminderPlanner {
                 val window = routine.awakeWindow(day)
                 // Una hora de dormir más temprana (p. ej. una cita temprano mañana) adelanta el aviso para armar el día.
                 var at = day.atTime(routine.nightNotice)
-                if (bedtime != null && bedtime.day == day) at = minOf(at, bedtime.remindAt)
+                // Media hora antes del aviso de dormir, no en el mismo minuto.
+                if (bedtime != null && bedtime.day == day) at = minOf(at, bedtime.remindAt.minusMinutes(NIGHT_BEFORE_BED_MIN))
+                if (at < window.start) at = window.start
                 if (at !in window) at = window.end.minusMinutes(NIGHT_BEFORE_BED_MIN)
                 if (at > now && at <= limit) {
                     out += Reminder(

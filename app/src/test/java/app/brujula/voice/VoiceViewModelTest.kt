@@ -87,6 +87,11 @@ class VoiceViewModelTest {
         assertEquals(listOf("Los hábitos se cambian a mano."), s.messages)
         assertEquals(plan, s.proposal)
         assertTrue(r.exec.applied.isEmpty())
+        // No dice "No agendé nada": lo que sigue es la Propuesta.
+        assertEquals(VoiceCopy.PLAN_OFFERED, s.title)
+        assertEquals("Claude puede reorganizar tu día", VoiceCopy.PLAN_OFFERED)
+        assertEquals(VoiceCopy.NOTHING_SCHEDULED, s.copy(proposal = null).title)
+        assertEquals(VoiceCopy.SCHEDULED, s.copy(created = listOf("Dentista")).title)
     }
 
     @Test fun mixedAppliesCreatesAndOffersProposal() = runTest {

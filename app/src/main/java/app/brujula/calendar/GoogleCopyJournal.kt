@@ -3,9 +3,7 @@ package app.brujula.calendar
 import android.content.SharedPreferences
 import app.brujula.activities.Activity
 import app.brujula.activities.ActivityRepository
-import app.brujula.activities.ActivityType
-import java.time.LocalDate
-import java.time.LocalTime
+import kotlinx.coroutines.CancellationException
 import java.util.UUID
 
 /**
@@ -16,10 +14,13 @@ import java.util.UUID
  * - [Entry.Save]: `afterSave` de la fila actual, solo si existe;
  * - [Entry.Delete]: `afterDelete` de la foto guardada, solo si la fila ya no existe.
  *
- * Una entrada que no se pudo hacer (sin permiso, o con error) se queda para el siguiente [drain]. Sin [prefs], vive en
- * memoria (pruebas y valores por defecto).
+ * La revisión de la fila se hace con el cerrojo de [GoogleCopySync] tomado, así nunca se cruza con otra copia en curso.
+ *
+ * Una entrada que no se pudo hacer (sin permiso, o con error) se queda para el siguiente [drain]. Sin permiso de escritura
+ * se sueltan las que no tienen id de evento: no hay copia conocida que borrar o actualizar, y una copia que falta la crea
+ * `reconcile`. Sin [prefs], vive en memoria (pruebas y valores por defecto).
  */
-class GoogleCopyJournal(private val prefs: SharedPreferences? = null) {
+open class GoogleCopyJournal(private val prefs: SharedPreferences? = null) {
     sealed interface Entry {
         val token: String
         val activityId: Long
@@ -37,7 +38,7 @@ class GoogleCopyJournal(private val prefs: SharedPreferences? = null) {
 
     /** Persiste [entries] antes de confirmar el cambio; si no se puede escribir, lanza (y la transacción se revierte). */
     @Synchronized
-    fun record(entries: List<Entry>) {
+    open fun record(entries: List<Entry>) {
         if (entries.isEmpty()) return
         val next = load() + entries.map { encode(it) }
         if (prefs == null) {
@@ -72,11 +73,21 @@ class GoogleCopyJournal(private val prefs: SharedPreferences? = null) {
     }
 
     private suspend fun perform(entry: Entry, sync: GoogleCopySync, repo: ActivityRepository): Boolean = when (entry) {
-        is Entry.Save -> {
-            val row = repo.get(entry.activityId)
-            row == null || sync.afterSave(row).let { it != GoogleCopyStatus.NO_PERMISSION && it != GoogleCopyStatus.FAILED }
+        is Entry.Save -> when (sync.afterSaveIfExists(entry.activityId)) {
+            GoogleCopyStatus.FAILED -> false
+            // Sin vínculo no hay copia que actualizar: reconcile la creará cuando haya permiso.
+            GoogleCopyStatus.NO_PERMISSION -> unlinked(entry.activityId, repo)
+            else -> true
         }
-        is Entry.Delete -> repo.get(entry.activityId) != null || sync.afterDelete(stub(entry))
+        is Entry.Delete -> (entry.googleEventId == null && !sync.canWrite()) || sync.afterDeleteIfGone(entry.activityId, entry.googleEventId)
+    }
+
+    private suspend fun unlinked(id: Long, repo: ActivityRepository): Boolean = try {
+        repo.get(id)?.googleEventId == null
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        false
     }
 
     private fun load(): Set<String> = if (prefs == null) memory.toSet() else prefs.getStringSet(KEY, emptySet()).orEmpty().toSet()
@@ -94,12 +105,6 @@ class GoogleCopyJournal(private val prefs: SharedPreferences? = null) {
             else -> null
         }
     }.getOrNull()
-
-    /** `afterDelete` solo usa el id y el id de evento. */
-    private fun stub(e: Entry.Delete) = Activity(
-        id = e.activityId, title = "", type = ActivityType.PERSONAL, date = LocalDate.of(1970, 1, 1), start = LocalTime.MIDNIGHT,
-        durationMin = 5, googleEventId = e.googleEventId,
-    )
 
     companion object {
         private const val KEY = "entries"

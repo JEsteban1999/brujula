@@ -66,6 +66,13 @@ object Routes {
     /** "¿Armamos mañana?"; es también la ruta de enlace `plan_tomorrow` de la notificación nocturna. */
     const val PLAN_TOMORROW = "plan_tomorrow"
 
+    /**
+     * Cuántas pantallas sacar con `Listo` después de aceptar una propuesta, según la que está debajo. Si es el formulario
+     * ("Pedir a Claude otro horario"), su borrador chocaba y el plan ya lo resolvió: volver a él y Guardar duplicaría.
+     * Atrás sin aceptar sigue volviendo al borrador.
+     */
+    fun popsAfterAccept(belowRoute: String?): Int = if (belowRoute == ACTIVITY_FORM) 2 else 1
+
     /** `day` es ISO; `request` (opcional) se codifica como URL y se decodifica al abrir la pantalla. */
     fun proposal(day: LocalDate, request: String? = null): String {
         val q = request?.takeIf { it.isNotBlank() }?.let { "&request=" + URLEncoder.encode(it, "UTF-8").replace("+", "%20") }.orEmpty()
@@ -165,7 +172,7 @@ fun BrujulaNavHost(
                     viewModel = vm,
                     onEditActivity = { navController.navigate(Routes.activityForm(id = it)) },
                     onAddAt = { navController.navigate(Routes.activityForm(start = it)) },
-                    onAskClaude = { navController.navigate(Routes.proposal(it)) },
+                    onAskClaude = { day, request -> navController.navigate(Routes.proposal(day, request?.take(DeepLinks.MAX_REQUEST))) },
                 )
             }
             composable(
@@ -205,6 +212,12 @@ fun BrujulaNavHost(
                 ProposalScreen(
                     viewModel = vm,
                     onClose = { if (navController.currentDestination?.route == Routes.PROPOSAL) navController.popBackStack() },
+                    onAcceptedDone = {
+                        if (navController.currentDestination?.route == Routes.PROPOSAL) {
+                            val below = navController.previousBackStackEntry?.destination?.route
+                            repeat(Routes.popsAfterAccept(below)) { navController.popBackStack() }
+                        }
+                    },
                 )
             }
             composable(Routes.PLAN_TOMORROW) {

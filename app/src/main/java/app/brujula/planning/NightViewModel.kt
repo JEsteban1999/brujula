@@ -126,7 +126,7 @@ class NightViewModel(
             val source = if (o.activity.origin == ActivityOrigin.DICTATION) "lo dictaste" else o.activity.type.labelEs.lowercase()
             Triple(o.span.start, o.activity.title, source)
         }
-        val external = s.external.map { Triple(it.event.span.start, it.event.title, it.event.source) }
+        val external = s.external.map { Triple(it.event.span.start, it.event.displayTitle, it.event.source) }
         return (own + external)
             .filter { logicalDay(it.first) == s.day }
             .sortedBy { it.first }

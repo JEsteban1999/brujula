@@ -151,12 +151,36 @@ class ReminderSyncTest {
     }
 
     @Test fun citaTomorrowPullsReminderEarlier() = runBlocking {
-        // Cita a las 6:30: levantarse 6:00, dormir 22:00, aviso 21:30; el aviso para armar mañana tambien sale 21:30.
+        // Cita a las 6:30: levantarse 6:00, dormir 22:00, aviso 21:30; el aviso para armar mañana sale 30 min antes (21:00).
         activities.upsert(Activity(title = "Dentista", type = ActivityType.APPOINTMENT, date = fri, start = java.time.LocalTime.of(6, 30), durationMin = 60))
         val scheduler = RecordingScheduler()
         planningSync(thu.atTime(20, 0), scheduler).resync()
         assertEquals(thu.atTime(21, 30), scheduler.of(ReminderKind.BEDTIME).single().at)
-        assertEquals(thu.atTime(21, 30), scheduler.of(ReminderKind.PLAN_NIGHT).single { it.day == thu }.at)
+        assertEquals(thu.atTime(21, 0), scheduler.of(ReminderKind.PLAN_NIGHT).single { it.day == thu }.at)
+    }
+
+    @Test fun hangingBedtimeSourceStillSchedulesTheOtherReminders() = runBlocking {
+        // La agenda del teléfono no responde (una lectura que bloquea el hilo): la pasada sigue sin hora de dormir.
+        val stuck = java.util.concurrent.CountDownLatch(1)
+        try {
+            val scheduler = RecordingScheduler()
+            val sync = ReminderSync(
+                FixedClock(thu.atTime(20, 0)), routine, activities, habits, scheduler,
+                bedtime = { stuck.await(); null }, bedtimeTimeoutMs = 200,
+            )
+            kotlinx.coroutines.withTimeout(5_000) { sync.resync() }
+            assertEquals(1, scheduler.of(ReminderKind.PLAN_NIGHT).count { it.day == thu })
+            assertTrue(scheduler.of(ReminderKind.BEDTIME).isEmpty())
+        } finally {
+            stuck.countDown()
+        }
+    }
+
+    @Test fun onlyRecentPlannedDaysCancelPostedNightNotices() = runBlocking {
+        val cancelled = mutableListOf<String>()
+        planningSync(thu.atTime(20, 0), RecordingScheduler(), planned = setOf(thu.minusDays(10), thu.minusDays(1), thu, fri), cancelled = cancelled).resync()
+        // Hoy − 1 en adelante: los días 18, 19 y 20 quitan el aviso de su noche anterior; uno de hace 10 días no.
+        assertEquals(listOf("night:20261117", "night:20261118", "night:20261119"), cancelled.sorted())
     }
 
     @Test fun prefOffSuppressesReminder() = runBlocking {

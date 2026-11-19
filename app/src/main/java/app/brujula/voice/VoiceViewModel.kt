@@ -25,6 +25,8 @@ object VoiceCopy {
     const val THINKING = "Claude está entendiendo…"
     const val SCHEDULED = "Agendado"
     const val NOTHING_SCHEDULED = "No agendé nada"
+    /** Título del Resultado cuando no se agendó nada pero sigue una Propuesta. */
+    const val PLAN_OFFERED = "Claude puede reorganizar tu día"
     const val UNDONE = "Deshecho"
     const val UNDO = "Deshacer"
     const val DONE = "Listo"
@@ -58,7 +60,13 @@ sealed interface VoiceState {
         val undoAvailable: Boolean,
         /** Además de lo agendado, el dictado pidió cambiar o armar un día: lleva a la Propuesta (no se aplicó nada de eso). */
         val proposal: Validated.PlanRequest? = null,
-    ) : VoiceState
+    ) : VoiceState {
+        val title: String get() = when {
+            created.isNotEmpty() -> VoiceCopy.SCHEDULED
+            proposal != null -> VoiceCopy.PLAN_OFFERED
+            else -> VoiceCopy.NOTHING_SCHEDULED
+        }
+    }
     /** El dictado solo pidió un cambio o armar un día: no se aplica nada, la pantalla pasa a la Propuesta de [day]. */
     data class OpenProposal(val day: LocalDate, val request: String) : VoiceState
     data object Undone : VoiceState

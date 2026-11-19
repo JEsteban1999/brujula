@@ -25,6 +25,7 @@ import app.brujula.claude.DictationInterpreter
 import app.brujula.claude.DayPlanner
 import app.brujula.claude.PlanContext
 import app.brujula.claude.PlanContextProvider
+import app.brujula.claude.lunchWindow
 import app.brujula.planning.BedtimeSource
 import app.brujula.planning.DaySnapshotProvider
 import app.brujula.planning.ProposalExecutor
@@ -144,6 +145,7 @@ class AppContainer(val context: Context) {
         get() = proposalExecutorOverride ?: ProposalExecutor(
             database, activityRepository, proposalRepository, googleCopySync, reminderSync, claudeNotes, clock, syncScope,
             reminderScheduler = reminderScheduler, journal = googleCopyJournal, lock = proposalLock,
+            snapshots = daySnapshots, lunchFor = { day -> routineRepository.routine.first().lunchWindow(day) },
         )
         set(value) { proposalExecutorOverride = value }
 
@@ -157,7 +159,7 @@ class AppContainer(val context: Context) {
 
     /** Aplica y deshace lo dictado, con las dependencias vigentes; sustituible en pruebas. */
     var executor: ActionApplier
-        get() = executorOverride ?: ActionExecutor(database, activityRepository, habitRepository, googleCopySync, reminderSync, syncScope = syncScope, notes = claudeNotes, today = { logicalDay(clock.now()) })
+        get() = executorOverride ?: ActionExecutor(database, activityRepository, habitRepository, googleCopySync, reminderSync, syncScope = syncScope, notes = claudeNotes, today = { logicalDay(clock.now()) }, journal = googleCopyJournal)
         set(value) { executorOverride = value }
 
     /** Dictados guardados sin conexión; al terminar una pasada avisa con una notificación en `actividades`. */

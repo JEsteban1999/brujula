@@ -37,7 +37,8 @@ fun TodayScreen(
     viewModel: TodayViewModel,
     onEditActivity: (Long) -> Unit,
     onAddAt: (java.time.LocalDateTime) -> Unit,
-    onAskClaude: (java.time.LocalDate) -> Unit = {},
+    /** Día a armar y pedido opcional (un pedido de plan en cola). */
+    onAskClaude: (java.time.LocalDate, String?) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -64,7 +65,7 @@ fun TodayScreen(
             item(key = "claude") {
                 ClaudeCard(
                     card = card, message = state.claudeMessage, reduced = reduced,
-                    onAsk = { onAskClaude(state.day) },
+                    onAsk = { onAskClaude(card.askDay ?: state.day, card.askRequest) },
                     onUndo = viewModel::undoPlan,
                     onDismissMessage = viewModel::dismissClaudeMessage,
                 )

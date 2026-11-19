@@ -83,7 +83,13 @@ import app.brujula.ui.rememberReducedMotion
 private val Examples = listOf("Pasa el gym a la tarde", "Hoy no voy a entrenar")
 
 @Composable
-fun ProposalScreen(viewModel: ProposalViewModel, onClose: () -> Unit, modifier: Modifier = Modifier) {
+fun ProposalScreen(
+    viewModel: ProposalViewModel,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+    /** `Listo` tras aceptar: además de cerrar, puede sacar de la pila lo que el plan ya resolvió (el borrador del formulario). */
+    onAcceptedDone: () -> Unit = onClose,
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val c = BrujulaTheme.colors
     val reduced = rememberReducedMotion()
@@ -91,7 +97,7 @@ fun ProposalScreen(viewModel: ProposalViewModel, onClose: () -> Unit, modifier: 
         when (val s = state) {
             ProposalUiState.Loading -> Loading(reduced, onCancel = viewModel::cancelWaiting)
             is ProposalUiState.Showing -> Showing(s, viewModel, reduced)
-            is ProposalUiState.Accepted -> AcceptedView(s, reduced, onUndo = viewModel::undo, onDone = onClose)
+            is ProposalUiState.Accepted -> AcceptedView(s, reduced, onUndo = viewModel::undo, onDone = onAcceptedDone)
             is ProposalUiState.Error -> ErrorView(s, reduced, onRetry = viewModel::retry, onClose = onClose)
             ProposalUiState.Closed -> LaunchedEffect(Unit) { onClose() }
         }
@@ -177,7 +183,14 @@ private fun Showing(s: ProposalUiState.Showing, vm: ProposalViewModel, reduced: 
         when {
             adjusting != null -> AdjustPanel(adjusting, s.busy, reduced, vm)
             s.stale -> BigButton("Pedir una nueva", primary = true, reduced = reduced, onClick = vm::requestNew)
-            p.ops.isEmpty() -> BigButton("Listo", primary = true, reduced = reduced, onClick = vm::discard)
+            // Nada que cambiar: igual se puede pedir un ajuste.
+            p.ops.isEmpty() -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                BigButton(
+                    "Ajustar", primary = false, reduced = reduced, enabled = !s.busy, onClick = vm::openAdjust,
+                    modifier = Modifier.weight(1f), icon = Icons.Outlined.Mic,
+                )
+                BigButton("Listo", primary = true, reduced = reduced, enabled = !s.busy, onClick = vm::discard, modifier = Modifier.weight(1.5f))
+            }
             else -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 BigButton(
                     "Ajustar", primary = false, reduced = reduced, enabled = !s.busy, onClick = vm::openAdjust,

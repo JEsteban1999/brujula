@@ -20,7 +20,7 @@ fun morningBody(s: DaySnapshot): String {
     val work = s.summary.workMinutes
     if (!(s.summary.workGoal == null && work == 0)) parts += "${formatMinutes(work)} de trabajo"
     val own = s.own.filter { it.activity.type != ActivityType.WORK }.map { it.span.start to it.activity.title }
-    val external = s.external.filter { !it.countsAsWork }.map { it.event.span.start to it.event.title }
+    val external = s.external.filter { !it.countsAsWork }.map { it.event.span.start to it.event.displayTitle }
     (own + external)
         .filter { logicalDay(it.first) == s.day }
         .sortedBy { it.first }

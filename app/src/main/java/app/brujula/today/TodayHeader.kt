@@ -264,7 +264,8 @@ private fun HabitCard(chip: HabitChip, warm: Boolean, reduced: Boolean, modifier
 
 /**
  * Tarjeta de Claude (D15): la última nota con `Deshacer` mientras el plan siga aceptado; si no hay nota del día,
- * `¿Te armo el día?` con `Que Claude arme mi día`. Un toque abre Propuesta de hoy.
+ * `¿Te armo el día?` con `Que Claude arme mi día`. Un toque abre Propuesta de hoy, o la del día de un pedido de plan en cola
+ * (con su texto).
  */
 @Composable
 fun ClaudeCard(

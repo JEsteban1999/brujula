@@ -82,7 +82,7 @@ class PendingDictationsTest {
         p.add("hoy no voy a entrenar", 1)
         p.drain(FakeInterpreter(InterpretOutcome.Ok(listOf(Validated.PlanRequest(friday, "hoy no voy a entrenar")), "x")), FakeExecutor())
         assertEquals(
-            ClaudeNote("Pediste: «hoy no voy a entrenar». Toca para que Claude lo arme.", friday, null),
+            ClaudeNote("Pediste: «hoy no voy a entrenar». Toca para que Claude lo arme.", friday, null, request = "hoy no voy a entrenar"),
             cn.note.first(),
         )
     }

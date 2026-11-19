@@ -40,6 +40,46 @@ class GoogleCopySync(
         syncLocked(stored, stored)
     }
 
+    /**
+     * Para el diario: relee la fila con el cerrojo tomado y la copia según cómo está ahora; si ya no existe no hay nada que
+     * copiar. Un error al leer cuenta como FAILED (la entrada se queda para reintentar).
+     */
+    internal suspend fun afterSaveIfExists(id: Long): GoogleCopyStatus = mutex.withLock {
+        val stored = try {
+            activityRepository.get(id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("GoogleCopySync", "No se pudo leer la actividad", e)
+            return@withLock GoogleCopyStatus.FAILED
+        } ?: return@withLock GoogleCopyStatus.NOT_REQUESTED
+        syncLocked(stored, stored)
+    }
+
+    /**
+     * Para el diario: con el cerrojo tomado, borra las copias de [id] solo si la fila sigue sin existir (deshacer pudo
+     * volver a crearla con el mismo id y una copia nueva). `true` = terminado; `false` = reintentar (sin permiso o error).
+     */
+    internal suspend fun afterDeleteIfGone(id: Long, googleEventId: Long?): Boolean = mutex.withLock {
+        val row = try {
+            activityRepository.get(id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("GoogleCopySync", "No se pudo leer la actividad", e)
+            return@withLock false
+        }
+        if (row != null) return@withLock true
+        deleteLocked(id, googleEventId)
+    }
+
+    /** Hay permiso de escritura (un error al preguntar cuenta como que no). */
+    internal fun canWrite(): Boolean = try {
+        writer.hasWritePermission()
+    } catch (e: Exception) {
+        false
+    }
+
     private suspend fun ActivityRepository.safeGet(id: Long): Activity? = try {
         get(id)
     } catch (e: CancellationException) {
@@ -119,14 +159,16 @@ class GoogleCopySync(
      * [a] es la actividad tal como estaba antes de borrarla (con su googleEventId). Devuelve `false` si no se pudo
      * intentar (sin permiso o con error), para que quien lo pidió pueda reintentar después.
      */
-    suspend fun afterDelete(a: Activity): Boolean = mutex.withLock {
-        try {
+    suspend fun afterDelete(a: Activity): Boolean = mutex.withLock { deleteLocked(a.id, a.googleEventId) }
+
+    private suspend fun deleteLocked(activityId: Long, googleEventId: Long?): Boolean {
+        return try {
             if (!writer.hasWritePermission()) {
-                Log.w("GoogleCopySync", "Sin permiso de escritura: la copia de Google de la actividad ${a.id} no se pudo borrar")
-                return@withLock false
+                Log.w("GoogleCopySync", "Sin permiso de escritura: la copia de Google de la actividad $activityId no se pudo borrar")
+                return false
             }
             withContext(NonCancellable) {
-                val ids = (listOfNotNull(a.googleEventId) + writer.findCopies(a.id)).toSet()
+                val ids = (listOfNotNull(googleEventId) + writer.findCopies(activityId)).toSet()
                 ids.forEach { writer.delete(it) }
             }
             true

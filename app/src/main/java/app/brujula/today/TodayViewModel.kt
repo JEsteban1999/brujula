@@ -75,7 +75,14 @@ sealed interface TimelineBlock {
  * Tarjeta de Claude (D15). [text] nulo = estado vacío (`¿Te armo el día?`). [proposalId] y [canUndo] salen del plan aceptado
  * más reciente cuyo día no ha pasado (no de la nota: un dictado posterior la reemplaza pero el plan sigue deshaciéndose).
  */
-data class ClaudeCardState(val text: String?, val proposalId: Long?, val canUndo: Boolean)
+data class ClaudeCardState(
+    val text: String?,
+    val proposalId: Long?,
+    val canUndo: Boolean,
+    /** La nota es un pedido de plan en cola: el botón abre la Propuesta de [askDay] con [askRequest]; null = hoy, sin pedido. */
+    val askDay: LocalDate? = null,
+    val askRequest: String? = null,
+)
 
 data class TodayUiState(
     val dayLabel: String,
@@ -294,7 +301,8 @@ class TodayViewModel(
         val note = inputs.note?.takeIf { it.day >= day }
         val plan = inputs.accepted.firstOrNull { it.day >= day }
         val text = note?.text ?: plan?.let { PLAN_READY }
-        return ClaudeCardState(text, plan?.id, canUndo = plan != null)
+        val ask = note?.takeIf { !it.request.isNullOrBlank() }
+        return ClaudeCardState(text, plan?.id, canUndo = plan != null, askDay = ask?.day, askRequest = ask?.request)
     }
 
     /** `Deshacer` de la tarjeta: el resultado queda en [TodayUiState.claudeMessage]. De un solo vuelo; el ejecutor no se cancela. */

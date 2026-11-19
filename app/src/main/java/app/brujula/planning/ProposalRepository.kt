@@ -54,13 +54,20 @@ open class ProposalRepository(private val dao: ProposalDao) {
     /** Tras deshacer: vuelve a PENDING (y es la pendiente de su día) para poder aceptarla otra vez (D16). */
     internal suspend fun reopen(id: Long, day: LocalDate) = dao.reopenAsOnlyPending(id, day)
 
+    /** Como [get] pero sin efectos: un payload ilegible no se marca DISCARDED (eso lo decide quien aplica). */
+    internal suspend fun peek(id: Long): Proposal? = dao.get(id)?.let { decode(it) }
+
     private suspend fun toModel(e: ProposalEntity): Proposal? {
-        val body = ProposalCodec.decode(e.payload)
-        val status = runCatching { ProposalStatus.valueOf(e.status) }.getOrNull()
-        if (body == null || status == null) {
-            if (status == ProposalStatus.PENDING) dao.setStatus(e.id, ProposalStatus.DISCARDED.name)
-            return null
+        val model = decode(e)
+        if (model == null && runCatching { ProposalStatus.valueOf(e.status) }.getOrNull() == ProposalStatus.PENDING) {
+            dao.setStatus(e.id, ProposalStatus.DISCARDED.name)
         }
+        return model
+    }
+
+    private fun decode(e: ProposalEntity): Proposal? {
+        val body = ProposalCodec.decode(e.payload) ?: return null
+        val status = runCatching { ProposalStatus.valueOf(e.status) }.getOrNull() ?: return null
         return Proposal(
             id = e.id, day = e.day, createdAt = e.createdAt, request = e.request, summary = e.summary, ops = body.ops,
             rejected = body.rejected, preview = body.preview, totals = body.totals, status = status,

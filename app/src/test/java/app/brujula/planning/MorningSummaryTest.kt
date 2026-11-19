@@ -49,6 +49,11 @@ class MorningSummaryTest {
         assertEquals("1 h de trabajo \u00b7 Caminata a las 11:00", morningBody(s.copy(summary = s.summary.copy(workMinutes = 60))))
     }
 
+    @Test fun untitledExternalEventUsesDisplayTitle() {
+        val s = snap(sat, 0, own = emptyList(), external = listOf(ext("", sat.atTime(15, 0))), goal = null)
+        assertEquals("(Sin título) a las 15:00", morningBody(s))
+    }
+
     @Test fun otherEdgeCases() {
         // Lo de ayer que cruza la medianoche no es de este dia; un dia sin nada tiene texto propio.
         val spill = own("Cine", ActivityType.PERSONAL, sat.minusDays(1), 23).let { it.copy(span = TimeSpan(sat.atTime(0, 30), sat.atTime(1, 30))) }

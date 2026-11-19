@@ -82,6 +82,12 @@ class NightViewModelTest {
         )
     }
 
+    @Test fun untitledExternalEventShowsItsDisplayTitle() = runTest {
+        calendar.eventList = listOf(call().copy(title = "  "))
+        val s = env(thu.atTime(22, 45)).loaded()
+        assertEquals(listOf(NightItem("(Sin título)", "15:00", "Outlook")), s.tomorrow)
+    }
+
     @Test fun stateMatchesMockupCopy() = runTest {
         seedTomorrow()
         val s = env(thu.atTime(22, 45)).loaded()

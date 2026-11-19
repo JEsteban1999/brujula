@@ -69,6 +69,8 @@ data class ActivityFormState(
     val saving: Boolean = false,
     /** En edición, falso hasta que la actividad termina de cargar. */
     val ready: Boolean = true,
+    /** No se pudo eliminar (no se borró nada). */
+    val deleteError: String? = null,
 ) {
     val end: LocalTime get() = start.plusMinutes(durationMin.toLong())
 
@@ -336,15 +338,31 @@ class ActivityFormViewModel(
     fun delete() {
         val id = editingId ?: return
         scope.launch {
-            val before = activityRepository.get(id)
-            // Antes de borrar: si el proceso muere antes de la tanda de Google, el arranque borra la copia.
-            val entry = if (before != null && googleCopy != null) googleJournal.delete(before).also { googleJournal.record(listOf(it)) } else null
-            activityRepository.delete(id)
+            _state.update { it.copy(deleteError = null) }
+            val entry = try {
+                val before = activityRepository.get(id)
+                // Antes de borrar: si el proceso muere antes de la tanda de Google, el arranque borra la copia. Solo si
+                // hay (o puede haber) copia: una actividad que nunca se copió no tiene nada que perseguir.
+                val copied = before?.takeIf { googleCopy != null && (it.copyToGoogle || it.googleEventId != null) }
+                val e = copied?.let { googleJournal.delete(it) }?.also { withContext(Dispatchers.IO) { googleJournal.record(listOf(it)) } }
+                activityRepository.delete(id)
+                e
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("ActivityForm", "No se pudo eliminar la actividad: ${e.javaClass.simpleName}")
+                _state.update { it.copy(deleteError = DELETE_FAILED) }
+                return@launch
+            }
             runCatching { resync.resync() }
             if (entry != null) {
                 googleCopy?.let { sync -> googleScope.launch { googleJournal.run(entry, sync, activityRepository) } }
             }
             _state.update { it.copy(saved = true) }
         }
+    }
+
+    companion object {
+        const val DELETE_FAILED = "No pude eliminar la actividad. Inténtalo de nuevo."
     }
 }

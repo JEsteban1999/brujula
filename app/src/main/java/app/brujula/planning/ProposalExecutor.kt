@@ -103,6 +103,13 @@ open class ProposalExecutor(
     /** Copias a Google pendientes, persistidas antes del commit (producción: `container.googleCopyJournal`). */
     private val journal: GoogleCopyJournal = GoogleCopyJournal(),
     internal val lock: ProposalLock = ProposalLock(),
+    /**
+     * Foto fresca del día al aceptar (regla C): lo nuevo y lo movido no pueden caer encima de un evento externo que llegó
+     * después de proponer, del almuerzo ni de algo propio que la propuesta no toca. `null` = no se vuelve a mirar.
+     */
+    private val snapshots: DaySnapshotProvider? = null,
+    /** Almuerzo del día (D7) con la rutina vigente. */
+    private val lunchFor: suspend (LocalDate) -> TimeSpan? = { null },
 ) {
     /** Solo para pruebas: se invoca dentro de la transacción, después de aplicar los cambios y antes de marcarla aceptada. */
     internal var afterApply: (suspend () -> Unit)? = null
@@ -120,7 +127,9 @@ open class ProposalExecutor(
         withContext(NonCancellable) {
             val now = clock.now()
             val outcome = try {
-                database.withTransaction { acceptInTransaction(id, now) }
+                // La foto del día se lee fuera de la transacción (calendarios del sistema); PENDING y lo referido, dentro.
+                val clashing = proposals.peek(id)?.takeIf { it.status == ProposalStatus.PENDING }?.let { clashes(it) } ?: false
+                database.withTransaction { acceptInTransaction(id, now, clashing) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -153,15 +162,43 @@ open class ProposalExecutor(
      * Lo mismo que revisa `accept` antes de aplicar, sin aplicar nada: el día ya pasó, algo de hoy ya empezó, o lo que la
      * propuesta toca cambió. La pantalla lo usa para no mostrar como vigente una propuesta guardada que ya no sirve.
      */
-    open suspend fun isStale(p: Proposal): Boolean = isExpired(p, clock.now()) || !p.ops.all { isCurrent(it) }
+    open suspend fun isStale(p: Proposal): Boolean = isExpired(p, clock.now()) || !p.ops.all { isCurrent(it) } || clashes(p)
 
-    private suspend fun acceptInTransaction(id: Long, now: LocalDateTime): Outcome<AcceptResult> {
+    /**
+     * Regla C al aceptar: algún `create` o el destino de algún `move` choca con un evento externo con hora que hay ahora en
+     * el día, con el almuerzo, o con una ocurrencia propia que la propuesta no mueve ni quita.
+     */
+    private suspend fun clashes(p: Proposal): Boolean {
+        val provider = snapshots ?: return false
+        val targets = p.ops.mapNotNull { op ->
+            when (op) {
+                is PlanOp.Create -> op.activity.date.atTime(op.activity.start).let { TimeSpan(it, it.plusMinutes(op.activity.durationMin.toLong())) }
+                is PlanOp.Move -> op.to
+                is PlanOp.Skip -> null
+            }
+        }
+        if (targets.isEmpty()) return false
+        val snapshot = provider.snapshot(p.day)
+        val touched = p.ops.mapNotNull { op ->
+            when (op) {
+                is PlanOp.Move -> op.activityId to op.occurrenceDay
+                is PlanOp.Skip -> op.activityId to op.occurrenceDay
+                is PlanOp.Create -> null
+            }
+        }.toSet()
+        val fixed = snapshot.external.map { it.event.span } +
+            listOfNotNull(lunchFor(p.day)) +
+            snapshot.own.filter { (it.activity.id to it.day) !in touched }.map { it.span }
+        return targets.any { t -> fixed.any { it.overlaps(t) } }
+    }
+
+    private suspend fun acceptInTransaction(id: Long, now: LocalDateTime, clashing: Boolean): Outcome<AcceptResult> {
         val status = proposals.statusOf(id) ?: return Outcome(AcceptResult.Failed(AcceptResult.FAILED))
         if (status != ProposalStatus.PENDING) return Outcome(AcceptResult.AlreadyAccepted)
         // Un payload ilegible de una pendiente queda DISCARDED (eso sí se confirma) y no se aplica nada.
         val p = proposals.get(id) ?: return Outcome(AcceptResult.Failed(AcceptResult.FAILED))
         if (isExpired(p, now)) return Outcome(AcceptResult.Expired(AcceptResult.EXPIRED))
-        if (!p.ops.all { isCurrent(it) }) return Outcome(AcceptResult.Stale(AcceptResult.STALE))
+        if (!p.ops.all { isCurrent(it) } || clashing) return Outcome(AcceptResult.Stale(AcceptResult.STALE))
 
         val createdIds = mutableListOf<Long>()
         val oneOffBefore = mutableListOf<Activity>()

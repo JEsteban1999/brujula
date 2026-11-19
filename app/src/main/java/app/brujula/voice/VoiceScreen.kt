@@ -308,7 +308,7 @@ private fun ResultView(
             ) { Icon(Icons.Outlined.Check, contentDescription = null, tint = c.onAccent, modifier = Modifier.size(36.dp)) }
         }
         Text(
-            if (scheduled) VoiceCopy.SCHEDULED else VoiceCopy.NOTHING_SCHEDULED,
+            s.title,
             Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }, color = c.text, textAlign = TextAlign.Center,
             fontFamily = BrujulaTheme.type.display, fontWeight = FontWeight.ExtraBold, fontSize = 28.sp,
         )
