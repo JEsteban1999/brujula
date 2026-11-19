@@ -14,8 +14,11 @@ sealed interface GatewayResult<out T> {
     data object Network : GatewayResult<Nothing>
     /** Claude no respondió a tiempo (la conexión sí funcionaba). */
     data object Timeout : GatewayResult<Nothing>
-    /** 429/5xx y respuesta truncada son reintentables; 400 o respuesta ilegible no. */
-    data class Error(val retryable: Boolean) : GatewayResult<Nothing>
+    /**
+     * 429/5xx y respuesta truncada son reintentables; respuesta ilegible no. [config]: HTTP 400/404 (petición o modelo mal
+     * configurados): no es culpa de lo que dijo el usuario ni se arregla repitiendo.
+     */
+    data class Error(val retryable: Boolean, val config: Boolean = false) : GatewayResult<Nothing>
 }
 
 interface ClaudeGateway {

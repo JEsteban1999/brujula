@@ -33,7 +33,9 @@ class FakeClaudeGateway(
     var interpretCalls = 0
     var lastSystem: String? = null
     var lastUser: String? = null
-    override suspend fun testKey(): KeyTestResult { calls++; return result }
+    /** Si se pone, [testKey] espera a que se complete antes de responder. */
+    var testGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+    override suspend fun testKey(): KeyTestResult { calls++; testGate?.await(); return result }
     override suspend fun interpret(system: String, user: String): GatewayResult<DictationResult> {
         interpretCalls++
         lastSystem = system

@@ -9,6 +9,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -20,6 +21,8 @@ interface PendingNotifier {
     fun scheduled(labels: List<String>, problems: List<String>)
     /** Un dictado salió de la cola sin agendarse del todo: nada se pierde sin aviso. */
     fun dropped(text: String, reason: String)
+    /** La cola espera pero no hay clave utilizable (falta o la rechazan); [count] dictados pendientes. */
+    fun needsKey(count: Int) = Unit
 
     object None : PendingNotifier {
         override fun scheduled(labels: List<String>, problems: List<String>) = Unit
@@ -27,9 +30,21 @@ interface PendingNotifier {
     }
 }
 
-/** Detecta el paso a "red validada": varias llamadas seguidas con red validada cuentan una sola vez. */
-class ValidatedTransition {
-    private var last = false
+/** Textos de las notificaciones de la cola. */
+object PendingCopy {
+    fun successTitle(labels: List<String>): String = "Agendé tu dictado pendiente: " + labels.joinToString("; ")
+
+    fun keyNotice(count: Int): String =
+        (if (count == 1) "Tienes 1 dictado pendiente." else "Tienes $count dictados pendientes.") +
+            " Revisa tu clave de Claude en Tu rutina."
+}
+
+/**
+ * Detecta el paso a "red validada": varias llamadas seguidas con red validada cuentan una sola vez. [initiallyValidated]:
+ * el estado al registrarse; Android entrega enseguida el estado actual y eso no es un cambio.
+ */
+class ValidatedTransition(initiallyValidated: Boolean = false) {
+    private var last = initiallyValidated
 
     @Synchronized
     fun onChange(validated: Boolean): Boolean {
@@ -70,31 +85,36 @@ class PendingDictations(
      * elemento, o ante un rechazo definitivo / una pregunta sin acciones, el elemento sale con un aviso.
      */
     suspend fun drain(interpreter: TextInterpreter, executor: ActionApplier) {
-        while (true) {
+        var again: Boolean
+        do {
             // Una peticion que llega con otra pasada en curso no se pierde: la pasada vigente da una vuelta mas.
             if (!drainMutex.tryLock()) { rerunRequested = true; return }
+            var clean = true
             try {
                 do {
                     rerunRequested = false
-                    pass(interpreter, executor)
-                } while (rerunRequested)
+                    clean = pass(interpreter, executor)
+                    // Tras un fallo no se repite: otra vuelta solo gastaría otro intento del mismo elemento.
+                } while (clean && rerunRequested)
             } finally {
                 drainMutex.unlock()
             }
-            if (!rerunRequested) return
-        }
+            again = clean && rerunRequested
+        } while (again)
     }
 
     @Volatile private var rerunRequested = false
+    private val keyNoticeSent = AtomicBoolean(false)
 
-    private suspend fun pass(interpreter: TextInterpreter, executor: ActionApplier) {
+    /** Devuelve true si la pasada terminó porque la cola quedó vacía; false si se detuvo en un fallo recuperable. */
+    private suspend fun pass(interpreter: TextInterpreter, executor: ActionApplier): Boolean {
         val labels = mutableListOf<String>()
         val problems = mutableListOf<String>()
         try {
             while (true) {
-                val item = all().firstOrNull() ?: break
+                val item = all().firstOrNull() ?: return true
                 val outcome = try {
-                    interpreter.interpret(item.text)
+                    interpreter.interpret(item.text, item.at)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -105,16 +125,27 @@ class PendingDictations(
                     when (outcome) {
                         is InterpretOutcome.Ok -> handleOk(item, outcome, executor, labels, problems)
                         is InterpretOutcome.Refused -> { drop(item, outcome.message); true }
-                        is InterpretOutcome.Failed ->
-                            if (outcome.retryable) failedAttempt(item, outcome.message) else { drop(item, outcome.message); true }
-                        else -> false // sin conexión / sin clave: no cuenta como intento
+                        is InterpretOutcome.Failed -> when {
+                            // Red o configuración: no es culpa del dictado; se conserva y no cuenta como intento.
+                            outcome.network || outcome.config -> false
+                            outcome.retryable -> failedAttempt(item, outcome.message)
+                            else -> { drop(item, outcome.message); true }
+                        }
+                        InterpretOutcome.NoKey, InterpretOutcome.InvalidKey -> { noticeMissingKey(); false }
+                        InterpretOutcome.Offline -> false // sin conexión: no cuenta como intento
                     }
                 }
-                if (!proceed) break
+                if (!proceed) return false
             }
         } finally {
             if (labels.isNotEmpty()) notifier.scheduled(labels.toList(), problems.toList())
         }
+    }
+
+    /** Una sola vez por proceso: avisa que los pendientes esperan una clave que sirva. */
+    private suspend fun noticeMissingKey() {
+        val count = all().size
+        if (count > 0 && keyNoticeSent.compareAndSet(false, true)) notifier.needsKey(count)
     }
 
     private suspend fun handleOk(

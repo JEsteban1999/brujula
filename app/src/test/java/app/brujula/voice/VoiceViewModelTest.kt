@@ -323,4 +323,58 @@ class VoiceViewModelTest {
         val s = r.vm.state.value as VoiceState.Result
         assertEquals(1, s.messages.count { it == VoiceCopy.UNDO_FAILED })
     }
+
+    // --- M3 / T4: el habla nunca pisa lo escrito ---
+
+    @Test fun typingWhileListeningCancelsTheRecognizerAndGoesIdle() = runTest {
+        val r = rig()
+        r.vm.start()
+        r.speech.emit(SpeechEvent.Partial("mañana"))
+        r.vm.setDraft("llamar al banco")
+        assertEquals(VoiceState.Idle, r.vm.state.value)
+        assertEquals(1, r.speech.cancels)
+        assertEquals("llamar al banco", r.vm.draft.value)
+        // Eventos tardíos del reconocedor ya no cuentan.
+        r.speech.emit(SpeechEvent.Final("mañana dentista"))
+        runCurrent()
+        assertEquals(VoiceState.Idle, r.vm.state.value)
+        assertEquals("llamar al banco", r.vm.draft.value)
+        assertTrue(r.interp.texts.isEmpty())
+    }
+
+    @Test fun blankTypingWhileListeningKeepsListening() = runTest {
+        val r = rig()
+        r.vm.start()
+        r.vm.setDraft("  ")
+        assertEquals(VoiceState.Listening(""), r.vm.state.value)
+        assertEquals(0, r.speech.cancels)
+    }
+
+    @Test fun recognizerErrorKeepsTypedTextInsteadOfThePartial() = runTest {
+        val r = rig()
+        r.vm.setDraft("escrito por mí")
+        r.vm.start()
+        r.speech.emit(SpeechEvent.Partial("lo que oyó"))
+        r.speech.emit(SpeechEvent.Failure(SpeechFailure.NETWORK))
+        assertEquals("escrito por mí", r.vm.draft.value)
+    }
+
+    @Test fun finalSpeechWhileTheDraftHoldsTypedTextIsAppendedAndNotSubmitted() = runTest {
+        val r = rig()
+        r.vm.setDraft("llamar al banco")
+        r.vm.start()
+        r.speech.emit(SpeechEvent.Final("y mañana dentista"))
+        runCurrent()
+        assertEquals(VoiceState.Idle, r.vm.state.value)
+        assertEquals("llamar al banco y mañana dentista", r.vm.draft.value)
+        assertTrue(r.interp.texts.isEmpty())
+    }
+
+    @Test fun finalSpeechWithBlankDraftStillSubmits() = runTest {
+        val r = rig(outcomes = arrayOf(ok("Dentista")))
+        r.vm.start()
+        r.speech.emit(SpeechEvent.Final("mañana dentista"))
+        runCurrent()
+        assertEquals(listOf("mañana dentista"), r.interp.texts)
+    }
 }

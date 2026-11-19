@@ -185,7 +185,10 @@ internal object DictationCall {
             is AnthropicIoException -> if (e.causes().any { it is InterruptedIOException }) GatewayResult.Timeout else GatewayResult.Network
             is RateLimitException, is InternalServerException, is RequestTimeoutException, is AnthropicRetryableException ->
                 GatewayResult.Error(retryable = true)
-            is AnthropicServiceException -> GatewayResult.Error(retryable = e.statusCode() >= 500)
+            is AnthropicServiceException -> when (val code = e.statusCode()) {
+                400, 404 -> GatewayResult.Error(retryable = false, config = true)
+                else -> GatewayResult.Error(retryable = code >= 500)
+            }
             else -> GatewayResult.Error(retryable = false)
         }
     }

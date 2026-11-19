@@ -6,6 +6,8 @@ import com.anthropic.core.http.Headers
 import com.anthropic.errors.AnthropicIoException
 import com.anthropic.errors.BadRequestException
 import com.anthropic.errors.InternalServerException
+import com.anthropic.errors.NotFoundException
+import com.anthropic.errors.UnprocessableEntityException
 import com.anthropic.errors.OverloadedException
 import com.anthropic.errors.PermissionDeniedException
 import com.anthropic.errors.RateLimitException
@@ -46,9 +48,14 @@ class DictationCallTest {
         assertTrue(schema, schema.contains("\"json_schema\""))
         assertTrue(schema.contains("\"additionalProperties\":false"))
         assertTrue("Los opcionales de Kotlin van como nulables", schema.contains("\"durationMin\":{\"type\":[\"integer\",\"null\"]"))
-        listOf("actions", "reply", "activityType", "durationMin", "beforeBedMin", "question").forEach {
-            assertTrue("Falta $it en el schema: $schema", schema.contains("\"$it\""))
+        // Candado del schema: si un campo se renombra o Jackson lo omite (como pasó con isWork), el modelo no lo verá.
+        listOf(
+            "actions", "reply", "type", "title", "activityType", "date", "start", "durationMin", "repeat", "copyToGoogle",
+            "habitMode", "intervalMin", "times", "beforeBedMin", "workOnly", "question",
+        ).forEach {
+            assertTrue("Falta $it en el schema: $schema", schema.contains("\"$it\":{"))
         }
+        assertTrue("Falta una @JsonPropertyDescription en el schema: $schema", schema.contains("Nombre corto de la actividad o del hábito"))
         assertTrue(p.fallbacks().get().isDefault())
         assertTrue(p.betas().get().contains(AnthropicBeta.SERVER_SIDE_FALLBACK_2026_07_01))
         assertFalse("Sin parámetro thinking", p.thinking().isPresent)
@@ -120,8 +127,16 @@ class DictationCallTest {
         assertEquals(GatewayResult.Error(retryable = true), DictationCall.failureOf(RateLimitException.builder().headers(headers).body(body).build()))
         assertEquals(GatewayResult.Error(retryable = true), DictationCall.failureOf(InternalServerException.builder().statusCode(500).headers(headers).body(body).build()))
         assertEquals(GatewayResult.Error(retryable = true), DictationCall.failureOf(OverloadedException.builder().statusCode(529).headers(headers).body(body).build()))
-        assertEquals(GatewayResult.Error(retryable = false), DictationCall.failureOf(BadRequestException.builder().headers(headers).body(body).build()))
+        assertEquals(GatewayResult.Error(retryable = false, config = true), DictationCall.failureOf(BadRequestException.builder().headers(headers).body(body).build()))
+        assertEquals(GatewayResult.Error(retryable = false, config = true), DictationCall.failureOf(NotFoundException.builder().headers(headers).body(body).build()))
+        // Otros 4xx no son de configuración.
+        assertEquals(GatewayResult.Error(retryable = false), DictationCall.failureOf(UnprocessableEntityException.builder().headers(headers).body(body).build()))
         assertEquals(GatewayResult.Error(retryable = false), DictationCall.failureOf(IllegalStateException("x")))
+    }
+
+    @Test fun configErrorLogHasClassAndStatusOnly() {
+        DictationCall.failureOf(BadRequestException.builder().headers(headers).body(JsonValue.from(mapOf("error" to "sk-ant-secreto"))).build())
+        assertEquals(listOf("Dictado falló: BadRequestException (HTTP 400)"), logged)
     }
 
     @Test fun timeoutIsNotOffline() {

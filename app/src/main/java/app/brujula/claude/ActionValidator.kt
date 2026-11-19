@@ -16,6 +16,7 @@ import app.brujula.habits.MAX_INTERVAL_MIN
 import app.brujula.habits.MIN_BEFORE_BED_MIN
 import app.brujula.habits.MIN_INTERVAL_MIN
 import app.brujula.habits.autoDailyTarget
+import app.brujula.routine.logicalDay
 import java.text.Normalizer
 import java.time.LocalDate
 import java.time.LocalTime
@@ -54,7 +55,8 @@ object ActionValidator {
         val type = ActivityType.entries.firstOrNull { it.name == a.activityType?.trim() }
             ?: return Validated.Invalid("$label: tipo de actividad desconocido (${a.activityType}).")
         val date = parseDate(a.date) ?: return Validated.Invalid("$label: la fecha no es válida (${a.date}).")
-        val today = ctx.logicalToday
+        // Lo ya pasado se mide contra el presente, no contra el instante en que se dictó (dictados de la cola).
+        val today = logicalDay(ctx.now)
         if (date < today) return Validated.Invalid("$label: la fecha ${a.date} ya pasó.")
         if (date > today.plusDays(MAX_DAYS_AHEAD)) return Validated.Invalid("$label: la fecha ${a.date} está a más de un año.")
         val start = parseTime(a.start) ?: return Validated.Invalid("$label: la hora no es válida (${a.start}).")

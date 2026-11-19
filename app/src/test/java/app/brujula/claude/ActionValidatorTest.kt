@@ -39,6 +39,15 @@ class ActionValidatorTest {
         assertTrue((v as Validated.Invalid).reason.isNotBlank())
     }
 
+    @Test fun queuedOneOffInThePastIsInvalidAgainstTheCurrentTimeNotTheDictationTime() {
+        val mon = LocalDate.of(2026, 11, 23)
+        // Dictado el lunes 23:00, procesado el martes 08:00: "hoy a las 23:30" (lunes) ya pasó.
+        val queued = dictationCtx(now = mon.plusDays(1).atTime(8, 0), dictatedAt = mon.atTime(23, 0))
+        assertInvalid(activity(date = "2026-11-23", start = "23:30"), queued)
+        // Lo que cae hacia adelante sigue siendo válido: "mañana" (martes) a las 09:00.
+        assertTrue(ActionValidator.validate(activity(date = "2026-11-24", start = "09:00"), queued) is Validated.Activity)
+    }
+
     @Test fun validAppointmentBecomesActivityWithGoogleCopy() {
         val v = ActionValidator.validate(activity(), ctx) as Validated.Activity
         val a = v.activity

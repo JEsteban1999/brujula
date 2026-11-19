@@ -9,13 +9,17 @@ sealed interface InterpretOutcome {
     data object InvalidKey : InterpretOutcome
     data object Offline : InterpretOutcome
     data class Refused(val message: String) : InterpretOutcome
-    /** [network]: el fallo fue de red (se puede guardar para cuando vuelva internet). */
-    data class Failed(val message: String, val retryable: Boolean, val network: Boolean = false) : InterpretOutcome
+    /**
+     * [network]: el fallo fue de red (se puede guardar para cuando vuelva internet). [config]: error de configuración
+     * (HTTP 400/404): no depende de lo dicho, así que la cola lo conserva sin contar intentos.
+     */
+    data class Failed(val message: String, val retryable: Boolean, val network: Boolean = false, val config: Boolean = false) : InterpretOutcome
 }
 
 /** Costura para la pantalla de dictado y la cola sin conexión; las pruebas la sustituyen. */
-fun interface TextInterpreter {
-    suspend fun interpret(text: String): InterpretOutcome
+interface TextInterpreter {
+    /** [dictatedAt]: instante (epoch ms) en que se dictó, para dictados de la cola; nulo = ahora. */
+    suspend fun interpret(text: String, dictatedAt: Long? = null): InterpretOutcome
 }
 
 /**
@@ -24,15 +28,15 @@ fun interface TextInterpreter {
  */
 class DictationInterpreter(
     private val gateway: ClaudeGateway,
-    private val contextProvider: suspend () -> DictationContext,
+    private val contextProvider: suspend (dictatedAt: Long?) -> DictationContext,
     private val isOnline: suspend () -> Boolean = { true },
 ) : TextInterpreter {
-    override suspend fun interpret(text: String): InterpretOutcome {
+    override suspend fun interpret(text: String, dictatedAt: Long?): InterpretOutcome {
         val clean = text.trim()
         if (clean.isEmpty()) return InterpretOutcome.Failed(NOTHING_HEARD, retryable = false)
         if (!isOnline()) return InterpretOutcome.Offline
         val ctx = try {
-            contextProvider()
+            contextProvider(dictatedAt)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -46,12 +50,15 @@ class DictationInterpreter(
             GatewayResult.Network -> InterpretOutcome.Failed(OFFLINE, retryable = true, network = true)
             GatewayResult.Timeout -> InterpretOutcome.Failed(TOO_SLOW, retryable = true)
             is GatewayResult.Error ->
-                if (r.retryable) InterpretOutcome.Failed(UNAVAILABLE, retryable = true) else InterpretOutcome.Failed(REFUSED, retryable = false)
+                if (r.retryable) InterpretOutcome.Failed(UNAVAILABLE, retryable = true)
+                else if (r.config) InterpretOutcome.Failed(CONFIG_ERROR, retryable = false, config = true)
+                else InterpretOutcome.Failed(REFUSED, retryable = false)
         }
     }
 
     companion object {
         const val REFUSED = "No pude interpretar eso. Prueba diciéndolo de otra forma."
+        const val CONFIG_ERROR = "No pude hablar con Claude (error de configuración). Inténtalo más tarde."
         const val OFFLINE = "Sin conexión. Lo interpreto en cuanto vuelva internet."
         const val UNAVAILABLE = "Claude no está disponible ahora. Inténtalo de nuevo en un momento."
         const val NOTHING_HEARD = "No te escuché. Inténtalo de nuevo."

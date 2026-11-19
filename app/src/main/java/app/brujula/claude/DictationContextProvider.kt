@@ -17,6 +17,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -32,9 +33,12 @@ class DictationContextProvider(
     private val calendarSource: CalendarSource,
     private val zone: () -> ZoneId = { ZoneId.systemDefault() },
 ) {
-    suspend fun current(): DictationContext {
+    /** [dictatedAt] (epoch ms): dictado de la cola; "hoy/mañana" se cuentan desde su día lógico, en la zona del teléfono. */
+    suspend fun current(dictatedAt: Long? = null): DictationContext {
         val now = clock.now()
-        val today = logicalDay(now)
+        val zone = zone()
+        val dictated = dictatedAt?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDateTime() }
+        val today = logicalDay(dictated ?: now)
         val tomorrow = today.plusDays(1)
         val routine = routineRepository.routine.first()
         val activities = activityRepository.observeAll().first()
@@ -53,7 +57,7 @@ class DictationContextProvider(
 
         return DictationContext(
             now = now,
-            zone = zone(),
+            zone = zone,
             logicalToday = today,
             todayType = dayTypeOf(today),
             tomorrowType = dayTypeOf(tomorrow),
@@ -61,6 +65,7 @@ class DictationContextProvider(
             busyToday = busyOn(today),
             busyTomorrow = busyOn(tomorrow),
             habitNames = habitRepository.observeHabits().first().filter { it.active }.map { it.name },
+            dictatedAt = dictated,
         )
     }
 

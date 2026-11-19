@@ -60,11 +60,27 @@ class AutoClassifierTest {
     }
 
     @Test fun atMostOnceEvenAfterFailure() = runTest {
-        gateway.classification = GatewayResult.Error(retryable = true)
+        gateway.classification = GatewayResult.Error(retryable = false)
         val auto = TestScopeAuto(backgroundScope)
         repeat(3) { auto.request(mapOf("reunion" to "Reunión"), known = emptySet())?.join() }
         assertEquals(1, gateway.classifyCalls)
         assertTrue(repo.observe().first().isEmpty())
+    }
+
+    @Test fun invalidKeyTimeoutAndRetryableErrorsAreRetriedLaterButBoundedByDistinctEmissions() = runTest {
+        for (f in listOf(GatewayResult.InvalidKey, GatewayResult.Timeout, GatewayResult.Error(retryable = true))) {
+            gateway.classifyCalls = 0
+            gateway.classification = f
+            val auto = TestScopeAuto(backgroundScope)
+            auto.request(mapOf("reunion" to "Reunión"), known = emptySet())?.join()
+            // Misma clave en la misma emisión no se repite; en otra emisión (clave liberada) sí se reintenta.
+            auto.request(mapOf("reunion" to "Reunión"), known = emptySet())?.join()
+            assertEquals("$f", 2, gateway.classifyCalls)
+            gateway.classification = ok("Reunión" to true)
+            auto.request(mapOf("reunion" to "Reunión"), known = emptySet())?.join()
+            auto.request(mapOf("reunion" to "Reunión"), known = repo.observe().first().keys)
+            assertEquals("$f", 3, gateway.classifyCalls)
+        }
     }
 
     @Test fun blankKeysAreNeverClassified() = runTest {

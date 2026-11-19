@@ -42,6 +42,24 @@ class DictationInterpreterTest {
         assertTrue(out.items.single() is Validated.Invalid)
     }
 
+    @Test fun dictationInstantIsPassedToTheContextProvider() = runTest {
+        val seen = mutableListOf<Long?>()
+        val i = DictationInterpreter(gateway, { at -> seen += at; ctx })
+        gateway.dictation = GatewayResult.Ok(DictationResult(emptyList(), "ok"))
+        i.interpret("algo", 1234L)
+        i.interpret("algo")
+        assertEquals(listOf<Long?>(1234L, null), seen)
+    }
+
+    @Test fun configurationErrorIsItsOwnOutcomeNotTheUsersWording() = runTest {
+        gateway.dictation = GatewayResult.Error(retryable = false, config = true)
+        val out = interpreter.interpret("algo") as InterpretOutcome.Failed
+        assertTrue(out.config)
+        assertEquals(false, out.retryable)
+        assertEquals("No pude hablar con Claude (error de configuración). Inténtalo más tarde.", out.message)
+        assertTrue(!out.message.contains("otra forma"))
+    }
+
     @Test fun noKeyMapsToNoKey() = runTest {
         gateway.dictation = GatewayResult.NoKey
         assertEquals(InterpretOutcome.NoKey, interpreter.interpret("algo"))

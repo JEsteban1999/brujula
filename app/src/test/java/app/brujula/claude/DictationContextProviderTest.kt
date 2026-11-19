@@ -92,6 +92,24 @@ class DictationContextProviderTest {
         assertEquals(ZoneId.of("America/Bogota"), ctx.zone)
     }
 
+    @Test fun queuedDictationUsesTheLogicalDayOfTheDictationInstantInDeviceZone() = runTest {
+        val mon = LocalDate.of(2026, 11, 23)
+        val tue = mon.plusDays(1)
+        activities.upsert(Activity(title = "Lunes", type = ActivityType.PERSONAL, date = mon, start = LocalTime.of(20, 0), durationMin = 30))
+        activities.upsert(Activity(title = "Martes", type = ActivityType.PERSONAL, date = tue, start = LocalTime.of(10, 0), durationMin = 30))
+        val at = mon.atTime(23, 0).atZone(ZoneId.of("America/Bogota")).toInstant().toEpochMilli()
+
+        val provider = provider(tue.atTime(8, 0))
+        val ctx = provider.current(at)
+
+        assertEquals(mon, ctx.logicalToday)
+        assertEquals(mon.atTime(23, 0), ctx.dictatedAt)
+        assertEquals(tue.atTime(8, 0), ctx.now)
+        assertEquals(listOf("Lunes"), ctx.busyToday.map { it.title })
+        assertEquals(listOf("Martes"), ctx.busyTomorrow.map { it.title })
+        assertEquals(null, provider.current().dictatedAt)
+    }
+
     @Test fun withoutReadPermissionOnlyOwnItems() = runTest {
         calendar.permission = false
         calendar.eventList = listOf(ext(1, "Reunión", wed.atTime(9, 0), wed.atTime(10, 0)))

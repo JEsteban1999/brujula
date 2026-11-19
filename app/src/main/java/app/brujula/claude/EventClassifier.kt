@@ -81,8 +81,10 @@ class EventClassifier(private val gateway: ClaudeGateway) {
                     val key = normalizeTitle(m.title.replace(LEADING_BULLET, ""))
                     if (key in keys) marks[key] = m.isWork
                 }
-                GatewayResult.NoKey, GatewayResult.Network -> retry += keys
-                else -> Unit
+                // Sin clave útil, sin red o un fallo pasajero: se libera la clave para otro intento más tarde.
+                GatewayResult.NoKey, GatewayResult.Network, GatewayResult.InvalidKey, GatewayResult.Timeout -> retry += keys
+                is GatewayResult.Error -> if (result.retryable) retry += keys
+                GatewayResult.Refused -> Unit
             }
         }
         return ClassificationRun(marks, retry)

@@ -77,7 +77,13 @@ import app.brujula.ui.pressScale
 import app.brujula.ui.rememberReducedMotion
 
 @Composable
-fun VoiceScreen(viewModel: VoiceViewModel, onClose: () -> Unit, modifier: Modifier = Modifier) {
+fun VoiceScreen(
+    viewModel: VoiceViewModel,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+    /** "Prefiero escribir": abre el formulario manual de actividad (la misma ruta del toque largo). */
+    onWriteInstead: () -> Unit = {},
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val draft by viewModel.draft.collectAsStateWithLifecycle()
     val hint by viewModel.hint.collectAsStateWithLifecycle()
@@ -128,7 +134,7 @@ fun VoiceScreen(viewModel: VoiceViewModel, onClose: () -> Unit, modifier: Modifi
 
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.Center) {
             when (val s = state) {
-                is VoiceState.Idle -> Idle(reduced, hint, textOnly, listen)
+                is VoiceState.Idle -> Idle(reduced, hint, textOnly, listen, onWriteInstead)
                 is VoiceState.Listening -> Listening(s.partial, reduced, viewModel::stop)
                 VoiceState.Thinking -> Thinking(reduced)
                 is VoiceState.Result -> ResultView(s, reduced, viewModel::undo, onClose)
@@ -178,7 +184,7 @@ private fun Orb(reduced: Boolean, onClick: (() -> Unit)?, description: String) {
 }
 
 @Composable
-private fun Idle(reduced: Boolean, hint: String?, textOnly: Boolean, onTapMic: () -> Unit) {
+private fun Idle(reduced: Boolean, hint: String?, textOnly: Boolean, onTapMic: () -> Unit, onWriteInstead: () -> Unit) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(24.dp)) {
         if (textOnly) {
             Hint(hint)
@@ -188,7 +194,18 @@ private fun Idle(reduced: Boolean, hint: String?, textOnly: Boolean, onTapMic: (
             Hint(hint)
             Examples()
         }
+        WriteInsteadLink(onWriteInstead)
     }
+}
+
+@Composable
+private fun WriteInsteadLink(onClick: () -> Unit) {
+    Text(
+        VoiceCopy.PREFER_WRITING, color = BrujulaTheme.colors.accentText, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+        modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(vertical = 14.dp),
+    )
 }
 
 @Composable

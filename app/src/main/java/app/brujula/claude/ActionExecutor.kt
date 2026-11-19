@@ -1,5 +1,6 @@
 package app.brujula.claude
 
+import android.util.Log
 import androidx.room.RoomDatabase
 import androidx.room.withTransaction
 import app.brujula.activities.Activity
@@ -91,7 +92,7 @@ class ActionExecutor(
             return ApplyResult(emptyList(), messages, null)
         }
         // Ya confirmado: el resync no se cancela a medias y la copia a Google no retrasa la respuesta.
-        withContext(NonCancellable) { reminderSync.resync() }
+        withContext(NonCancellable) { resyncSafely() }
         val toCopy = savedActivities.filter { it.copyToGoogle }
         if (toCopy.isNotEmpty()) syncScope.launch { toCopy.forEach { googleCopySync.afterSave(it) } }
         val token = UndoToken(created.mapNotNull { it.activityId }, created.mapNotNull { it.habitId })
@@ -109,7 +110,18 @@ class ActionExecutor(
             googleCopySync.afterDelete(stored ?: stub(id))
         }
         token.habitIds.forEach { habitRepo.delete(it) }
-        reminderSync.resync()
+        resyncSafely()
+    }
+
+    /** Ya está todo confirmado: un fallo del resync no debe tumbar apply/undo (el token se perdería y Reintentar duplicaría). */
+    private suspend fun resyncSafely() {
+        try {
+            reminderSync.resync()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("ActionExecutor", "Resync de recordatorios falló: ${e.javaClass.simpleName}")
+        }
     }
 
     private fun stub(id: Long) = Activity(

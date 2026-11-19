@@ -17,6 +17,11 @@ data class DictationContext(
     val busyToday: List<BusyItem>,
     val busyTomorrow: List<BusyItem>,
     val habitNames: List<String>,
+    /**
+     * Solo en dictados de la cola: cuándo se dictaron (hora local). [logicalToday] y los ocupados salen de ese instante;
+     * [now] sigue siendo el momento actual (la validación de "ya pasó" usa el presente).
+     */
+    val dictatedAt: LocalDateTime? = null,
 )
 
 /** Algo que ya ocupa tiempo: actividad propia o evento externo (solo lectura). */

@@ -22,6 +22,7 @@ import app.brujula.claude.ActionApplier
 import app.brujula.claude.ActionExecutor
 import app.brujula.claude.DictationInterpreter
 import app.brujula.claude.PendingDictations
+import app.brujula.claude.PendingCopy
 import app.brujula.claude.PendingNotifier
 import app.brujula.claude.ValidatedTransition
 import app.brujula.claude.TextInterpreter
@@ -83,12 +84,12 @@ class AppContainer(val context: Context) {
         set(value) { claudeGatewayOverride = value }
 
     /** Lo que se envía a Claude con cada dictado; usa las dependencias vigentes (reloj y calendarios sustituibles). */
-    suspend fun dictationContext(): DictationContext =
-        DictationContextProvider(clock, routineRepository, activityRepository, habitRepository, calendarSource).current()
+    suspend fun dictationContext(dictatedAt: Long? = null): DictationContext =
+        DictationContextProvider(clock, routineRepository, activityRepository, habitRepository, calendarSource).current(dictatedAt)
 
     /** Convierte un dictado en acciones validadas (no aplica nada); usa el gateway vigente. */
     val dictationInterpreter: DictationInterpreter
-        get() = DictationInterpreter(claudeGateway, ::dictationContext, isOnline = { isOnline(context) })
+        get() = DictationInterpreter(claudeGateway, { at -> dictationContext(at) }, isOnline = { isOnline(context) })
 
     private var interpreterOverride: TextInterpreter? = null
     private var executorOverride: ActionApplier? = null
@@ -111,9 +112,11 @@ class AppContainer(val context: Context) {
             object : PendingNotifier {
                 private fun id() = (System.nanoTime() / 1000).toInt()
                 override fun scheduled(labels: List<String>, problems: List<String>) {
-                    val text = "Agendé lo que dictaste sin conexión: " + labels.joinToString("; ") +
-                        problems.joinToString("") { NEWLINE + it }
-                    Notifications.showText(app, id(), "Dictado sin conexión", text)
+                    val text = labels.joinToString(NEWLINE) + problems.joinToString("") { NEWLINE + it }
+                    Notifications.showText(app, id(), PendingCopy.successTitle(labels), text)
+                }
+                override fun needsKey(count: Int) {
+                    Notifications.showText(app, KEY_NOTICE_ID, "Dictados pendientes", PendingCopy.keyNotice(count))
                 }
                 override fun dropped(text: String, reason: String) {
                     Notifications.showText(app, id(), "Dictado sin agendar", "No pude agendar «$text»: $reason")
@@ -168,6 +171,7 @@ class AppContainer(val context: Context) {
 }
 
 private const val NEWLINE = "\n"
+private const val KEY_NOTICE_ID = 0x4B4559
 
 /** Hay internet utilizable ahora mismo (validado, no solo conectado). */
 fun isOnline(context: Context): Boolean = try {
@@ -216,7 +220,8 @@ open class BrujulaApp : Application() {
         runCatching {
             val cm = getSystemService(ConnectivityManager::class.java)
             // Solo al pasar a red validada (no en cada cambio de señal) y no al perderla.
-            val transition = ValidatedTransition()
+            // Android entrega enseguida el estado actual al registrar: sembrarlo evita un segundo drenado (el de arriba ya corre).
+            val transition = ValidatedTransition(initiallyValidated = isOnline(this))
             cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
                 override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
                     if (transition.onChange(caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))) drain()

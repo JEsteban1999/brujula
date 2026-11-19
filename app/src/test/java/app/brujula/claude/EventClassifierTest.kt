@@ -54,6 +54,18 @@ class EventClassifierTest {
         }
     }
 
+    @Test fun recoverableFailuresAskForARetryOthersDoNot() = runTest {
+        val retryable = listOf(GatewayResult.NoKey, GatewayResult.Network, GatewayResult.InvalidKey, GatewayResult.Timeout, GatewayResult.Error(retryable = true))
+        for (f in retryable) {
+            gateway.classification = f
+            assertEquals("$f", setOf("reunion"), classifier.run(listOf("Reunión")).retryKeys)
+        }
+        for (f in listOf(GatewayResult.Refused, GatewayResult.Error(retryable = false), GatewayResult.Error(retryable = false, config = true))) {
+            gateway.classification = f
+            assertTrue("$f", classifier.run(listOf("Reunión")).retryKeys.isEmpty())
+        }
+    }
+
     @Test fun gatewayExceptionNeverThrows() = runTest {
         gateway.classifyWith = { throw IllegalStateException("boom") }
         assertTrue(classifier.classify(listOf("Reunión")).isEmpty())

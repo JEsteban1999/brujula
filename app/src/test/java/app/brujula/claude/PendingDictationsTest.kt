@@ -13,6 +13,7 @@ import app.brujula.voice.ok
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
@@ -192,6 +193,161 @@ class PendingDictationsTest {
         val prefs = ds.data.first()
         assertEquals("{{no es json", prefs[stringPreferencesKey("pending_dictations_backup")])
         assertEquals(listOf("nuevo"), p.all().map { it.text })
+    }
+
+    // --- I1: fecha relativa del instante dictado ---
+
+    private val bogota = java.time.ZoneId.of("America/Bogota")
+    private val mon2300 = java.time.LocalDate.of(2026, 11, 23).atTime(23, 0)
+    private val tue0800 = java.time.LocalDate.of(2026, 11, 24).atTime(8, 0)
+
+    private fun queuedInterpreter(gateway: FakeClaudeGateway) = DictationInterpreter(gateway, { at ->
+        dictationCtx(now = tue0800, dictatedAt = at?.let { java.time.Instant.ofEpochMilli(it).atZone(bogota).toLocalDateTime() })
+    })
+
+    private fun oneOff(date: String, start: String) = GatewayResult.Ok(
+        DictationResult(
+            listOf(DictationAction(type = "create_activity", title = "Dentista", activityType = "APPOINTMENT", date = date, start = start, durationMin = 60, repeat = "NONE")),
+            "Listo",
+        ),
+    )
+
+    @Test fun drainPassesTheDictationInstantToTheInterpreter() = runTest {
+        val p = store()
+        p.add("a", 111L); p.add("b", 222L)
+        val interp = FakeInterpreter(ok("X"), ok("Y"))
+        p.drain(interp, FakeExecutor())
+        assertEquals(listOf<Long?>(111L, 222L), interp.dictatedAts)
+    }
+
+    @Test fun mananaInAQueuedDictationMeansTheDayAfterTheDictationDayNotAfterTheDrainDay() = runTest {
+        val gateway = FakeClaudeGateway(dictation = oneOff("2026-11-24", "09:00"))
+        val p = store()
+        p.add("mañana a las 9 dentista", mon2300.atZone(bogota).toInstant().toEpochMilli())
+        val exec = FakeExecutor()
+        p.drain(queuedInterpreter(gateway), exec)
+        val prompt = gateway.lastUser!!
+        assertTrue(prompt, prompt.contains("Mañana es martes 24 de noviembre de 2026"))
+        assertTrue(prompt, prompt.contains("Hoy (día lógico) es lunes 23 de noviembre de 2026"))
+        assertTrue(prompt, prompt.contains("El usuario dictó esto el lunes 23 de noviembre de 2026 a las 23:00"))
+        assertEquals(1, exec.applied.size)
+        assertTrue(p.all().isEmpty())
+        assertTrue(notes.dropped.isEmpty())
+    }
+
+    @Test fun queuedOneOffThatIsNowInThePastIsInvalidAndTheUserIsTold() = runTest {
+        // "hoy a las 23:30" dictado el lunes 23:00 y procesado el martes 08:00.
+        val gateway = FakeClaudeGateway(dictation = oneOff("2026-11-23", "23:30"))
+        val p = store()
+        p.add("hoy a las 11:30 dentista", mon2300.atZone(bogota).toInstant().toEpochMilli())
+        val exec = FakeExecutor()
+        p.drain(queuedInterpreter(gateway), exec)
+        assertTrue(exec.applied.isEmpty())
+        assertTrue(p.all().isEmpty())
+        assertEquals(1, notes.dropped.size)
+        assertEquals("hoy a las 11:30 dentista", notes.dropped.single().first)
+        assertTrue(notes.dropped.single().second, notes.dropped.single().second.contains("ya pasó"))
+    }
+
+    // --- I3: arranque y reintentos ---
+
+    @Test fun validatedTransitionSeededWithAnAlreadyValidatedNetworkDoesNotFire() {
+        val t = ValidatedTransition(initiallyValidated = true)
+        assertFalse(t.onChange(true))
+        assertFalse(t.onChange(true))
+        assertFalse(t.onChange(false))
+        assertTrue(t.onChange(true))
+        assertTrue(ValidatedTransition(initiallyValidated = false).onChange(true))
+    }
+
+    /** Dispara [onEmptyRead] la primera vez que una lectura ve la cola vacía; nada más. */
+    private class HookedDataStore(
+        private val inner: DataStore<Preferences>,
+        var onEmptyRead: (suspend () -> Unit)? = null,
+    ) : DataStore<Preferences> {
+        private val key = stringPreferencesKey("pending_dictations")
+        override val data = inner.data.onEach { prefs ->
+            val raw = prefs[key]
+            if (raw == null || raw == "[]") onEmptyRead?.let { hook -> onEmptyRead = null; hook() }
+        }
+        override suspend fun updateData(transform: suspend (Preferences) -> Preferences) = inner.updateData(transform)
+    }
+
+    @Test fun drainRequestedAfterThePassSawAnEmptyQueueRunsAgain() = runTest {
+        val hooked = HookedDataStore(dataStore())
+        val p = PendingDictations(hooked, notes)
+        val interp = FakeInterpreter(ok("X"), ok("Y"))
+        val exec = FakeExecutor()
+        p.add("a", 1)
+        // La cola se ve vacía; justo después llega "b" con su petición de drenado (la pasada vigente aún no soltó el candado).
+        hooked.onEmptyRead = { p.add("b", 2); p.drain(interp, exec) }
+        p.drain(interp, exec)
+        assertEquals(listOf("a", "b"), interp.texts)
+        assertTrue(p.all().isEmpty())
+    }
+
+    @Test fun passThatStoppedOnAFailureDoesNotRunAgainEvenIfAnotherDrainWasRequested() = runTest {
+        val p = store()
+        p.add("a", 1)
+        val interp = FakeInterpreter(retryable)
+        interp.gate = CompletableDeferred()
+        val d1 = async { p.drain(interp, FakeExecutor()) }
+        runCurrent()
+        p.drain(interp, FakeExecutor()) // petición durante la pasada
+        interp.gate!!.complete(Unit)
+        advanceUntilIdle()
+        d1.await()
+        assertEquals(listOf("a"), interp.texts)
+        assertEquals(listOf(1), p.all().map { it.attempts })
+    }
+
+    @Test fun networkFailureStopsKeepsTheItemAndDoesNotCountAnAttempt() = runTest {
+        val p = store()
+        p.add("a", 1); p.add("b", 2)
+        val net = InterpretOutcome.Failed(DictationInterpreter.OFFLINE, retryable = true, network = true)
+        repeat(5) { p.drain(FakeInterpreter(net), FakeExecutor()) }
+        assertEquals(listOf("a", "b"), p.all().map { it.text })
+        assertEquals(listOf(0, 0), p.all().map { it.attempts })
+        assertTrue(notes.dropped.isEmpty())
+    }
+
+    // --- M6: error de configuración ---
+
+    @Test fun configurationErrorStopsWithoutDroppingOrCountingAnAttempt() = runTest {
+        val p = store()
+        p.add("a", 1)
+        val cfg = InterpretOutcome.Failed("config", retryable = false, config = true)
+        repeat(5) { p.drain(FakeInterpreter(cfg), FakeExecutor()) }
+        assertEquals(listOf("a"), p.all().map { it.text })
+        assertEquals(0, p.all().single().attempts)
+        assertTrue(notes.dropped.isEmpty())
+        p.drain(FakeInterpreter(ok("X")), FakeExecutor())
+        assertTrue(p.all().isEmpty())
+    }
+
+    // --- M1: aviso de clave ---
+
+    @Test fun stoppingOnMissingOrInvalidKeyNotifiesOncePerProcessWithTheQueueSize() = runTest {
+        val p = store()
+        p.add("a", 1); p.add("b", 2)
+        p.drain(FakeInterpreter(InterpretOutcome.NoKey), FakeExecutor())
+        p.drain(FakeInterpreter(InterpretOutcome.InvalidKey), FakeExecutor())
+        p.drain(FakeInterpreter(InterpretOutcome.NoKey), FakeExecutor())
+        assertEquals(listOf(2), notes.needsKey)
+    }
+
+    @Test fun keyNoticeIsNotSentForOtherStopsOrAnEmptyQueue() = runTest {
+        val p = store()
+        p.drain(FakeInterpreter(), FakeExecutor())
+        p.add("a", 1)
+        p.drain(FakeInterpreter(InterpretOutcome.Offline), FakeExecutor())
+        assertTrue(notes.needsKey.isEmpty())
+    }
+
+    @Test fun notificationCopyIsNeutral() {
+        assertEquals("Agendé tu dictado pendiente: Ejercicio; Dentista", PendingCopy.successTitle(listOf("Ejercicio", "Dentista")))
+        assertEquals("Tienes 3 dictados pendientes. Revisa tu clave de Claude en Tu rutina.", PendingCopy.keyNotice(3))
+        assertEquals("Tienes 1 dictado pendiente. Revisa tu clave de Claude en Tu rutina.", PendingCopy.keyNotice(1))
     }
 
     @Test fun validatedTransitionFiresOnceUntilNetworkIsLost() {

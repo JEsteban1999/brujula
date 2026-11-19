@@ -10,7 +10,9 @@ import app.brujula.calendar.FakeCalendarSource
 import app.brujula.core.theme.ThemeMode
 import app.brujula.reminders.ReminderResync
 import app.brujula.routine.RoutineRepository
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -236,13 +238,13 @@ class RoutineViewModelTest {
 
     private class ClaudeEnv(val keys: ClaudeKeyStore, val gateway: FakeClaudeGateway, val vm: RoutineViewModel)
 
-    private fun TestScope.claudeEnv(result: KeyTestResult = KeyTestResult.OK): ClaudeEnv {
+    private fun TestScope.claudeEnv(result: KeyTestResult = KeyTestResult.OK, onKeySaved: () -> Unit = {}): ClaudeEnv {
         val repo = RoutineRepository(PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.newFolder(), "r.preferences_pb") })
         val keys = ClaudeKeyStore(
             PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.newFolder(), "c.preferences_pb") }, FakeSecretCipher(),
         )
         val gateway = FakeClaudeGateway(result)
-        return ClaudeEnv(keys, gateway, RoutineViewModel(repo, scopeOverride = backgroundScope, claudeKeyStore = keys, claudeGateway = gateway))
+        return ClaudeEnv(keys, gateway, RoutineViewModel(repo, scopeOverride = backgroundScope, claudeKeyStore = keys, claudeGateway = gateway, onKeySaved = onKeySaved))
     }
 
     @Test fun claudeKeyTrimmedAndSaved() = runTest {
@@ -299,5 +301,39 @@ class RoutineViewModelTest {
             kotlinx.coroutines.withTimeout(5_000) { e.vm.claude.first { !it.hasKey } }
         }
         assertFalse(e.vm.claude.value.hasKey)
+    }
+
+    @Test fun testResultFromBeforeANewKeyWasSavedIsIgnored() = runTest {
+        val e = claudeEnv(KeyTestResult.OK)
+        e.vm.saveClaudeKey("sk-ant-test-0000").join()
+        val gate = CompletableDeferred<Unit>().also { e.gateway.testGate = it }
+        val test = e.vm.testClaudeKey()
+        runCurrent()
+        assertEquals(ClaudeStatus.TESTING, e.vm.claude.value.status)
+        e.vm.saveClaudeKey("sk-ant-test-1111").join()
+        gate.complete(Unit)
+        test.join()
+        assertEquals(ClaudeStatus.IDLE, e.vm.claude.value.status)
+    }
+
+    @Test fun testResultFromBeforeTheKeyWasClearedIsIgnored() = runTest {
+        val e = claudeEnv(KeyTestResult.OK)
+        e.vm.saveClaudeKey("sk-ant-test-0000").join()
+        val gate = CompletableDeferred<Unit>().also { e.gateway.testGate = it }
+        val test = e.vm.testClaudeKey()
+        runCurrent()
+        e.vm.saveClaudeKey("").join()
+        gate.complete(Unit)
+        test.join()
+        assertEquals(ClaudeSectionState(), e.vm.claude.value)
+    }
+
+    @Test fun savingAKeyTriggersAPendingDrainButClearingDoesNot() = runTest {
+        var drains = 0
+        val e = claudeEnv(onKeySaved = { drains++ })
+        e.vm.saveClaudeKey("sk-ant-test-0000").join()
+        assertEquals(1, drains)
+        e.vm.saveClaudeKey("  ").join()
+        assertEquals(1, drains)
     }
 }

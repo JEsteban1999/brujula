@@ -158,6 +158,7 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                     viewModel = vm,
                     // Dos toques rápidos en ✕/Listo no sacan también la pantalla de abajo.
                     onClose = { if (navController.currentDestination?.route == Routes.VOICE) navController.popBackStack() },
+                    onWriteInstead = { navController.navigate(Routes.activityForm()) },
                 )
             }
             composable(Routes.ROUTINE) {
@@ -172,6 +173,7 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                                 reconcileGoogle = { container.reconcileGoogleCopies() },
                                 claudeKeyStore = container.claudeKeyStore,
                                 claudeGateway = container.claudeGateway,
+                                onKeySaved = { container.syncScope.launch { runCatching { container.drainPendingDictations() } } },
                             )
                         }
                     },

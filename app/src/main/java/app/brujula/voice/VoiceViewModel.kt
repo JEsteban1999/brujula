@@ -29,6 +29,7 @@ object VoiceCopy {
     const val DONE = "Listo"
     const val RETRY = "Reintentar"
     const val STOP_TALKING = "Terminar de hablar"
+    const val PREFER_WRITING = "Prefiero escribir"
     const val WRITE_INSTEAD = "Escribir en vez de hablar"
     const val OFFLINE = DictationInterpreter.OFFLINE
     const val NOT_HEARD = "No te escuché. Toca para intentar de nuevo."
@@ -99,7 +100,18 @@ class VoiceViewModel(
     /** El dictado ya esta en manos de apply o de la cola: una cancelacion posterior no debe encolarlo otra vez. */
     private var handedOff = false
 
-    fun setDraft(text: String) { _draft.value = text }
+    /**
+     * Lo que escribe el usuario manda: si escribe mientras se escucha, se cancela el reconocedor y se vuelve a reposo
+     * (el habla no puede pisar el texto). Los eventos tardíos del reconocedor se ignoran porque ya no se está escuchando.
+     */
+    fun setDraft(text: String) {
+        if (text.isNotBlank() && _state.value is VoiceState.Listening) {
+            speech.cancel()
+            lastPartial = ""
+            _state.value = VoiceState.Idle
+        }
+        _draft.value = text
+    }
 
     fun onMicDenied() { _hint.value = VoiceCopy.MIC_DENIED; _textOnly.value = true }
 
@@ -124,10 +136,20 @@ class VoiceViewModel(
         if (_state.value !is VoiceState.Listening) return
         when (e) {
             is SpeechEvent.Partial -> { lastPartial = e.text; _state.value = VoiceState.Listening(e.text) }
-            is SpeechEvent.Final -> submitText(e.text)
+            is SpeechEvent.Final -> {
+                val typed = _draft.value
+                if (typed.isBlank()) {
+                    submitText(e.text)
+                } else {
+                    // Había texto escrito: no se envía solo. Lo dicho se agrega al final del texto escrito y el usuario decide.
+                    speech.cancel()
+                    _draft.value = typed.trimEnd() + " " + e.text.trim()
+                    _state.value = VoiceState.Idle
+                }
+            }
             is SpeechEvent.Failure -> {
-                // Lo ya entendido no se pierde: queda en el campo para enviarlo o editarlo.
-                if (lastPartial.isNotBlank()) _draft.value = lastPartial
+                // Lo ya entendido no se pierde: queda en el campo para enviarlo o editarlo, pero nunca pisa lo escrito.
+                if (lastPartial.isNotBlank() && _draft.value.isBlank()) _draft.value = lastPartial
                 _state.value = when (e.kind) {
                     SpeechFailure.NO_MATCH -> VoiceState.Error(VoiceCopy.NOT_HEARD, retry = true)
                     SpeechFailure.NETWORK -> VoiceState.Error(VoiceCopy.NETWORK, retry = false)

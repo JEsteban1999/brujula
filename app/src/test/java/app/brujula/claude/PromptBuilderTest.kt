@@ -41,6 +41,22 @@ class PromptBuilderTest {
         assertFalse("Las horas van en 24 h", p.contains("p. m.") || Regex("(?<!\\d)7:00").containsMatchIn(p))
     }
 
+    @Test fun queuedDictationStatesWhenItWasDictatedAndUsesThatLogicalDay() {
+        val mon = LocalDate.of(2026, 11, 23)
+        val ctx = dictationCtx(now = mon.plusDays(1).atTime(8, 0), dictatedAt = mon.atTime(23, 0))
+        val out = PromptBuilder.user(ctx, "mañana dentista")
+        assertTrue(out, out.contains("El usuario dictó esto el lunes 23 de noviembre de 2026 a las 23:00 (día lógico lunes 23); interpreta hoy/mañana/el viernes desde ese momento."))
+        assertTrue(out, out.contains("Hoy (día lógico) es lunes 23 de noviembre de 2026 (2026-11-23)"))
+        assertTrue(out, out.contains("Mañana es martes 24 de noviembre de 2026 (2026-11-24)"))
+        assertTrue(out, out.contains("miércoles 25 = 2026-11-25"))
+        assertTrue(out, out.contains("Reloj: martes 24 de noviembre de 2026, 08:00"))
+    }
+
+    @Test fun liveDictationHasNoDictatedLine() {
+        val out = PromptBuilder.user(dictationCtx(now = LocalDate.of(2026, 11, 18).atTime(10, 0)), "algo")
+        assertFalse(out, out.contains("El usuario dictó esto"))
+    }
+
     @Test fun afterMidnightTheLogicalDayIsStillYesterday() {
         // 00:30 del jueves: el día lógico sigue siendo el miércoles; "mañana" es el jueves.
         val p = PromptBuilder.user(dictationCtx(now = thu.atTime(0, 30)), "mañana a las 10 llamar al banco")

@@ -46,6 +46,7 @@ class ActionExecutorTest {
     private lateinit var habits: HabitRepository
     private val writer = FakeGoogleCalendarWriter()
     private var resyncs = 0
+    private var resyncThrows = false
     private lateinit var executor: ActionExecutor
     private val sched = TestCoroutineScheduler()
     private val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(sched))
@@ -59,7 +60,7 @@ class ActionExecutorTest {
             .allowMainThreadQueries().build()
         activities = ActivityRepository(db.activityDao())
         habits = HabitRepository(db.habitDao())
-        executor = ActionExecutor(db, activities, habits, GoogleCopySync(writer, activities), ReminderResync { resyncs++ }, scope)
+        executor = ActionExecutor(db, activities, habits, GoogleCopySync(writer, activities), ReminderResync { resyncs++; if (resyncThrows) throw IllegalStateException("boom") }, scope)
     }
 
     @After fun tearDown() { db.close() }
@@ -88,6 +89,27 @@ class ActionExecutorTest {
         assertEquals(1, habits.count())
         assertEquals(listOf(r.created[0].activityId!!), r.undo!!.activityIds)
         assertEquals(listOf(r.created[1].habitId!!), r.undo!!.habitIds)
+    }
+
+    @Test fun throwingResyncAfterCommitStillReturnsCreatedAndTokenAndLaunchesTheGoogleCopy() = run {
+        resyncThrows = true
+        val r = executor.apply(listOf(Validated.Activity(dentist), Validated.Habit(stretch)))
+        advanceUntilIdle()
+        assertEquals(2, r.created.size)
+        assertNotNull(r.undo)
+        assertEquals(1, activities.count())
+        assertEquals(1, habits.count())
+        assertEquals(1, writer.events.size)
+    }
+
+    @Test fun undoWithThrowingResyncStillDeletesRowsAndDoesNotThrow() = run {
+        val r = executor.apply(listOf(Validated.Activity(dentist), Validated.Habit(stretch)))
+        advanceUntilIdle()
+        resyncThrows = true
+        executor.undo(r.undo!!)
+        assertEquals(0, activities.count())
+        assertEquals(0, habits.count())
+        assertTrue(writer.events.isEmpty())
     }
 
     @Test fun habitLabelsForOtherModes() = run {

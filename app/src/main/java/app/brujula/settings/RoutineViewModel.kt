@@ -61,6 +61,8 @@ class RoutineViewModel(
     private val reconcileGoogle: suspend () -> Unit = { },
     private val claudeKeyStore: ClaudeKeyStore? = null,
     private val claudeGateway: ClaudeGateway? = null,
+    /** Tras guardar una clave nueva (producción: procesar los dictados pendientes en `syncScope`). */
+    private val onKeySaved: () -> Unit = {},
 ) : ViewModel() {
     private val scope: CoroutineScope = scopeOverride ?: viewModelScope
 
@@ -169,6 +171,9 @@ class RoutineViewModel(
         }
     }
 
+    /** Sube al guardar o borrar la clave: un resultado de "Probar" iniciado antes ya no aplica. */
+    private var keyGeneration = 0
+
     /** Guarda la clave sin espacios; vacia = borrar. Nunca se registra ni se muestra completa. */
     fun saveClaudeKey(key: String): Job = scope.launch {
         val store = claudeKeyStore ?: return@launch
@@ -181,8 +186,10 @@ class RoutineViewModel(
             android.util.Log.w("RoutineViewModel", "No se pudo guardar la clave de Claude")
             return@launch
         }
+        keyGeneration++
         claudeState.value = if (clean.isEmpty()) ClaudeSectionState()
         else ClaudeSectionState(hasKey = true, lastFour = clean.takeLast(4))
+        if (clean.isNotEmpty()) runCatching { onKeySaved() }
     }
 
     /** Prueba la clave guardada con una peticion minima. */
@@ -190,6 +197,7 @@ class RoutineViewModel(
         val gateway = claudeGateway ?: return@launch
         if (!claudeState.value.hasKey) return@launch
         claudeState.value = claudeState.value.copy(status = ClaudeStatus.TESTING)
+        val generation = keyGeneration
         val result = try {
             gateway.testKey()
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -197,6 +205,8 @@ class RoutineViewModel(
         } catch (e: Exception) {
             KeyTestResult.ERROR
         }
+        // La clave cambió mientras se probaba: este resultado es de la anterior.
+        if (generation != keyGeneration) return@launch
         claudeState.value = claudeState.value.copy(
             status = when (result) {
                 KeyTestResult.OK -> ClaudeStatus.CONNECTED

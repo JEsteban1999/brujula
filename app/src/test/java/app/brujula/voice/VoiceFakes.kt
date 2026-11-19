@@ -36,11 +36,13 @@ fun ok(vararg titles: String, reply: String = "Listo") = InterpretOutcome.Ok(tit
 class FakeInterpreter(vararg outcomes: InterpretOutcome) : TextInterpreter {
     val queue = ArrayDeque(outcomes.toList())
     val texts = mutableListOf<String>()
+    val dictatedAts = mutableListOf<Long?>()
     var gate: CompletableDeferred<Unit>? = null
     var running = 0
     var maxRunning = 0
-    override suspend fun interpret(text: String): InterpretOutcome {
+    override suspend fun interpret(text: String, dictatedAt: Long?): InterpretOutcome {
         texts += text
+        dictatedAts += dictatedAt
         running++
         maxRunning = maxOf(maxRunning, running)
         try {
@@ -80,6 +82,8 @@ class FakeExecutor(var failApply: Boolean = false, var failUndo: Boolean = false
 class RecordingNotifier : app.brujula.claude.PendingNotifier {
     val scheduled = mutableListOf<Pair<List<String>, List<String>>>()
     val dropped = mutableListOf<Pair<String, String>>()
+    val needsKey = mutableListOf<Int>()
+    override fun needsKey(count: Int) { needsKey += count }
     override fun scheduled(labels: List<String>, problems: List<String>) { scheduled += labels to problems }
     override fun dropped(text: String, reason: String) { dropped += text to reason }
 }

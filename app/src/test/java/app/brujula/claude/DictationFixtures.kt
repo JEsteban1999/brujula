@@ -13,8 +13,10 @@ fun dictationCtx(
     busyTomorrow: List<BusyItem> = emptyList(),
     habitNames: List<String> = emptyList(),
     routine: Routine = Routine(),
+    /** Instante en que se dictó (cola sin conexión): "hoy/mañana" salen de su día lógico; [now] sigue siendo el momento actual. */
+    dictatedAt: LocalDateTime? = null,
 ): DictationContext {
-    val day = logicalDay(now)
+    val day = logicalDay(dictatedAt ?: now)
     return DictationContext(
         now = now,
         zone = ZoneId.of("America/Bogota"),
@@ -25,5 +27,6 @@ fun dictationCtx(
         busyToday = busyToday,
         busyTomorrow = busyTomorrow,
         habitNames = habitNames,
+        dictatedAt = dictatedAt,
     )
 }
