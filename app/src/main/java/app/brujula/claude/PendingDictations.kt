@@ -70,7 +70,24 @@ class PendingDictations(
      * elemento, o ante un rechazo definitivo / una pregunta sin acciones, el elemento sale con un aviso.
      */
     suspend fun drain(interpreter: TextInterpreter, executor: ActionApplier) {
-        if (!drainMutex.tryLock()) return
+        while (true) {
+            // Una peticion que llega con otra pasada en curso no se pierde: la pasada vigente da una vuelta mas.
+            if (!drainMutex.tryLock()) { rerunRequested = true; return }
+            try {
+                do {
+                    rerunRequested = false
+                    pass(interpreter, executor)
+                } while (rerunRequested)
+            } finally {
+                drainMutex.unlock()
+            }
+            if (!rerunRequested) return
+        }
+    }
+
+    @Volatile private var rerunRequested = false
+
+    private suspend fun pass(interpreter: TextInterpreter, executor: ActionApplier) {
         val labels = mutableListOf<String>()
         val problems = mutableListOf<String>()
         try {
@@ -97,7 +114,6 @@ class PendingDictations(
             }
         } finally {
             if (labels.isNotEmpty()) notifier.scheduled(labels.toList(), problems.toList())
-            drainMutex.unlock()
         }
     }
 

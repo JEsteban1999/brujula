@@ -160,6 +160,26 @@ class PendingDictationsTest {
         assertTrue(p.all().isEmpty())
     }
 
+    @Test fun drainRequestedDuringRunningDrainIsNotLostAndItemAddedMidDrainIsProcessed() = runTest {
+        val p = store()
+        p.add("a", 1)
+        val interp = FakeInterpreter(ok("X"), ok("Y"))
+        interp.gate = CompletableDeferred()
+        val exec = FakeExecutor()
+        val d1 = async { p.drain(interp, exec) }
+        runCurrent()
+        p.add("b", 2)
+        val d2 = async { p.drain(interp, exec) }
+        runCurrent()
+        assertTrue(d2.isCompleted)
+        interp.gate!!.complete(Unit)
+        advanceUntilIdle()
+        d1.await()
+        assertTrue(p.all().isEmpty())
+        assertEquals(listOf("a", "b"), interp.texts)
+        assertEquals(1, interp.maxRunning)
+    }
+
     @Test fun damagedEntriesAreSkippedAndUnparseableJsonIsBackedUp() = runTest {
         val ds = dataStore()
         val p = PendingDictations(ds, notes)

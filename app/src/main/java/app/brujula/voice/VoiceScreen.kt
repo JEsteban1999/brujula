@@ -347,6 +347,7 @@ private fun ErrorView(s: VoiceState.Error, hint: String?, reduced: Boolean, text
             Orb(reduced, onTapMic, "Tocar para intentar de nuevo")
         }
         Hint(hint)
+        if (textOnly && hint == VoiceCopy.MIC_DENIED) SettingsLink()
     }
 }
 

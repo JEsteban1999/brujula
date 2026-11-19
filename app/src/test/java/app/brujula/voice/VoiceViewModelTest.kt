@@ -276,4 +276,51 @@ class VoiceViewModelTest {
         runCurrent()
         assertEquals("uno. dos", r.interp.texts.last())
     }
+
+    @Test fun leavingWhileApplyIsInFlightAppliesOnceAndDoesNotQueue() = runTest {
+        val ds: DataStore<Preferences> = PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "e.preferences_pb") }
+        val pending = PendingDictations(ds)
+        val exec = FakeExecutor().also { it.applyGate = CompletableDeferred() }
+        val vm = VoiceViewModel(FakeSpeechInput(), FakeInterpreter(ok("X")), exec, pending, scopeOverride = backgroundScope, requestDrain = { drains++ })
+        val store = ViewModelStore()
+        store.put("k", vm)
+        vm.submitText("dentista")
+        runCurrent()
+        store.clear()
+        runCurrent()
+        exec.applyGate!!.complete(Unit)
+        runCurrent()
+        assertEquals(1, exec.applied.size)
+        assertTrue(pending.all().isEmpty())
+        assertEquals(0, drains)
+    }
+
+    @Test fun leavingWhileQueueWriteIsInFlightLeavesExactlyOneEntry() = runTest {
+        val inner: DataStore<Preferences> = PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "f.preferences_pb") }
+        val gate = CompletableDeferred<Unit>()
+        val vm = VoiceViewModel(
+            FakeSpeechInput(), FakeInterpreter(InterpretOutcome.Offline), FakeExecutor(), PendingDictations(GatedDataStore(inner, gate)),
+            scopeOverride = backgroundScope, requestDrain = { drains++ },
+        )
+        val store = ViewModelStore()
+        store.put("k", vm)
+        vm.submitText("dentista")
+        runCurrent()
+        store.clear()
+        runCurrent()
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("dentista"), PendingDictations(inner).all().map { it.text })
+    }
+
+    @Test fun undoFailureMessageIsNotDuplicated() = runTest {
+        val r = rig(outcomes = arrayOf(ok("Ejercicio")))
+        r.exec.failUndo = true
+        r.vm.submitText("x")
+        runCurrent()
+        r.vm.undo(); runCurrent()
+        r.vm.undo(); runCurrent()
+        val s = r.vm.state.value as VoiceState.Result
+        assertEquals(1, s.messages.count { it == VoiceCopy.UNDO_FAILED })
+    }
 }

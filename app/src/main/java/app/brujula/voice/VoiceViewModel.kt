@@ -96,6 +96,8 @@ class VoiceViewModel(
     /** Texto a reintentar tras un fallo recuperable; nulo si el fallo fue del micrófono. */
     private var lastText: String? = null
     private var lastPartial = ""
+    /** El dictado ya esta en manos de apply o de la cola: una cancelacion posterior no debe encolarlo otra vez. */
+    private var handedOff = false
 
     fun setDraft(text: String) { _draft.value = text }
 
@@ -169,13 +171,16 @@ class VoiceViewModel(
             } catch (e: Exception) {
                 undoToken = token
                 val s = _state.value
-                if (s is VoiceState.Result) _state.value = s.copy(messages = s.messages + VoiceCopy.UNDO_FAILED)
+                if (s is VoiceState.Result && VoiceCopy.UNDO_FAILED !in s.messages) {
+                    _state.value = s.copy(messages = s.messages + VoiceCopy.UNDO_FAILED)
+                }
             }
         }
     }
 
     private suspend fun interpret(full: String, answer: String) {
         var settled = false
+        handedOff = false
         try {
             val outcome = try {
                 interpreter.interpret(full)
@@ -199,7 +204,7 @@ class VoiceViewModel(
             settled = true
         } catch (e: CancellationException) {
             // Salir de la pantalla en pleno "entendiendo": el dictado pasa a la cola y se procesa enseguida.
-            if (!settled) {
+            if (!settled && !handedOff) {
                 withContext(NonCancellable) {
                     runCatching { pending.add(full, now()) }.onSuccess { requestDrain() }
                 }
@@ -216,8 +221,10 @@ class VoiceViewModel(
             _state.value = VoiceState.NeedsMore(question.text)
             return
         }
+        // Desde aqui el dictado es de apply (termina su transaccion, resync y copia a Google): no se encola de nuevo.
+        handedOff = true
         val result = try {
-            executor.apply(outcome.items)
+            withContext(NonCancellable) { executor.apply(outcome.items) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -238,8 +245,9 @@ class VoiceViewModel(
     }
 
     private suspend fun queue(full: String) {
+        handedOff = true
         try {
-            pending.add(full, now())
+            withContext(NonCancellable) { pending.add(full, now()) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

@@ -53,10 +53,12 @@ class FakeInterpreter(vararg outcomes: InterpretOutcome) : TextInterpreter {
 }
 
 class FakeExecutor(var failApply: Boolean = false, var failUndo: Boolean = false) : ActionApplier {
+    var applyGate: CompletableDeferred<Unit>? = null
     val applied = mutableListOf<List<Validated>>()
     val undone = mutableListOf<UndoToken>()
     private var nextId = 1L
     override suspend fun apply(items: List<Validated>): ApplyResult {
+        applyGate?.await()
         applied += items
         val messages = items.mapNotNull {
             when (it) {
@@ -89,4 +91,15 @@ class ThrowingDataStore : androidx.datastore.core.DataStore<androidx.datastore.p
     override suspend fun updateData(
         transform: suspend (androidx.datastore.preferences.core.Preferences) -> androidx.datastore.preferences.core.Preferences,
     ): androidx.datastore.preferences.core.Preferences = throw java.io.IOException("boom")
+}
+
+/** Retrasa cada escritura hasta abrir [gate]; la escritura llega al almacen aunque quien llamo se cancele. */
+class GatedDataStore(
+    private val inner: androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences>,
+    val gate: CompletableDeferred<Unit>,
+) : androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences> {
+    override val data = inner.data
+    override suspend fun updateData(
+        transform: suspend (androidx.datastore.preferences.core.Preferences) -> androidx.datastore.preferences.core.Preferences,
+    ) = inner.updateData { gate.await(); transform(it) }
 }
