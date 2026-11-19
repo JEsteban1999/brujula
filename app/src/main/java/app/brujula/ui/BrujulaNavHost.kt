@@ -31,6 +31,9 @@ import app.brujula.habits.HabitsViewModel
 import app.brujula.reminders.readPermissionStatus
 import app.brujula.settings.RoutineScreen
 import app.brujula.settings.RoutineViewModel
+import app.brujula.voice.AndroidSpeechInput
+import app.brujula.voice.VoiceScreen
+import app.brujula.voice.VoiceViewModel
 import app.brujula.today.TodayScreen
 import app.brujula.today.TodayViewModel
 import kotlinx.coroutines.flow.first
@@ -40,6 +43,7 @@ object Routes {
     const val TODAY = "today"
     const val HABITS = "habits"
     const val ROUTINE = "routine"
+    const val VOICE = "voice"
     const val ACTIVITY_FORM = "activity?id={id}&start={start}"
     const val HABIT_FORM = "habit?id={id}&group={group}"
 
@@ -78,6 +82,7 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                     onToday = { navController.navigateTop(Routes.TODAY) },
                     onHabits = { navController.navigateTop(Routes.HABITS) },
                     onSettings = { navController.navigateTop(Routes.ROUTINE) },
+                    onVoice = { navController.navigate(Routes.VOICE) { launchSingleTop = true } },
                     onAdd = { navController.navigate(Routes.activityForm()) },
                 )
             }
@@ -130,6 +135,23 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                     onNewWellness = { navController.navigate(Routes.habitForm(group = HabitGroup.WELLNESS)) },
                     onEditHabit = { navController.navigate(Routes.habitForm(it)) },
                 )
+            }
+            composable(Routes.VOICE) {
+                val context = LocalContext.current
+                val container = context.container
+                val vm: VoiceViewModel = viewModel(
+                    factory = viewModelFactory {
+                        initializer {
+                            VoiceViewModel(
+                                speech = AndroidSpeechInput(context.applicationContext),
+                                interpreter = container.interpreter,
+                                executor = container.executor,
+                                pending = container.pendingDictations,
+                            )
+                        }
+                    },
+                )
+                VoiceScreen(viewModel = vm, onClose = { navController.popBackStack() })
             }
             composable(Routes.ROUTINE) {
                 val container = LocalContext.current.container

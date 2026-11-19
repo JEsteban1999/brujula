@@ -15,7 +15,15 @@ import app.brujula.claude.ClaudeGateway
 import app.brujula.claude.ClaudeKeyStore
 import app.brujula.claude.DictationContext
 import app.brujula.claude.DictationContextProvider
+import app.brujula.claude.ActionApplier
+import app.brujula.claude.ActionExecutor
 import app.brujula.claude.DictationInterpreter
+import app.brujula.claude.PendingDictations
+import app.brujula.claude.TextInterpreter
+import app.brujula.reminders.Notifications
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import app.brujula.claude.KeystoreSecretCipher
 import app.brujula.core.time.Clock
 import app.brujula.core.time.SystemClock
@@ -75,7 +83,33 @@ class AppContainer(val context: Context) {
 
     /** Convierte un dictado en acciones validadas (no aplica nada); usa el gateway vigente. */
     val dictationInterpreter: DictationInterpreter
-        get() = DictationInterpreter(claudeGateway, ::dictationContext)
+        get() = DictationInterpreter(claudeGateway, ::dictationContext, isOnline = { isOnline(context) })
+
+    private var interpreterOverride: TextInterpreter? = null
+    private var executorOverride: ActionApplier? = null
+
+    /** Intérprete de dictados; sustituible en pruebas. */
+    var interpreter: TextInterpreter
+        get() = interpreterOverride ?: dictationInterpreter
+        set(value) { interpreterOverride = value }
+
+    /** Aplica y deshace lo dictado, con las dependencias vigentes; sustituible en pruebas. */
+    var executor: ActionApplier
+        get() = executorOverride ?: ActionExecutor(database, activityRepository, habitRepository, googleCopySync, reminderSync, syncScope = syncScope)
+        set(value) { executorOverride = value }
+
+    /** Dictados guardados sin conexión; al terminar una pasada avisa con una notificación en `actividades`. */
+    val pendingDictations: PendingDictations by lazy {
+        PendingDictations(context.applicationContext.routineDataStore) { labels ->
+            Notifications.showInfo(
+                context.applicationContext, "pending_dictations",
+                "Agendé lo que dictaste sin conexión: " + labels.joinToString("; "),
+            )
+        }
+    }
+
+    /** Procesa los dictados pendientes (idempotente; nunca dos a la vez). */
+    suspend fun drainPendingDictations() = pendingDictations.drain(interpreter, executor)
 
     /** Ambito de la app para la copia a Google: sobrevive al formulario (SupervisorJob + IO). */
     val syncScope = CoroutineScope(
@@ -114,6 +148,16 @@ class AppContainer(val context: Context) {
         set(value) { syncOverride = value }
 }
 
+/** Hay internet utilizable ahora mismo (validado, no solo conectado). */
+fun isOnline(context: Context): Boolean = try {
+    val cm = context.getSystemService(ConnectivityManager::class.java)
+    val caps = cm?.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+    caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+} catch (e: Exception) {
+    false
+}
+
 open class BrujulaApp : Application() {
     val container: AppContainer by lazy { AppContainer(this) }
     /** Un fallo no atrapado en segundo plano se registra en vez de tumbar el proceso. */
@@ -140,6 +184,23 @@ open class BrujulaApp : Application() {
         // Copias a Google pendientes (citas guardadas sin permiso, o con la copia apagada); idempotente.
         container.syncScope.launch { container.reconcileGoogleCopies() }
         launchReminderResync()
+        launchPendingDrain()
+    }
+
+    /** Procesa los dictados pendientes al abrir la app y cada vez que la red vuelve o se valida. */
+    private fun launchPendingDrain() {
+        val c = container
+        val drain = { c.syncScope.launch { runCatching { c.drainPendingDictations() }.onFailure { Log.e("BrujulaApp", "Fallo al procesar pendientes", it) } }; Unit }
+        drain()
+        runCatching {
+            val cm = getSystemService(ConnectivityManager::class.java)
+            cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) = drain()
+                override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                    if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) drain()
+                }
+            })
+        }.onFailure { Log.e("BrujulaApp", "No pude vigilar la red", it) }
     }
 
     /** Reprograma al abrir la app y cada vez que cambian rutina, actividades, habitos o registros. */

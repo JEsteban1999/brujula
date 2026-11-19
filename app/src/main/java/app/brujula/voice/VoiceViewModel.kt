@@ -1,0 +1,212 @@
+package app.brujula.voice
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import app.brujula.claude.ActionApplier
+import app.brujula.claude.DictationInterpreter
+import app.brujula.claude.InterpretOutcome
+import app.brujula.claude.PendingDictations
+import app.brujula.claude.TextInterpreter
+import app.brujula.claude.UndoToken
+import app.brujula.claude.Validated
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+object VoiceCopy {
+    const val LISTENING = "Escuchando…"
+    const val THINKING = "Claude está entendiendo…"
+    const val SCHEDULED = "Agendado"
+    const val NOTHING_SCHEDULED = "No agendé nada"
+    const val UNDONE = "Deshecho"
+    const val UNDO = "Deshacer"
+    const val DONE = "Listo"
+    const val RETRY = "Reintentar"
+    const val STOP_TALKING = "Terminar de hablar"
+    const val WRITE_INSTEAD = "Escribir en vez de hablar"
+    const val OFFLINE = DictationInterpreter.OFFLINE
+    const val NOT_HEARD = "No te escuché. Toca para intentar de nuevo."
+    const val MIC_ERROR = "No pude usar el micrófono. Toca para intentar de nuevo o escríbelo."
+    const val NO_VOICE = "El dictado por voz no está disponible en este teléfono. Escribe lo que quieres agendar."
+    const val MIC_DENIED = "Sin permiso de micrófono. Escribe lo que quieres agendar."
+    const val SAVE_FAILED = "No pude guardar lo que pediste. No se agendó nada."
+}
+
+sealed interface VoiceState {
+    /** Nada en curso: se puede tocar el micrófono o escribir. */
+    data object Idle : VoiceState
+    data class Listening(val partial: String) : VoiceState
+    data object Thinking : VoiceState
+    data class Result(
+        val created: List<String>,
+        val reply: String,
+        /** Pendientes que el validador rechazó, preguntas y avisos: se muestran junto a la respuesta de Claude. */
+        val messages: List<String>,
+        val undoAvailable: Boolean,
+    ) : VoiceState
+    data object Undone : VoiceState
+    data class NeedsMore(val question: String) : VoiceState
+    data class Error(val message: String, val retry: Boolean) : VoiceState
+    /** Guardado para interpretarlo cuando vuelva internet. */
+    data object SavedOffline : VoiceState
+}
+
+class VoiceViewModel(
+    private val speech: SpeechInput,
+    private val interpreter: TextInterpreter,
+    private val executor: ActionApplier,
+    private val pending: PendingDictations,
+    private val now: () -> Long = System::currentTimeMillis,
+    private val scopeOverride: CoroutineScope? = null,
+) : ViewModel() {
+    private val scope: CoroutineScope get() = scopeOverride ?: viewModelScope
+
+    private val _state = MutableStateFlow<VoiceState>(VoiceState.Idle)
+    val state: StateFlow<VoiceState> = _state.asStateFlow()
+
+    /** Contenido del campo "Escribir en vez de hablar"; vive aquí para sobrevivir a la rotación. */
+    private val _draft = MutableStateFlow("")
+    val draft: StateFlow<String> = _draft.asStateFlow()
+
+    private val _hint = MutableStateFlow<String?>(null)
+    val hint: StateFlow<String?> = _hint.asStateFlow()
+
+    val voiceAvailable: Boolean get() = speech.isAvailable
+
+    private var job: Job? = null
+    private var undoToken: UndoToken? = null
+    /** Dictado original mientras Claude espera una respuesta ([VoiceState.NeedsMore]). */
+    private var base: String? = null
+    /** Texto a reintentar tras un fallo recuperable; nulo si el fallo fue del micrófono. */
+    private var lastText: String? = null
+
+    fun setDraft(text: String) { _draft.value = text }
+
+    fun onMicDenied() { _hint.value = VoiceCopy.MIC_DENIED }
+
+    fun start() {
+        if (_state.value == VoiceState.Thinking) return
+        if (!speech.isAvailable) { _hint.value = VoiceCopy.NO_VOICE; return }
+        _hint.value = null
+        lastText = null
+        _state.value = VoiceState.Listening("")
+        speech.start(::onSpeech)
+    }
+
+    fun stop() { speech.stop() }
+
+    private fun onSpeech(e: SpeechEvent) {
+        if (_state.value !is VoiceState.Listening) return
+        when (e) {
+            is SpeechEvent.Partial -> _state.value = VoiceState.Listening(e.text)
+            is SpeechEvent.Final -> submitText(e.text)
+            is SpeechEvent.Failure -> _state.value = VoiceState.Error(
+                if (e.kind == SpeechFailure.NO_MATCH) VoiceCopy.NOT_HEARD else VoiceCopy.MIC_ERROR, retry = true,
+            )
+        }
+    }
+
+    fun submitText(text: String) {
+        val clean = text.trim()
+        if (clean.isEmpty()) {
+            if (_state.value is VoiceState.Listening) _state.value = VoiceState.Error(VoiceCopy.NOT_HEARD, retry = true)
+            return
+        }
+        if (_state.value == VoiceState.Thinking) return
+        speech.cancel()
+        val full = base?.let { "$it. $clean" } ?: clean
+        _draft.value = ""
+        _state.value = VoiceState.Thinking
+        job = scope.launch { interpret(full, answer = clean) }
+    }
+
+    fun retry() {
+        val text = lastText
+        if (text == null) { start(); return }
+        if (_state.value == VoiceState.Thinking) return
+        _state.value = VoiceState.Thinking
+        job = scope.launch { interpret(text, answer = _draft.value) }
+    }
+
+    fun undo() {
+        val token = undoToken ?: return
+        undoToken = null
+        scope.launch {
+            executor.undo(token)
+            _state.value = VoiceState.Undone
+        }
+    }
+
+    private suspend fun interpret(full: String, answer: String) {
+        val outcome = try {
+            interpreter.interpret(full)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            InterpretOutcome.Failed(DictationInterpreter.UNAVAILABLE, retryable = true)
+        }
+        // Texto nunca perdido: en cualquier fallo vuelve al campo (solo la respuesta si hay una pregunta pendiente).
+        val back = if (base != null) answer else full
+        when (outcome) {
+            is InterpretOutcome.Ok -> applyOk(outcome, full, back)
+            InterpretOutcome.NoKey -> fail(DictationInterpreter.NO_KEY, retry = false, text = null, back)
+            InterpretOutcome.InvalidKey -> fail(DictationInterpreter.INVALID_KEY, retry = false, text = null, back)
+            InterpretOutcome.Offline -> queue(full)
+            is InterpretOutcome.Refused -> fail(outcome.message, retry = false, text = null, back)
+            is InterpretOutcome.Failed ->
+                if (outcome.message == DictationInterpreter.OFFLINE) queue(full)
+                else fail(outcome.message, outcome.retryable, if (outcome.retryable) full else null, back)
+        }
+    }
+
+    private suspend fun applyOk(outcome: InterpretOutcome.Ok, full: String, back: String) {
+        val creatable = outcome.items.any { it is Validated.Activity || it is Validated.Habit }
+        val question = outcome.items.filterIsInstance<Validated.Question>().firstOrNull()
+        if (!creatable && question != null) {
+            base = full
+            _state.value = VoiceState.NeedsMore(question.text)
+            return
+        }
+        val result = try {
+            executor.apply(outcome.items)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return fail(VoiceCopy.SAVE_FAILED, retry = true, text = full, back)
+        }
+        if (creatable && result.created.isEmpty()) {
+            return fail(result.messages.lastOrNull() ?: VoiceCopy.SAVE_FAILED, retry = true, text = full, back)
+        }
+        base = null
+        lastText = null
+        undoToken = result.undo
+        _state.value = VoiceState.Result(
+            created = result.created.map { it.label },
+            reply = outcome.reply,
+            messages = result.messages,
+            undoAvailable = result.undo != null,
+        )
+    }
+
+    private suspend fun queue(full: String) {
+        pending.add(full, now())
+        base = null
+        lastText = null
+        _state.value = VoiceState.SavedOffline
+    }
+
+    private fun fail(message: String, retry: Boolean, text: String?, back: String) {
+        lastText = text
+        _draft.value = back
+        _state.value = VoiceState.Error(message, retry)
+    }
+
+    override fun onCleared() {
+        job?.cancel()
+        speech.destroy()
+    }
+}

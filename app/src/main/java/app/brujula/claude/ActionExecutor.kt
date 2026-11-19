@@ -30,6 +30,12 @@ data class UndoToken(val activityIds: List<Long>, val habitIds: List<Long>)
 
 data class ApplyResult(val created: List<CreatedItem>, val messages: List<String>, val undo: UndoToken?)
 
+/** Costura para la pantalla de dictado y la cola sin conexión; las pruebas la sustituyen. */
+interface ActionApplier {
+    suspend fun apply(items: List<Validated>): ApplyResult
+    suspend fun undo(token: UndoToken)
+}
+
 /**
  * Aplica las acciones ya validadas: crea todo en una sola transacción (si algo falla no queda nada), copia a Google
  * las actividades que lo piden y resincroniza los recordatorios una vez. [undo] borra exactamente lo creado.
@@ -42,11 +48,11 @@ class ActionExecutor(
     private val reminderSync: ReminderResync,
     /** Las copias a Google corren aquí (producción: `container.syncScope`), fuera de la cancelación de quien llama. */
     private val syncScope: CoroutineScope,
-) {
+) : ActionApplier {
     /** Solo para pruebas: se invoca tras cada fila insertada, dentro de la transacción. */
     internal var afterInsert: (suspend () -> Unit)? = null
 
-    suspend fun apply(items: List<Validated>): ApplyResult {
+    override suspend fun apply(items: List<Validated>): ApplyResult {
         val messages = items.mapNotNull {
             when (it) {
                 is Validated.Question -> it.text
@@ -96,7 +102,7 @@ class ActionExecutor(
      * Idempotente y sin cancelación a medias. Por cada actividad creada se barre la copia de Google aunque la fila ya no
      * exista (un reintento, o una copia que terminó después de [apply]): `afterDelete` busca por id de actividad.
      */
-    suspend fun undo(token: UndoToken) = withContext(NonCancellable) {
+    override suspend fun undo(token: UndoToken) = withContext(NonCancellable) {
         for (id in token.activityIds) {
             val stored = activityRepo.get(id)
             if (stored != null) activityRepo.delete(id)

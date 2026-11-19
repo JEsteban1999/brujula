@@ -12,6 +12,11 @@ sealed interface InterpretOutcome {
     data class Failed(val message: String, val retryable: Boolean) : InterpretOutcome
 }
 
+/** Costura para la pantalla de dictado y la cola sin conexión; las pruebas la sustituyen. */
+fun interface TextInterpreter {
+    suspend fun interpret(text: String): InterpretOutcome
+}
+
 /**
  * Convierte un dictado en acciones validadas: arma el contexto, hace una sola llamada a Claude y valida cada acción.
  * No aplica nada. [isOnline] permite responder [InterpretOutcome.Offline] sin intentar la llamada.
@@ -20,8 +25,8 @@ class DictationInterpreter(
     private val gateway: ClaudeGateway,
     private val contextProvider: suspend () -> DictationContext,
     private val isOnline: suspend () -> Boolean = { true },
-) {
-    suspend fun interpret(text: String): InterpretOutcome {
+) : TextInterpreter {
+    override suspend fun interpret(text: String): InterpretOutcome {
         val clean = text.trim()
         if (clean.isEmpty()) return InterpretOutcome.Failed(NOTHING_HEARD, retryable = false)
         if (!isOnline()) return InterpretOutcome.Offline
