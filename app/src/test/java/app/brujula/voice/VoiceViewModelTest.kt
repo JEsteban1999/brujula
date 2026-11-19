@@ -35,12 +35,14 @@ class VoiceViewModelTest {
         val pending: PendingDictations, val vm: VoiceViewModel,
     )
 
+    private var drains = 0
+
     private fun TestScope.rig(speech: FakeSpeechInput = FakeSpeechInput(), vararg outcomes: InterpretOutcome): Rig {
         val ds: DataStore<Preferences> = PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "p.preferences_pb") }
         val pending = PendingDictations(ds)
         val interp = FakeInterpreter(*outcomes)
         val exec = FakeExecutor()
-        return Rig(speech, interp, exec, pending, VoiceViewModel(speech, interp, exec, pending, now = { 1000L }, scopeOverride = backgroundScope))
+        return Rig(speech, interp, exec, pending, VoiceViewModel(speech, interp, exec, pending, now = { 1000L }, scopeOverride = backgroundScope, requestDrain = { drains++ }))
     }
 
     @Test fun finalSpeechGoesThinkingThenResultWithLabelsAndUndo() = runTest {
@@ -119,7 +121,7 @@ class VoiceViewModelTest {
     }
 
     @Test fun networkFailureIsQueued() = runTest {
-        val r = rig(outcomes = arrayOf(InterpretOutcome.Failed(DictationInterpreter.OFFLINE, retryable = true)))
+        val r = rig(outcomes = arrayOf(InterpretOutcome.Failed(DictationInterpreter.OFFLINE, retryable = true, network = true)))
         r.vm.submitText("ejercicio")
         runCurrent()
         assertEquals(VoiceState.SavedOffline, r.vm.state.value)
@@ -193,5 +195,85 @@ class VoiceViewModelTest {
         store.put("k", vm)
         store.clear()
         assertTrue(speech.destroyed)
+    }
+
+    @Test fun leavingWhileThinkingQueuesTheTextAndRequestsDrain() = runTest {
+        val speech = FakeSpeechInput()
+        val ds: DataStore<Preferences> = PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "c.preferences_pb") }
+        val pending = PendingDictations(ds)
+        val interp = FakeInterpreter(ok("X")).also { it.gate = CompletableDeferred() }
+        val vm = VoiceViewModel(speech, interp, FakeExecutor(), pending, now = { 7L }, scopeOverride = backgroundScope, requestDrain = { drains++ })
+        val store = ViewModelStore()
+        store.put("k", vm)
+        vm.submitText("dentista mañana")
+        runCurrent()
+        assertEquals(VoiceState.Thinking, vm.state.value)
+        store.clear()
+        runCurrent()
+        assertEquals(listOf("dentista mañana"), pending.all().map { it.text })
+        assertEquals(1, drains)
+    }
+
+    @Test fun partialSpeechSurvivesNetworkError() = runTest {
+        val r = rig()
+        r.vm.start()
+        r.speech.emit(SpeechEvent.Partial("mañana dentista"))
+        r.speech.emit(SpeechEvent.Failure(SpeechFailure.NETWORK))
+        assertEquals(VoiceState.Error(VoiceCopy.NETWORK, retry = false), r.vm.state.value)
+        assertEquals("mañana dentista", r.vm.draft.value)
+        assertEquals("El reconocimiento de voz necesita internet. Puedes escribirlo.", VoiceCopy.NETWORK)
+    }
+
+    @Test fun queueFailureFallsBackToErrorWithTextInDraft() = runTest {
+        val vm = VoiceViewModel(
+            FakeSpeechInput(), FakeInterpreter(InterpretOutcome.Offline), FakeExecutor(), PendingDictations(ThrowingDataStore()),
+            now = { 0L }, scopeOverride = backgroundScope,
+        )
+        vm.submitText("algo")
+        runCurrent()
+        assertEquals(VoiceState.Error(VoiceCopy.QUEUE_FAILED, retry = true), vm.state.value)
+        assertEquals("algo", vm.draft.value)
+    }
+
+    @Test fun undoFailureShowsMessageAndKeepsUndoAvailable() = runTest {
+        val r = rig(outcomes = arrayOf(ok("Ejercicio")))
+        r.exec.failUndo = true
+        r.vm.submitText("x")
+        runCurrent()
+        r.vm.undo()
+        runCurrent()
+        val s = r.vm.state.value as VoiceState.Result
+        assertTrue(s.undoAvailable)
+        assertTrue(s.messages.contains("No pude deshacer. Inténtalo de nuevo."))
+        r.exec.failUndo = false
+        r.vm.undo()
+        runCurrent()
+        assertEquals(VoiceState.Undone, r.vm.state.value)
+    }
+
+    @Test fun terminalErrorForgetsPendingQuestion() = runTest {
+        val r = rig(outcomes = arrayOf(
+            InterpretOutcome.Ok(listOf(Validated.Question("¿Qué?")), ""),
+            InterpretOutcome.Refused("no"),
+            ok("Ejercicio"),
+        ))
+        r.vm.submitText("uno")
+        runCurrent()
+        r.vm.submitText("dos")
+        runCurrent()
+        assertEquals("uno. dos", r.vm.draft.value)
+        r.vm.submitText(r.vm.draft.value)
+        runCurrent()
+        assertEquals("uno. dos", r.interp.texts.last())
+    }
+
+    @Test fun startingFreshDictationDropsOldQuestionButAnsweringKeepsIt() = runTest {
+        val r = rig(outcomes = arrayOf(InterpretOutcome.Ok(listOf(Validated.Question("¿Qué?")), ""), ok("A")))
+        r.vm.submitText("uno")
+        runCurrent()
+        r.vm.start() // responder por voz: conserva "uno"
+        r.speech.emit(SpeechEvent.Final("dos"))
+        runCurrent()
+        assertEquals("uno. dos", r.interp.texts.last())
     }
 }

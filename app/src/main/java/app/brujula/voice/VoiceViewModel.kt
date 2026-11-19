@@ -12,6 +12,8 @@ import app.brujula.claude.Validated
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,8 +32,12 @@ object VoiceCopy {
     const val WRITE_INSTEAD = "Escribir en vez de hablar"
     const val OFFLINE = DictationInterpreter.OFFLINE
     const val NOT_HEARD = "No te escuché. Toca para intentar de nuevo."
+    const val NETWORK = "El reconocimiento de voz necesita internet. Puedes escribirlo."
+    const val UNDO_FAILED = "No pude deshacer. Inténtalo de nuevo."
+    const val QUEUE_FAILED = "No pude guardar tu dictado. Inténtalo de nuevo."
     const val MIC_ERROR = "No pude usar el micrófono. Toca para intentar de nuevo o escríbelo."
     const val NO_VOICE = "El dictado por voz no está disponible en este teléfono. Escribe lo que quieres agendar."
+    const val ENABLE_MIC = "Activar micrófono"
     const val MIC_DENIED = "Sin permiso de micrófono. Escribe lo que quieres agendar."
     const val SAVE_FAILED = "No pude guardar lo que pediste. No se agendó nada."
 }
@@ -62,6 +68,8 @@ class VoiceViewModel(
     private val pending: PendingDictations,
     private val now: () -> Long = System::currentTimeMillis,
     private val scopeOverride: CoroutineScope? = null,
+    /** Pide procesar la cola de pendientes (producción: `drainPendingDictations` en `syncScope`). */
+    private val requestDrain: () -> Unit = {},
 ) : ViewModel() {
     private val scope: CoroutineScope get() = scopeOverride ?: viewModelScope
 
@@ -75,6 +83,10 @@ class VoiceViewModel(
     private val _hint = MutableStateFlow<String?>(null)
     val hint: StateFlow<String?> = _hint.asStateFlow()
 
+    /** Sin micrófono utilizable (permiso negado o sin servicio): solo campo de texto. */
+    private val _textOnly = MutableStateFlow(!speech.isAvailable)
+    val textOnly: StateFlow<Boolean> = _textOnly.asStateFlow()
+
     val voiceAvailable: Boolean get() = speech.isAvailable
 
     private var job: Job? = null
@@ -83,16 +95,23 @@ class VoiceViewModel(
     private var base: String? = null
     /** Texto a reintentar tras un fallo recuperable; nulo si el fallo fue del micrófono. */
     private var lastText: String? = null
+    private var lastPartial = ""
 
     fun setDraft(text: String) { _draft.value = text }
 
-    fun onMicDenied() { _hint.value = VoiceCopy.MIC_DENIED }
+    fun onMicDenied() { _hint.value = VoiceCopy.MIC_DENIED; _textOnly.value = true }
+
+    /** El permiso ya está concedido (p. ej. al volver de Ajustes). */
+    fun onMicGranted() { if (speech.isAvailable && _textOnly.value) { _textOnly.value = false; _hint.value = null } }
 
     fun start() {
         if (_state.value == VoiceState.Thinking) return
-        if (!speech.isAvailable) { _hint.value = VoiceCopy.NO_VOICE; return }
+        if (!speech.isAvailable) { _hint.value = VoiceCopy.NO_VOICE; _textOnly.value = true; return }
         _hint.value = null
         lastText = null
+        lastPartial = ""
+        // Un dictado nuevo olvida la pregunta pendiente; responder a una pregunta (NeedsMore) la conserva.
+        if (_state.value !is VoiceState.NeedsMore) base = null
         _state.value = VoiceState.Listening("")
         speech.start(::onSpeech)
     }
@@ -102,11 +121,17 @@ class VoiceViewModel(
     private fun onSpeech(e: SpeechEvent) {
         if (_state.value !is VoiceState.Listening) return
         when (e) {
-            is SpeechEvent.Partial -> _state.value = VoiceState.Listening(e.text)
+            is SpeechEvent.Partial -> { lastPartial = e.text; _state.value = VoiceState.Listening(e.text) }
             is SpeechEvent.Final -> submitText(e.text)
-            is SpeechEvent.Failure -> _state.value = VoiceState.Error(
-                if (e.kind == SpeechFailure.NO_MATCH) VoiceCopy.NOT_HEARD else VoiceCopy.MIC_ERROR, retry = true,
-            )
+            is SpeechEvent.Failure -> {
+                // Lo ya entendido no se pierde: queda en el campo para enviarlo o editarlo.
+                if (lastPartial.isNotBlank()) _draft.value = lastPartial
+                _state.value = when (e.kind) {
+                    SpeechFailure.NO_MATCH -> VoiceState.Error(VoiceCopy.NOT_HEARD, retry = true)
+                    SpeechFailure.NETWORK -> VoiceState.Error(VoiceCopy.NETWORK, retry = false)
+                    SpeechFailure.OTHER -> VoiceState.Error(VoiceCopy.MIC_ERROR, retry = true)
+                }
+            }
         }
     }
 
@@ -136,30 +161,50 @@ class VoiceViewModel(
         val token = undoToken ?: return
         undoToken = null
         scope.launch {
-            executor.undo(token)
-            _state.value = VoiceState.Undone
+            try {
+                executor.undo(token)
+                _state.value = VoiceState.Undone
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                undoToken = token
+                val s = _state.value
+                if (s is VoiceState.Result) _state.value = s.copy(messages = s.messages + VoiceCopy.UNDO_FAILED)
+            }
         }
     }
 
     private suspend fun interpret(full: String, answer: String) {
-        val outcome = try {
-            interpreter.interpret(full)
+        var settled = false
+        try {
+            val outcome = try {
+                interpreter.interpret(full)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                InterpretOutcome.Failed(DictationInterpreter.UNAVAILABLE, retryable = true)
+            }
+            // Texto nunca perdido: en un fallo con reintento vuelve al campo (solo la respuesta si hay una pregunta pendiente).
+            val back = if (base != null) answer else full
+            when (outcome) {
+                is InterpretOutcome.Ok -> applyOk(outcome, full, back)
+                InterpretOutcome.NoKey -> fail(DictationInterpreter.NO_KEY, retry = false, text = null, back = back, full = full)
+                InterpretOutcome.InvalidKey -> fail(DictationInterpreter.INVALID_KEY, retry = false, text = null, back = back, full = full)
+                InterpretOutcome.Offline -> queue(full)
+                is InterpretOutcome.Refused -> fail(outcome.message, retry = false, text = null, back = back, full = full)
+                is InterpretOutcome.Failed ->
+                    if (outcome.network) queue(full)
+                    else fail(outcome.message, outcome.retryable, if (outcome.retryable) full else null, back, full)
+            }
+            settled = true
         } catch (e: CancellationException) {
+            // Salir de la pantalla en pleno "entendiendo": el dictado pasa a la cola y se procesa enseguida.
+            if (!settled) {
+                withContext(NonCancellable) {
+                    runCatching { pending.add(full, now()) }.onSuccess { requestDrain() }
+                }
+            }
             throw e
-        } catch (e: Exception) {
-            InterpretOutcome.Failed(DictationInterpreter.UNAVAILABLE, retryable = true)
-        }
-        // Texto nunca perdido: en cualquier fallo vuelve al campo (solo la respuesta si hay una pregunta pendiente).
-        val back = if (base != null) answer else full
-        when (outcome) {
-            is InterpretOutcome.Ok -> applyOk(outcome, full, back)
-            InterpretOutcome.NoKey -> fail(DictationInterpreter.NO_KEY, retry = false, text = null, back)
-            InterpretOutcome.InvalidKey -> fail(DictationInterpreter.INVALID_KEY, retry = false, text = null, back)
-            InterpretOutcome.Offline -> queue(full)
-            is InterpretOutcome.Refused -> fail(outcome.message, retry = false, text = null, back)
-            is InterpretOutcome.Failed ->
-                if (outcome.message == DictationInterpreter.OFFLINE) queue(full)
-                else fail(outcome.message, outcome.retryable, if (outcome.retryable) full else null, back)
         }
     }
 
@@ -176,10 +221,10 @@ class VoiceViewModel(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            return fail(VoiceCopy.SAVE_FAILED, retry = true, text = full, back)
+            return fail(VoiceCopy.SAVE_FAILED, retry = true, text = full, back = back, full = full)
         }
         if (creatable && result.created.isEmpty()) {
-            return fail(result.messages.lastOrNull() ?: VoiceCopy.SAVE_FAILED, retry = true, text = full, back)
+            return fail(result.messages.lastOrNull() ?: VoiceCopy.SAVE_FAILED, retry = true, text = full, back = back, full = full)
         }
         base = null
         lastText = null
@@ -193,15 +238,27 @@ class VoiceViewModel(
     }
 
     private suspend fun queue(full: String) {
-        pending.add(full, now())
+        try {
+            pending.add(full, now())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return fail(VoiceCopy.QUEUE_FAILED, retry = true, text = full, back = full, full = full)
+        }
         base = null
         lastText = null
         _state.value = VoiceState.SavedOffline
     }
 
-    private fun fail(message: String, retry: Boolean, text: String?, back: String) {
+    private fun fail(message: String, retry: Boolean, text: String?, back: String, full: String) {
         lastText = text
-        _draft.value = back
+        if (retry) {
+            _draft.value = back
+        } else {
+            // Error definitivo: la pregunta pendiente ya no aplica; el campo conserva el dictado completo.
+            base = null
+            _draft.value = full
+        }
         _state.value = VoiceState.Error(message, retry)
     }
 

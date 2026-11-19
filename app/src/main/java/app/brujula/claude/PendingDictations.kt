@@ -8,41 +8,71 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class PendingDictation(val text: String, val at: Long)
+data class PendingDictation(val text: String, val at: Long, val attempts: Int = 0)
+
+/** Avisos de la cola; producción: notificaciones en el canal `actividades`. */
+interface PendingNotifier {
+    /** Se agendó algo; [problems] son avisos de lo que no se pudo (motivos de acciones inválidas, preguntas). */
+    fun scheduled(labels: List<String>, problems: List<String>)
+    /** Un dictado salió de la cola sin agendarse del todo: nada se pierde sin aviso. */
+    fun dropped(text: String, reason: String)
+
+    object None : PendingNotifier {
+        override fun scheduled(labels: List<String>, problems: List<String>) = Unit
+        override fun dropped(text: String, reason: String) = Unit
+    }
+}
+
+/** Detecta el paso a "red validada": varias llamadas seguidas con red validada cuentan una sola vez. */
+class ValidatedTransition {
+    private var last = false
+
+    @Synchronized
+    fun onChange(validated: Boolean): Boolean {
+        val rose = validated && !last
+        last = validated
+        return rose
+    }
+}
 
 /**
- * Dictados que no se pudieron interpretar por falta de internet. Se guardan en DataStore (texto + instante) y se
- * procesan en orden al volver la red. Un elemento solo sale de la cola después de aplicarse.
+ * Dictados que no se pudieron interpretar por falta de internet. Se guardan en DataStore (texto + instante + intentos) y se
+ * procesan en orden al volver la red. Un elemento solo sale de la cola después de aplicarse o de avisar al usuario.
  */
 class PendingDictations(
     private val dataStore: DataStore<Preferences>,
-    /** Recibe las etiquetas de lo agendado al terminar una pasada (producción: notificación en `actividades`). */
-    private val notifier: (List<String>) -> Unit = {},
+    private val notifier: PendingNotifier = PendingNotifier.None,
 ) {
     private val key = stringPreferencesKey("pending_dictations")
+    private val backupKey = stringPreferencesKey("pending_dictations_backup")
     private val drainMutex = Mutex()
 
-    suspend fun all(): List<PendingDictation> = parse(dataStore.data.first()[key])
+    suspend fun all(): List<PendingDictation> = parse(dataStore.data.first()[key]).items
 
-    suspend fun add(text: String, at: Long) {
-        dataStore.edit { prefs -> prefs[key] = encode(parse(prefs[key]) + PendingDictation(text, at)) }
-    }
+    suspend fun add(text: String, at: Long) = update { it + PendingDictation(text, at) }
 
-    private suspend fun removeFirst() {
-        dataStore.edit { prefs -> prefs[key] = encode(parse(prefs[key]).drop(1)) }
+    private suspend fun update(change: (List<PendingDictation>) -> List<PendingDictation>) {
+        dataStore.edit { prefs ->
+            val parsed = parse(prefs[key])
+            // Algo ilegible se respalda antes de escribir: nunca se pisa sin copia.
+            if (parsed.damaged) prefs[backupKey] = prefs[key].orEmpty()
+            prefs[key] = encode(change(parsed.items))
+        }
     }
 
     /**
-     * Procesa la cola en orden. Se detiene en el primer fallo recuperable (sin conexión, sin clave, error del servicio)
-     * y conserva el resto. Un rechazo definitivo de Claude se descarta para no bloquear la cola. Nunca corren dos a la vez.
+     * Procesa la cola en orden; si ya hay una pasada en curso, vuelve de inmediato. Se detiene en el primer fallo
+     * recuperable (sin conexión, sin clave, error del servicio) y conserva el resto. Tras [MAX_ATTEMPTS] fallos de un
+     * elemento, o ante un rechazo definitivo / una pregunta sin acciones, el elemento sale con un aviso.
      */
-    suspend fun drain(interpreter: TextInterpreter, executor: ActionApplier) = drainMutex.withLock {
+    suspend fun drain(interpreter: TextInterpreter, executor: ActionApplier) {
+        if (!drainMutex.tryLock()) return
         val labels = mutableListOf<String>()
+        val problems = mutableListOf<String>()
         try {
             while (true) {
                 val item = all().firstOrNull() ?: break
@@ -51,46 +81,93 @@ class PendingDictations(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    break
+                    InterpretOutcome.Failed(DictationInterpreter.UNAVAILABLE, retryable = true)
                 }
                 // Aplicar y sacar de la cola van juntos: si no, una cancelación a medias duplicaría el dictado.
                 val proceed = withContext(NonCancellable) {
                     when (outcome) {
-                        is InterpretOutcome.Ok -> {
-                            val work = outcome.items.any { it is Validated.Activity || it is Validated.Habit }
-                            if (work) {
-                                val result = executor.apply(outcome.items)
-                                if (result.created.isEmpty()) return@withContext false
-                                labels += result.created.map { it.label }
-                            }
-                            removeFirst()
-                            true
-                        }
-                        is InterpretOutcome.Refused -> { removeFirst(); true }
-                        is InterpretOutcome.Failed -> if (outcome.retryable) false else { removeFirst(); true }
-                        else -> false
+                        is InterpretOutcome.Ok -> handleOk(item, outcome, executor, labels, problems)
+                        is InterpretOutcome.Refused -> { drop(item, outcome.message); true }
+                        is InterpretOutcome.Failed ->
+                            if (outcome.retryable) failedAttempt(item, outcome.message) else { drop(item, outcome.message); true }
+                        else -> false // sin conexión / sin clave: no cuenta como intento
                     }
                 }
                 if (!proceed) break
             }
         } finally {
-            if (labels.isNotEmpty()) notifier(labels.toList())
+            if (labels.isNotEmpty()) notifier.scheduled(labels.toList(), problems.toList())
+            drainMutex.unlock()
         }
+    }
+
+    private suspend fun handleOk(
+        item: PendingDictation, outcome: InterpretOutcome.Ok, executor: ActionApplier,
+        labels: MutableList<String>, problems: MutableList<String>,
+    ): Boolean {
+        val work = outcome.items.any { it is Validated.Activity || it is Validated.Habit }
+        if (!work) {
+            val reasons = outcome.items.mapNotNull {
+                when (it) {
+                    is Validated.Question -> it.text
+                    is Validated.Unsupported -> it.text
+                    is Validated.Invalid -> it.reason
+                    else -> null
+                }
+            }
+            drop(item, reasons.joinToString(" ").ifBlank { outcome.reply.ifBlank { NOTHING_SCHEDULED } })
+            return true
+        }
+        val result = executor.apply(outcome.items)
+        if (result.created.isEmpty()) return failedAttempt(item, result.messages.lastOrNull() ?: NOTHING_SCHEDULED)
+        labels += result.created.map { it.label }
+        problems += result.messages
+        update { it.drop(1) }
+        return true
+    }
+
+    /** Cuenta un intento fallido; devuelve true (seguir) solo si el elemento se descartó tras el último intento. */
+    private suspend fun failedAttempt(item: PendingDictation, reason: String): Boolean {
+        if (item.attempts + 1 >= MAX_ATTEMPTS) {
+            drop(item, reason)
+            return true
+        }
+        update { list -> list.mapIndexed { i, e -> if (i == 0) e.copy(attempts = e.attempts + 1) else e } }
+        return false
+    }
+
+    private suspend fun drop(item: PendingDictation, reason: String) {
+        update { it.drop(1) }
+        notifier.dropped(item.text, reason)
     }
 
     private fun encode(items: List<PendingDictation>): String {
         val arr = JSONArray()
-        items.forEach { arr.put(JSONObject().put("t", it.text).put("a", it.at)) }
+        items.forEach { arr.put(JSONObject().put("t", it.text).put("a", it.at).put("n", it.attempts)) }
         return arr.toString()
     }
 
-    private fun parse(raw: String?): List<PendingDictation> {
-        if (raw.isNullOrEmpty()) return emptyList()
-        return try {
-            val arr = JSONArray(raw)
-            (0 until arr.length()).map { i -> arr.getJSONObject(i).let { PendingDictation(it.getString("t"), it.getLong("a")) } }
-        } catch (e: Exception) {
-            emptyList()
+    private class Parsed(val items: List<PendingDictation>, val damaged: Boolean)
+
+    /** Entrada por entrada: una dañada se salta sin tumbar las demás. */
+    private fun parse(raw: String?): Parsed {
+        if (raw.isNullOrEmpty()) return Parsed(emptyList(), false)
+        val arr = try { JSONArray(raw) } catch (e: Exception) { return Parsed(emptyList(), true) }
+        var damaged = false
+        val items = (0 until arr.length()).mapNotNull { i ->
+            try {
+                val o = arr.getJSONObject(i)
+                PendingDictation(o.getString("t"), o.getLong("a"), o.optInt("n", 0))
+            } catch (e: Exception) {
+                damaged = true
+                null
+            }
         }
+        return Parsed(items, damaged)
+    }
+
+    companion object {
+        const val MAX_ATTEMPTS = 3
+        private const val NOTHING_SCHEDULED = "No se agendó nada."
     }
 }

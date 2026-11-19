@@ -9,7 +9,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 
-enum class SpeechFailure { NO_MATCH, OTHER }
+enum class SpeechFailure { NO_MATCH, NETWORK, OTHER }
 
 sealed interface SpeechEvent {
     data class Partial(val text: String) : SpeechEvent
@@ -79,6 +79,8 @@ class AndroidSpeechInput(context: Context) : SpeechInput {
                         else onEvent(SpeechEvent.Failure(SpeechFailure.OTHER))
                     SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
                         onEvent(SpeechEvent.Failure(SpeechFailure.NO_MATCH))
+                    SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
+                        onEvent(SpeechEvent.Failure(SpeechFailure.NETWORK))
                     else -> onEvent(SpeechEvent.Failure(SpeechFailure.OTHER))
                 }
             }

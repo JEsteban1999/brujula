@@ -19,6 +19,8 @@ import app.brujula.claude.ActionApplier
 import app.brujula.claude.ActionExecutor
 import app.brujula.claude.DictationInterpreter
 import app.brujula.claude.PendingDictations
+import app.brujula.claude.PendingNotifier
+import app.brujula.claude.ValidatedTransition
 import app.brujula.claude.TextInterpreter
 import app.brujula.reminders.Notifications
 import android.net.ConnectivityManager
@@ -100,12 +102,21 @@ class AppContainer(val context: Context) {
 
     /** Dictados guardados sin conexión; al terminar una pasada avisa con una notificación en `actividades`. */
     val pendingDictations: PendingDictations by lazy {
-        PendingDictations(context.applicationContext.routineDataStore) { labels ->
-            Notifications.showInfo(
-                context.applicationContext, "pending_dictations",
-                "Agendé lo que dictaste sin conexión: " + labels.joinToString("; "),
-            )
-        }
+        val app = context.applicationContext
+        PendingDictations(
+            app.routineDataStore,
+            object : PendingNotifier {
+                private fun id() = (System.nanoTime() / 1000).toInt()
+                override fun scheduled(labels: List<String>, problems: List<String>) {
+                    val text = "Agendé lo que dictaste sin conexión: " + labels.joinToString("; ") +
+                        problems.joinToString("") { NEWLINE + it }
+                    Notifications.showText(app, id(), "Dictado sin conexión", text)
+                }
+                override fun dropped(text: String, reason: String) {
+                    Notifications.showText(app, id(), "Dictado sin agendar", "No pude agendar «$text»: $reason")
+                }
+            },
+        )
     }
 
     /** Procesa los dictados pendientes (idempotente; nunca dos a la vez). */
@@ -148,6 +159,8 @@ class AppContainer(val context: Context) {
         set(value) { syncOverride = value }
 }
 
+private const val NEWLINE = "\n"
+
 /** Hay internet utilizable ahora mismo (validado, no solo conectado). */
 fun isOnline(context: Context): Boolean = try {
     val cm = context.getSystemService(ConnectivityManager::class.java)
@@ -187,18 +200,20 @@ open class BrujulaApp : Application() {
         launchPendingDrain()
     }
 
-    /** Procesa los dictados pendientes al abrir la app y cada vez que la red vuelve o se valida. */
+    /** Procesa los dictados pendientes al abrir la app y cada vez que la red pasa a validada. */
     private fun launchPendingDrain() {
         val c = container
         val drain = { c.syncScope.launch { runCatching { c.drainPendingDictations() }.onFailure { Log.e("BrujulaApp", "Fallo al procesar pendientes", it) } }; Unit }
         drain()
         runCatching {
             val cm = getSystemService(ConnectivityManager::class.java)
+            // Solo al pasar a red validada (no en cada cambio de señal) y no al perderla.
+            val transition = ValidatedTransition()
             cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: Network) = drain()
                 override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-                    if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) drain()
+                    if (transition.onChange(caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))) drain()
                 }
+                override fun onLost(network: Network) { transition.onChange(false) }
             })
         }.onFailure { Log.e("BrujulaApp", "No pude vigilar la red", it) }
     }

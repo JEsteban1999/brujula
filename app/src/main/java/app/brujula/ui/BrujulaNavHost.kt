@@ -37,6 +37,7 @@ import app.brujula.voice.VoiceViewModel
 import app.brujula.today.TodayScreen
 import app.brujula.today.TodayViewModel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import java.time.LocalDateTime
 
 object Routes {
@@ -147,11 +148,16 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                                 interpreter = container.interpreter,
                                 executor = container.executor,
                                 pending = container.pendingDictations,
+                                requestDrain = { container.syncScope.launch { runCatching { container.drainPendingDictations() } } },
                             )
                         }
                     },
                 )
-                VoiceScreen(viewModel = vm, onClose = { navController.popBackStack() })
+                VoiceScreen(
+                    viewModel = vm,
+                    // Dos toques rápidos en ✕/Listo no sacan también la pantalla de abajo.
+                    onClose = { if (navController.currentDestination?.route == Routes.VOICE) navController.popBackStack() },
+                )
             }
             composable(Routes.ROUTINE) {
                 val container = LocalContext.current.container

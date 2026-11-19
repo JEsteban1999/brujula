@@ -52,7 +52,7 @@ class FakeInterpreter(vararg outcomes: InterpretOutcome) : TextInterpreter {
     }
 }
 
-class FakeExecutor(var failApply: Boolean = false) : ActionApplier {
+class FakeExecutor(var failApply: Boolean = false, var failUndo: Boolean = false) : ActionApplier {
     val applied = mutableListOf<List<Validated>>()
     val undone = mutableListOf<UndoToken>()
     private var nextId = 1L
@@ -72,5 +72,21 @@ class FakeExecutor(var failApply: Boolean = false) : ActionApplier {
         val created = acts.map { CreatedItem(it.activity.title, nextId++, null) }
         return ApplyResult(created, messages, UndoToken(created.map { it.activityId!! }, emptyList()))
     }
-    override suspend fun undo(token: UndoToken) { undone += token }
+    override suspend fun undo(token: UndoToken) { if (failUndo) throw java.io.IOException("boom"); undone += token }
+}
+
+class RecordingNotifier : app.brujula.claude.PendingNotifier {
+    val scheduled = mutableListOf<Pair<List<String>, List<String>>>()
+    val dropped = mutableListOf<Pair<String, String>>()
+    override fun scheduled(labels: List<String>, problems: List<String>) { scheduled += labels to problems }
+    override fun dropped(text: String, reason: String) { dropped += text to reason }
+}
+
+/** DataStore que siempre falla (disco lleno, archivo dañado). */
+class ThrowingDataStore : androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences> {
+    override val data: kotlinx.coroutines.flow.Flow<androidx.datastore.preferences.core.Preferences> =
+        kotlinx.coroutines.flow.flow { throw java.io.IOException("boom") }
+    override suspend fun updateData(
+        transform: suspend (androidx.datastore.preferences.core.Preferences) -> androidx.datastore.preferences.core.Preferences,
+    ): androidx.datastore.preferences.core.Preferences = throw java.io.IOException("boom")
 }

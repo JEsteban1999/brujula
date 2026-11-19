@@ -1,7 +1,10 @@
 package app.brujula.voice
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
@@ -66,6 +69,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.brujula.core.theme.BrujulaTheme
 import app.brujula.ui.pressScale
@@ -76,6 +81,7 @@ fun VoiceScreen(viewModel: VoiceViewModel, onClose: () -> Unit, modifier: Modifi
     val state by viewModel.state.collectAsStateWithLifecycle()
     val draft by viewModel.draft.collectAsStateWithLifecycle()
     val hint by viewModel.hint.collectAsStateWithLifecycle()
+    val textOnly by viewModel.textOnly.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val c = BrujulaTheme.colors
     val reduced = rememberReducedMotion()
@@ -87,6 +93,10 @@ fun VoiceScreen(viewModel: VoiceViewModel, onClose: () -> Unit, modifier: Modifi
         if (!viewModel.voiceAvailable) viewModel.start() // muestra el aviso de que no hay dictado
         else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) viewModel.start()
         else micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    }
+    // Al volver de Ajustes con el permiso concedido, se recupera el micrófono.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) viewModel.onMicGranted()
     }
     // Empieza a escuchar al abrir, una sola vez (no al rotar).
     var autoStarted by rememberSaveable { mutableStateOf(false) }
@@ -118,13 +128,13 @@ fun VoiceScreen(viewModel: VoiceViewModel, onClose: () -> Unit, modifier: Modifi
 
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.Center) {
             when (val s = state) {
-                is VoiceState.Idle -> Idle(reduced, hint, listen)
+                is VoiceState.Idle -> Idle(reduced, hint, textOnly, listen)
                 is VoiceState.Listening -> Listening(s.partial, reduced, viewModel::stop)
                 VoiceState.Thinking -> Thinking(reduced)
                 is VoiceState.Result -> ResultView(s, reduced, viewModel::undo, onClose)
                 VoiceState.Undone -> Message(VoiceCopy.UNDONE, null, reduced, primary = VoiceCopy.DONE, onPrimary = onClose)
-                is VoiceState.NeedsMore -> NeedsMore(s.question, reduced, listen)
-                is VoiceState.Error -> ErrorView(s, hint, reduced, listen, viewModel::retry)
+                is VoiceState.NeedsMore -> NeedsMore(s.question, reduced, textOnly, listen)
+                is VoiceState.Error -> ErrorView(s, hint, reduced, textOnly, listen, viewModel::retry)
                 VoiceState.SavedOffline -> Message(
                     VoiceCopy.OFFLINE, null, reduced, primary = VoiceCopy.DONE, onPrimary = onClose,
                 )
@@ -168,12 +178,35 @@ private fun Orb(reduced: Boolean, onClick: (() -> Unit)?, description: String) {
 }
 
 @Composable
-private fun Idle(reduced: Boolean, hint: String?, onTapMic: () -> Unit) {
+private fun Idle(reduced: Boolean, hint: String?, textOnly: Boolean, onTapMic: () -> Unit) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(24.dp)) {
-        Orb(reduced, onTapMic, "Tocar para dictar")
-        Hint(hint)
-        Examples()
+        if (textOnly) {
+            Hint(hint)
+            if (hint == VoiceCopy.MIC_DENIED) SettingsLink()
+        } else {
+            Orb(reduced, onTapMic, "Tocar para dictar")
+            Hint(hint)
+            Examples()
+        }
     }
+}
+
+@Composable
+private fun SettingsLink() {
+    val context = LocalContext.current
+    Text(
+        VoiceCopy.ENABLE_MIC, color = BrujulaTheme.colors.accentText, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+        modifier = Modifier.defaultMinSize(minHeight = 48.dp)
+            .clickable(role = Role.Button) {
+                runCatching {
+                    context.startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                }
+            }
+            .padding(vertical = 14.dp),
+    )
 }
 
 @Composable
@@ -287,7 +320,7 @@ private fun Message(title: String, body: String?, reduced: Boolean, primary: Str
 }
 
 @Composable
-private fun NeedsMore(question: String, reduced: Boolean, onTapMic: () -> Unit) {
+private fun NeedsMore(question: String, reduced: Boolean, textOnly: Boolean, onTapMic: () -> Unit) {
     val c = BrujulaTheme.colors
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Text(
@@ -295,12 +328,12 @@ private fun NeedsMore(question: String, reduced: Boolean, onTapMic: () -> Unit) 
                 .semantics { liveRegion = LiveRegionMode.Polite },
             color = c.text, fontSize = 16.sp, lineHeight = 22.sp,
         )
-        Orb(reduced, onTapMic, "Tocar para responder")
+        if (!textOnly) Orb(reduced, onTapMic, "Tocar para responder")
     }
 }
 
 @Composable
-private fun ErrorView(s: VoiceState.Error, hint: String?, reduced: Boolean, onTapMic: () -> Unit, onRetry: () -> Unit) {
+private fun ErrorView(s: VoiceState.Error, hint: String?, reduced: Boolean, textOnly: Boolean, onTapMic: () -> Unit, onRetry: () -> Unit) {
     val c = BrujulaTheme.colors
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Text(
@@ -309,8 +342,9 @@ private fun ErrorView(s: VoiceState.Error, hint: String?, reduced: Boolean, onTa
         )
         if (s.retry && s.message != VoiceCopy.NOT_HEARD && s.message != VoiceCopy.MIC_ERROR) {
             BigButton(VoiceCopy.RETRY, primary = true, reduced = reduced, onClick = onRetry)
-        } else if (s.retry) {
-            Orb(reduced, onRetry, "Tocar para intentar de nuevo")
+        } else if (s.retry && !textOnly) {
+            // Por el mismo camino con permiso que el micrófono principal.
+            Orb(reduced, onTapMic, "Tocar para intentar de nuevo")
         }
         Hint(hint)
     }

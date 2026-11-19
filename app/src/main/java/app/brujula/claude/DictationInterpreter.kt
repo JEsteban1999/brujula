@@ -9,7 +9,8 @@ sealed interface InterpretOutcome {
     data object InvalidKey : InterpretOutcome
     data object Offline : InterpretOutcome
     data class Refused(val message: String) : InterpretOutcome
-    data class Failed(val message: String, val retryable: Boolean) : InterpretOutcome
+    /** [network]: el fallo fue de red (se puede guardar para cuando vuelva internet). */
+    data class Failed(val message: String, val retryable: Boolean, val network: Boolean = false) : InterpretOutcome
 }
 
 /** Costura para la pantalla de dictado y la cola sin conexión; las pruebas la sustituyen. */
@@ -42,7 +43,7 @@ class DictationInterpreter(
             GatewayResult.Refused -> InterpretOutcome.Refused(REFUSED)
             GatewayResult.NoKey -> InterpretOutcome.NoKey
             GatewayResult.InvalidKey -> InterpretOutcome.InvalidKey
-            GatewayResult.Network -> InterpretOutcome.Failed(OFFLINE, retryable = true)
+            GatewayResult.Network -> InterpretOutcome.Failed(OFFLINE, retryable = true, network = true)
             GatewayResult.Timeout -> InterpretOutcome.Failed(TOO_SLOW, retryable = true)
             is GatewayResult.Error ->
                 if (r.retryable) InterpretOutcome.Failed(UNAVAILABLE, retryable = true) else InterpretOutcome.Failed(REFUSED, retryable = false)
