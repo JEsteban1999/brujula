@@ -47,6 +47,7 @@ object Notifications {
     const val CHANNEL_HABITS = "habitos"
     const val CHANNEL_ACTIVITIES = "actividades"
     const val CHANNEL_WELLNESS = "pausas"
+    private const val WELLNESS_TIMEOUT_MS = 25 * 60_000L
 
     fun notificationId(key: String): Int = key.hashCode()
 
@@ -78,9 +79,11 @@ object Notifications {
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(r.title)
             .setContentText(r.body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(r.body))
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setPriority(if (channel == CHANNEL_WELLNESS) NotificationCompat.PRIORITY_DEFAULT else NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
+        if (channel == CHANNEL_WELLNESS) b.setTimeoutAfter(WELLNESS_TIMEOUT_MS)
         context.packageManager.getLaunchIntentForPackage(context.packageName)?.let { launch ->
             b.setContentIntent(
                 PendingIntent.getActivity(context, notificationId(r.key), launch, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT),

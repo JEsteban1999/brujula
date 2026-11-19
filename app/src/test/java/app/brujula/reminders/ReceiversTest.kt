@@ -352,4 +352,27 @@ class ReceiversTest {
         val n = shadowOf(nm).allNotifications.single()
         assertEquals("No encontré un hueco libre hoy para ejercicio.", n.extras.getCharSequence(android.app.Notification.EXTRA_TITLE).toString())
     }
+
+    @Test fun groupedReminderNotificationCarriesFullBodyAsBigText() {
+        val body = "Mira algo lejano 20 segundos. · Párate y camina 2 minutos. · Estira cuello, espalda y muñecas. · Endereza la espalda y relaja los hombros."
+        val g = Reminder("wellness:202611181300", now, ReminderKind.HABIT, "Pausa", body, habitId = 1, habitIds = listOf(1, 2, 3, 4), day = now.toLocalDate())
+        Notifications.show(ctx, g)
+        val n = shadowOf(nm).allNotifications.single()
+        assertEquals(body, n.extras.getCharSequence(androidx.core.app.NotificationCompat.EXTRA_BIG_TEXT).toString())
+        assertEquals("android.app.Notification\$BigTextStyle", n.extras.getString(androidx.core.app.NotificationCompat.EXTRA_TEMPLATE))
+    }
+
+    @Test fun onlyWellnessNotificationsTimeOutAfter25Minutes() {
+        val w = Reminder("wellness:202611181301", now, ReminderKind.HABIT, "Pausa", "a · b", habitId = 1, habitIds = listOf(1, 2), day = now.toLocalDate())
+        val single = Reminder("habit:9:202611181302", now, ReminderKind.HABIT, "Ojos", "Mira algo lejano 20 segundos.", habitId = 9, day = now.toLocalDate(), wellness = true)
+        val habit = Reminder("habit:8:202611181303", now, ReminderKind.HABIT, "Hora de tomar agua", "Vas 0 de 8 vasos.", habitId = 8, day = now.toLocalDate())
+        val act = Reminder("act:5:20261118", now, ReminderKind.ACTIVITY, "Ejercicio", "Empieza en 15 min.", activityId = 5, day = now.toLocalDate())
+        listOf(w, single, habit, act).forEach { Notifications.show(ctx, it) }
+        val byId = shadowOf(nm).allNotifications.associateBy { it.channelId + it.extras.getString(android.app.Notification.EXTRA_TITLE) }
+        val timeouts = shadowOf(nm).allNotifications.map { it.channelId to it.timeoutAfter }.groupBy({ it.first }, { it.second })
+        assertEquals(listOf(25 * 60_000L, 25 * 60_000L), timeouts[Notifications.CHANNEL_WELLNESS])
+        assertEquals(listOf(0L), timeouts[Notifications.CHANNEL_HABITS])
+        assertEquals(listOf(0L), timeouts[Notifications.CHANNEL_ACTIVITIES])
+        assertEquals(4, byId.size)
+    }
 }
