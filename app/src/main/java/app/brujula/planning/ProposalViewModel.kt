@@ -1,5 +1,6 @@
 package app.brujula.planning
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.brujula.claude.DayPlanner
@@ -85,6 +86,8 @@ class ProposalViewModel(
     /** Cuándo suena el aviso de dormir tras aceptar (Task 7); `null` = no hay. */
     private val bedtimeRemindAt: suspend () -> LocalDateTime? = { null },
     scopeOverride: CoroutineScope? = null,
+    /** Sobrevive a la muerte del proceso: qué propuesta se mostraba y si el pedido de la ruta ya se usó. */
+    private val saved: SavedStateHandle = SavedStateHandle(),
 ) : ViewModel() {
     private val scope: CoroutineScope = scopeOverride ?: viewModelScope
 
@@ -103,13 +106,52 @@ class ProposalViewModel(
         job = scope.launch { open() }
     }
 
+    /** El pedido de la ruta solo vale una vez: al rotar, volver o revivir el proceso no se vuelve a pedir a Claude. */
+    private val freshRequest: String? get() = request?.takeIf { saved.get<Boolean>(KEY_CONSUMED) != true }
+
+    private var loadFailed = false
+
     private suspend fun open() {
-        if (request == null) {
-            val stored = proposals.pendingFor(day)
-            if (stored != null && !executor.isStale(stored)) return show(stored)
-            lastRequest = stored?.request
+        try {
+            loadFailed = false
+            openStored()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            loadFailed = true
+            _state.value = ProposalUiState.Error(LOAD_FAILED, retry = true)
         }
-        generate(request ?: lastRequest, previous = null, adjustment = null, back = null)
+    }
+
+    private suspend fun openStored() {
+        val fresh = freshRequest
+        if (fresh == null) {
+            // 1. Lo que se mostraba antes (rotación o proceso muerto): se prefiere por id, según su estado.
+            val savedId = saved.get<Long>(KEY_SHOWN)
+            val stored = savedId?.let { proposals.get(it) }
+            when (stored?.status) {
+                ProposalStatus.ACCEPTED -> return showAccepted(stored)
+                ProposalStatus.PENDING -> return showStored(stored)
+                else -> Unit
+            }
+            // 2. La pendiente del día; si no hay, el plan ya aceptado del día (con su Deshacer); si no, se pide.
+            val pending = proposals.pendingFor(day)
+            if (pending != null && !executor.isStale(pending)) return show(pending)
+            if (pending == null && day >= logicalDay(clock.now())) proposals.acceptedFor(day)?.let { return showAccepted(it) }
+            lastRequest = pending?.request ?: lastRequest
+        }
+        saved[KEY_CONSUMED] = true
+        generate(fresh ?: lastRequest, previous = null, adjustment = null, back = null)
+    }
+
+    private suspend fun showStored(p: Proposal) {
+        if (executor.isStale(p)) show(p, message = ProposalCopy.STALE, stale = true) else show(p)
+    }
+
+    private suspend fun showAccepted(p: Proposal) {
+        acceptedId = p.id
+        saved[KEY_SHOWN] = p.id
+        _state.value = confirmation()
     }
 
     /** Pasa a "esperando" al instante (antes de lanzar nada) y pide a Claude; reemplaza cualquier espera anterior. */
@@ -155,6 +197,7 @@ class ProposalViewModel(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            if (mine != generation || _state.value != ProposalUiState.Loading) return
             return fail(SAVE_FAILED, retry = true, req = p.request, back = back)
         }
         if (mine != generation || _state.value != ProposalUiState.Loading) return
@@ -186,12 +229,19 @@ class ProposalViewModel(
 
     private fun show(p: Proposal, message: String? = null, stale: Boolean = false) {
         beforeWaiting = null
+        saved[KEY_SHOWN] = p.id
         _state.value = ProposalUiState.Showing(p, dayTitle(day), stale, message, adjusting = null)
     }
 
     /** Reintentar tras un error: con el mismo pedido. */
     fun retry() {
         if (_state.value !is ProposalUiState.Error) return
+        if (loadFailed) {
+            // Falló leer lo guardado: se vuelve a leer, no a pedir.
+            _state.value = ProposalUiState.Loading
+            job = scope.launch { open() }
+            return
+        }
         startGenerate(lastRequest, previous = null, adjustment = null, back = null)
     }
 
@@ -219,7 +269,13 @@ class ProposalViewModel(
     }
 
     private suspend fun refreshCurrent(fallback: ProposalUiState.Showing) {
-        val current = proposals.pendingFor(day) ?: return
+        val current = try {
+            proposals.pendingFor(day)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        } ?: return
         if (_state.value !is ProposalUiState.Showing) return
         if (current.id != fallback.proposal.id) show(current)
     }
@@ -320,9 +376,18 @@ class ProposalViewModel(
         val s = _state.value as? ProposalUiState.Showing ?: return
         if (acting || s.busy) return
         stopListening()
+        acting = true
         scope.launch {
-            withContext(NonCancellable) { proposals.discard(s.proposal.id) }
-            _state.value = ProposalUiState.Closed
+            try {
+                withContext(NonCancellable) { proposals.discard(s.proposal.id) }
+                _state.value = ProposalUiState.Closed
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.value = s.copy(message = DISCARD_FAILED, busy = false)
+            } finally {
+                acting = false
+            }
         }
     }
 
@@ -400,6 +465,10 @@ class ProposalViewModel(
     }
 
     companion object {
+        private const val KEY_SHOWN = "shownProposalId"
+        private const val KEY_CONSUMED = "requestConsumed"
+        const val LOAD_FAILED = "No pude leer tu agenda. Inténtalo de nuevo."
+        const val DISCARD_FAILED = "No pude descartar la propuesta. Inténtalo de nuevo."
         const val SAVE_FAILED = "No pude guardar la propuesta. Inténtalo de nuevo."
         private val ES = Locale.forLanguageTag("es")
 

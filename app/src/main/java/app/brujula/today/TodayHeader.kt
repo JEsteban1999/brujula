@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -262,7 +264,7 @@ private fun HabitCard(chip: HabitChip, warm: Boolean, reduced: Boolean, modifier
 
 /**
  * Tarjeta de Claude (D15): la última nota con `Deshacer` mientras el plan siga aceptado; si no hay nota del día,
- * `¿Te armo el día?` con `Que Claude arme mi día`. Un toque abre Propuesta del día [ClaudeCardState.targetDay].
+ * `¿Te armo el día?` con `Que Claude arme mi día`. Un toque abre Propuesta de hoy.
  */
 @Composable
 fun ClaudeCard(
@@ -286,7 +288,9 @@ fun ClaudeCard(
         message?.let {
             Text(
                 it, color = c.accentText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.clickable(role = Role.Button, onClick = onDismissMessage)
+                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp)
+                    .clickable(onClickLabel = "Cerrar aviso", role = Role.Button, onClick = onDismissMessage)
+                    .wrapContentHeight(Alignment.CenterVertically)
                     .semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
             )
         }

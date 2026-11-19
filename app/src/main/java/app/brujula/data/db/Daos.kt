@@ -75,6 +75,8 @@ interface ActivityDao {
     suspend fun deleteOverride(id: Long, day: LocalDate)
 }
 
+data class AcceptedRow(val id: Long, val day: LocalDate)
+
 @Dao
 interface ProposalDao {
     @Insert suspend fun insert(e: ProposalEntity): Long
@@ -96,6 +98,13 @@ interface ProposalDao {
 
     @Query("SELECT id FROM proposals WHERE status = 'ACCEPTED'")
     fun observeAcceptedIds(): Flow<List<Long>>
+
+    @Query("SELECT id, day FROM proposals WHERE status = 'ACCEPTED' ORDER BY id DESC")
+    fun observeAccepted(): Flow<List<AcceptedRow>>
+
+    /** Descartar solo si sigue pendiente: una aceptada o reemplazada nunca se pisa. */
+    @Query("UPDATE proposals SET status = 'DISCARDED' WHERE id = :id AND status = 'PENDING'")
+    suspend fun discardIfPending(id: Long)
 
     @Query("UPDATE proposals SET status = 'SUPERSEDED' WHERE day = :day AND status = 'PENDING'")
     suspend fun supersedePending(day: LocalDate)

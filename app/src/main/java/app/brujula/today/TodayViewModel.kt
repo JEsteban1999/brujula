@@ -21,6 +21,7 @@ import app.brujula.core.time.TimeSpan
 import app.brujula.core.time.formatDayEs
 import app.brujula.habits.HabitIcon
 import app.brujula.habits.HabitRepository
+import app.brujula.planning.AcceptedPlan
 import app.brujula.planning.UndoResult
 import app.brujula.reminders.PermissionStatus
 import app.brujula.routine.DayKind
@@ -71,10 +72,10 @@ sealed interface TimelineBlock {
 }
 
 /**
- * Tarjeta de Claude (D15). [text] nulo = estado vacío (`¿Te armo el día?`). [canUndo]: el plan sigue aceptado y su día no
- * ha pasado. [targetDay]: el día que abre `Que Claude arme mi día` (hoy, o mañana si ya es tarde).
+ * Tarjeta de Claude (D15). [text] nulo = estado vacío (`¿Te armo el día?`). [proposalId] y [canUndo] salen del plan aceptado
+ * más reciente cuyo día no ha pasado (no de la nota: un dictado posterior la reemplaza pero el plan sigue deshaciéndose).
  */
-data class ClaudeCardState(val text: String?, val proposalId: Long?, val canUndo: Boolean, val targetDay: LocalDate? = null)
+data class ClaudeCardState(val text: String?, val proposalId: Long?, val canUndo: Boolean)
 
 data class TodayUiState(
     val dayLabel: String,
@@ -108,12 +109,11 @@ private data class DayData(
 
 private const val MAX_VISIBLE_HABITS = 2
 private const val TICK_MS = 30_000L
-/** Desde esta hora, `Que Claude arme mi día` abre el día de mañana. */
-private const val LATE_HOUR = 21
+private const val PLAN_READY = "Tu plan está listo."
 private const val UNDONE = "Deshice el plan."
 private const val NOT_UNDOABLE = "Ese plan ya no se puede deshacer."
 
-private data class ClaudeInputs(val loaded: Boolean, val note: app.brujula.claude.ClaudeNote?, val accepted: Set<Long>)
+private data class ClaudeInputs(val loaded: Boolean, val note: app.brujula.claude.ClaudeNote?, val accepted: List<AcceptedPlan>)
 
 class TodayViewModel(
     private val clock: Clock,
@@ -127,8 +127,8 @@ class TodayViewModel(
     private val autoClassifier: app.brujula.claude.AutoClassifier? = null,
     /** La última nota de Claude (D15); el valor inicial nulo evita esperar al DataStore. */
     claudeNotes: Flow<app.brujula.claude.ClaudeNote?> = flowOf(null),
-    /** Ids de propuestas ACCEPTED, para saber si `Deshacer` aún aplica. */
-    acceptedProposalIds: Flow<Set<Long>> = flowOf(emptySet()),
+    /** Planes ACCEPTED (más reciente primero), para saber si `Deshacer` aún aplica. */
+    acceptedPlans: Flow<List<AcceptedPlan>> = flowOf(emptyList()),
     private val undoPlan: suspend (Long) -> UndoResult = { UndoResult.NotAccepted },
     scopeOverride: CoroutineScope? = null,
     private val tickMs: Long = TICK_MS,
@@ -185,9 +185,9 @@ class TodayViewModel(
     /** Nota y planes aceptados; un fallo del DataStore o de la base deja la tarjeta vacía, nunca rompe Hoy. */
     private val claudeInputs: Flow<ClaudeInputs> = combine(
         claudeNotes.catch { emit(null) },
-        acceptedProposalIds.catch { emit(emptySet()) },
+        acceptedPlans.catch { emit(emptyList()) },
     ) { note, accepted -> ClaudeInputs(true, note, accepted) }
-        .onStart { emit(ClaudeInputs(false, null, emptySet())) }
+        .onStart { emit(ClaudeInputs(false, null, emptyList())) }
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val state: StateFlow<TodayUiState> = ticker
@@ -290,12 +290,11 @@ class TodayViewModel(
     /** Primera lectura aún no llegó → sin tarjeta; si llegó sin nota del día, estado vacío. */
     private fun cardFor(inputs: ClaudeInputs, now: LocalDateTime, day: LocalDate): ClaudeCardState? {
         if (!inputs.loaded) return null
-        val target = if (isLateNight(now, day) || now.hour >= LATE_HOUR) day.plusDays(1) else day
-        val note = inputs.note
-        // Una nota de un día pasado ya no es "de hoy"; la de un plan de mañana sí se ve hoy (se puede deshacer).
-        if (note == null || note.day < day) return ClaudeCardState(null, null, false, target)
-        val id = note.proposalId
-        return ClaudeCardState(note.text, id, canUndo = id != null && id in inputs.accepted, targetDay = target)
+        // El texto es la última nota (de hoy o de un plan futuro); Deshacer sale del plan aceptado vigente, no de la nota.
+        val note = inputs.note?.takeIf { it.day >= day }
+        val plan = inputs.accepted.firstOrNull { it.day >= day }
+        val text = note?.text ?: plan?.let { PLAN_READY }
+        return ClaudeCardState(text, plan?.id, canUndo = plan != null)
     }
 
     /** `Deshacer` de la tarjeta: el resultado queda en [TodayUiState.claudeMessage]. De un solo vuelo; el ejecutor no se cancela. */

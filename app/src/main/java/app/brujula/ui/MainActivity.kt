@@ -40,6 +40,8 @@ class MainActivity : ComponentActivity() {
 
     /** Solo rutas de la lista blanca: lo demás del extra se ignora. */
     private fun deliverRoute(intent: Intent?) {
+        // Reabrir la app desde Recientes reutiliza el intent viejo: su enlace ya se siguió una vez.
+        if (intent == null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
         val route = DeepLinks.parse(intent?.getStringExtra(DeepLinks.EXTRA_ROUTE)) ?: return
         // Se quita el extra: al recrear la actividad (rotación) el mismo enlace no se vuelve a seguir.
         intent?.removeExtra(DeepLinks.EXTRA_ROUTE)

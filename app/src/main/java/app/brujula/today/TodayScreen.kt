@@ -64,7 +64,7 @@ fun TodayScreen(
             item(key = "claude") {
                 ClaudeCard(
                     card = card, message = state.claudeMessage, reduced = reduced,
-                    onAsk = { onAskClaude(card.targetDay ?: state.day) },
+                    onAsk = { onAskClaude(state.day) },
                     onUndo = viewModel::undoPlan,
                     onDismissMessage = viewModel::dismissClaudeMessage,
                 )

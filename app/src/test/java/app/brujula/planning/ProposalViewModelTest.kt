@@ -26,7 +26,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
+import androidx.lifecycle.SavedStateHandle
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -56,9 +61,18 @@ private class FakePlanner : DayPlanner(FakeClaudeGateway(), { error("sin uso") }
     val queue = ArrayDeque<PlanOutcome>()
     var gate: CompletableDeferred<Unit>? = null
 
+    /** Se puso en true cuando la llamada devolvió su respuesta aunque la hubieran cancelado. */
+    var returnedAfterCancel = false
+
+    /** Como un gateway que ignora la cancelación: la respuesta llega igual, tarde. */
     override suspend fun propose(day: LocalDate, request: String?, previous: Proposal?, adjustment: String?): PlanOutcome {
         calls += Call(day, request, previous, adjustment)
-        gate?.await()
+        try {
+            withContext(NonCancellable) { gate?.await() }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            returnedAfterCancel = true
+        }
+        if (!currentCoroutineContext().isActive) returnedAfterCancel = true
         return queue.removeFirst()
     }
 }
@@ -116,9 +130,11 @@ class ProposalViewModelTest {
         day: LocalDate = fri,
         exec: ProposalExecutor = executor,
         bedtime: suspend () -> LocalDateTime? = { null },
+        repo: ProposalRepository = proposals,
+        handle: SavedStateHandle = SavedStateHandle(),
     ) = ProposalViewModel(
-        day = day, request = request, planner = planner, proposals = proposals, executor = exec, speech = NoSpeech(), clock = clock,
-        wakeFor = { LocalTime.of(8, 15) }, bedtimeRemindAt = bedtime, scopeOverride = backgroundScope,
+        day = day, request = request, planner = planner, proposals = repo, executor = exec, speech = NoSpeech(), clock = clock,
+        wakeFor = { LocalTime.of(8, 15) }, bedtimeRemindAt = bedtime, scopeOverride = backgroundScope, saved = handle,
     )
 
     private val work = Activity(
@@ -282,13 +298,73 @@ class ProposalViewModelTest {
         planner.queue += PlanOutcome.Ok(proposal(summary = "Tarde."))
         v.adjust("Pasa el gym a la tarde")
         v.state.first { it is ProposalUiState.Loading }
+        kotlinx.coroutines.delay(1) // deja correr la llamada: ya está en el planificador, esperando
+        assertEquals(1, planner.calls.size)
         v.cancelWaiting()
         val s = v.state.first { it is ProposalUiState.Showing } as ProposalUiState.Showing
         assertEquals(id, s.proposal.id)
         planner.gate!!.complete(Unit)
         advanceUntilIdle()
+        // La respuesta tardía sí llegó al planificador (ignora la cancelación), pero no pisó nada.
+        kotlinx.coroutines.withTimeout(5_000) { while (!planner.returnedAfterCancel) kotlinx.coroutines.yield() }
+        advanceUntilIdle()
         assertEquals(id, (v.state.value as ProposalUiState.Showing).proposal.id)
         assertEquals(id, proposals.pendingFor(fri)!!.id)
+    }
+
+    @Test fun consumedRequestDoesNotCallClaudeAgainAfterRestore() = runTest {
+        val handle = SavedStateHandle()
+        planner.queue += PlanOutcome.Ok(proposal())
+        val first = showing(vm(request = "arma mi día", handle = handle))
+        // Proceso muerto y ruta restaurada con los mismos argumentos: se muestra lo guardado, sin pedir otra vez.
+        val again = showing(vm(request = "arma mi día", handle = handle))
+        assertEquals(first.proposal.id, again.proposal.id)
+        assertEquals(1, planner.calls.size)
+        assertEquals(first.proposal.id, proposals.pendingFor(fri)!!.id)
+    }
+
+    @Test fun dayWithAcceptedProposalShowsAcceptedWithoutCallingClaude() = runTest {
+        proposals.savePending(proposal())
+        val v1 = vm()
+        showing(v1)
+        v1.accept()
+        v1.state.first { it is ProposalUiState.Accepted }
+        val v2 = vm()
+        val a = v2.state.first { it is ProposalUiState.Accepted } as ProposalUiState.Accepted
+        assertEquals("Mañana está listo", a.title)
+        assertTrue(planner.calls.isEmpty())
+        // Y desde ahí se puede volver a la propuesta.
+        v2.undo()
+        showing(v2)
+    }
+
+    @Test fun databaseFailureOnOpenShowsErrorWithRetry() = runTest {
+        var fail = true
+        val repo = object : ProposalRepository(db.proposalDao()) {
+            override suspend fun pendingFor(day: LocalDate): Proposal? {
+                if (fail) throw java.io.IOException("boom")
+                return super.pendingFor(day)
+            }
+        }
+        proposals.savePending(proposal())
+        val v = vm(repo = repo)
+        val e = v.state.first { it is ProposalUiState.Error } as ProposalUiState.Error
+        assertTrue(e.retry)
+        assertTrue(planner.calls.isEmpty())
+        fail = false
+        v.retry()
+        showing(v)
+        assertTrue(planner.calls.isEmpty())
+    }
+
+    @Test fun discardOnlyTouchesPendingProposals() = runTest {
+        val id = proposals.savePending(proposal())
+        val v = vm()
+        showing(v)
+        v.accept()
+        v.state.first { it is ProposalUiState.Accepted }
+        proposals.discard(id)
+        assertEquals("ACCEPTED", db.proposalDao().get(id)!!.status)
     }
 
     @Test fun discardCloses() = runTest {

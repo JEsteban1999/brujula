@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -149,7 +150,7 @@ fun BrujulaNavHost(
                                 classifications = container.workClassificationRepository,
                                 autoClassifier = container.autoClassifier,
                                 claudeNotes = container.claudeNotes.note,
-                                acceptedProposalIds = container.proposalRepository.observeAcceptedIds(),
+                                acceptedPlans = container.proposalRepository.observeAcceptedPlans(),
                                 undoPlan = { container.proposalExecutor.undo(it) },
                             )
                         }
@@ -186,6 +187,7 @@ fun BrujulaNavHost(
                                 speech = AndroidSpeechInput(context.applicationContext),
                                 clock = container.clock,
                                 wakeFor = { d -> container.routineRepository.routine.first().wakeFor(d) },
+                                saved = createSavedStateHandle(),
                             )
                         }
                     },

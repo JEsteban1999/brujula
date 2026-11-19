@@ -7,8 +7,11 @@ import kotlinx.coroutines.flow.map
 import java.time.LocalDate
 import java.time.LocalDateTime
 
+/** Un plan aceptado: su id y el día que arma. */
+data class AcceptedPlan(val id: Long, val day: LocalDate)
+
 /** Propuestas guardadas (D1): sobreviven a la muerte del proceso; una sola PENDING por día. */
-class ProposalRepository(private val dao: ProposalDao) {
+open class ProposalRepository(private val dao: ProposalDao) {
     /** Guarda [p] como la pendiente de su día; las otras pendientes de ese día pasan a SUPERSEDED (una transacción). */
     suspend fun savePending(p: Proposal): Long = dao.insertPending(
         ProposalEntity(
@@ -21,11 +24,18 @@ class ProposalRepository(private val dao: ProposalDao) {
      * Un payload ilegible no se puede mostrar ni aplicar: se devuelve `null`. Si estaba PENDING se marca DISCARDED; una
      * ACCEPTED nunca se descarta (sus cambios siguen en la agenda y su día cuenta como armado).
      */
-    suspend fun get(id: Long): Proposal? = dao.get(id)?.let { toModel(it) }
+    open suspend fun get(id: Long): Proposal? = dao.get(id)?.let { toModel(it) }
 
-    suspend fun pendingFor(day: LocalDate): Proposal? = dao.latestByStatus(day, ProposalStatus.PENDING.name)?.let { toModel(it) }
+    open suspend fun pendingFor(day: LocalDate): Proposal? = dao.latestByStatus(day, ProposalStatus.PENDING.name)?.let { toModel(it) }
 
-    suspend fun discard(id: Long) = dao.setStatus(id, ProposalStatus.DISCARDED.name)
+    /** Solo si sigue PENDING: una propuesta aceptada o reemplazada nunca pasa a DISCARDED por aquí. */
+    open suspend fun discard(id: Long) = dao.discardIfPending(id)
+
+    /** La aceptada más reciente de [day] (con sus datos de vista previa), o `null`. */
+    open suspend fun acceptedFor(day: LocalDate): Proposal? = dao.latestByStatus(day, ProposalStatus.ACCEPTED.name)?.let { toModel(it) }
+
+    /** Planes aceptados, el más reciente primero; la tarjeta de Hoy elige el vigente (día >= hoy). */
+    fun observeAcceptedPlans(): Flow<List<AcceptedPlan>> = dao.observeAccepted().map { rows -> rows.map { AcceptedPlan(it.id, it.day) } }
 
     fun observeAcceptedDays(): Flow<Set<LocalDate>> = dao.observeAcceptedDays().map { it.toSet() }
 
