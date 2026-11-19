@@ -6,6 +6,8 @@ import app.brujula.habits.HabitRepository
 import app.brujula.routine.RoutineRepository
 import app.brujula.routine.logicalDay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 fun interface ReminderResync {
     suspend fun resync()
@@ -19,7 +21,10 @@ class ReminderSync(
     private val habitRepo: HabitRepository,
     private val scheduler: ReminderScheduler,
 ) : ReminderResync {
-    override suspend fun resync() {
+    private val mutex = Mutex()
+
+    /** Serializada: lectura, plan y replaceAll van juntos, asi dos resincronizaciones no se pisan. */
+    override suspend fun resync() = mutex.withLock {
         val now = clock.now()
         val today = logicalDay(now)
         val counts = listOf(today, today.plusDays(1)).associateWith { habitRepo.observeCountsFor(it).first() }
