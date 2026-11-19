@@ -1,6 +1,8 @@
 package app.brujula.settings
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import app.brujula.calendar.DeviceCalendar
+import app.brujula.calendar.FakeCalendarSource
 import app.brujula.core.theme.ThemeMode
 import app.brujula.reminders.ReminderResync
 import app.brujula.routine.RoutineRepository
@@ -8,6 +10,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -79,5 +83,60 @@ class RoutineViewModelTest {
         e.vm.shiftRestBed(-15).join()
         assertEquals(LocalTime.of(0, 45), e.repo.routine.first().restBed)
         assertEquals(2, e.sync.calls)
+    }
+
+    private fun cal(id: Long, account: String = "ana@gmail.com", type: String = "com.google") =
+        DeviceCalendar(id, "Cal $id", account, type, 0, false)
+
+    private fun TestScope.calEnv(src: FakeCalendarSource): Pair<Env, FakeCalendarSource> {
+        val repo = RoutineRepository(PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "c.preferences_pb") })
+        return Env(repo, FakeReminderSync(), RoutineViewModel(repo, FakeReminderSync(), backgroundScope, src)) to src
+    }
+
+    @Test fun noPermissionMeansEmptyGroups() = runTest {
+        val (e, _) = calEnv(FakeCalendarSource(permission = false, calendarList = listOf(cal(1))))
+        e.vm.refreshCalendars().join()
+        assertFalse(e.vm.calendars.value.hasPermission)
+        assertTrue(e.vm.calendars.value.groups.isEmpty())
+        assertEquals(null, e.repo.calendarPrefs.selectedCalendarIds.first())
+    }
+
+    @Test fun firstTimeWithPermissionSelectsAllAndSaves() = runTest {
+        val (e, _) = calEnv(FakeCalendarSource(calendarList = listOf(cal(1), cal(2, "o@outlook.com", "com.microsoft.office.outlook"))))
+        e.vm.onPermissionResult(true).join()
+        val s = e.vm.calendars.value
+        assertTrue(s.hasPermission)
+        assertEquals(listOf("Google", "Outlook"), s.groups.map { it.source })
+        assertTrue(s.groups.flatMap { it.items }.all { it.selected })
+        assertEquals(setOf(1L, 2L), e.repo.calendarPrefs.selectedCalendarIds.first())
+    }
+
+    @Test fun toggleRemovesAndAdds() = runTest {
+        val (e, _) = calEnv(FakeCalendarSource(calendarList = listOf(cal(1), cal(2))))
+        e.vm.refreshCalendars().join()
+        e.vm.toggleCalendar(1).join()
+        assertEquals(setOf(2L), e.repo.calendarPrefs.selectedCalendarIds.first())
+        assertEquals(listOf(false, true), e.vm.calendars.value.groups.single().items.map { it.selected })
+        e.vm.toggleCalendar(1).join()
+        assertEquals(setOf(1L, 2L), e.repo.calendarPrefs.selectedCalendarIds.first())
+    }
+
+    @Test fun missingSavedIdIsIgnored() = runTest {
+        val (e, _) = calEnv(FakeCalendarSource(calendarList = listOf(cal(1))))
+        e.repo.calendarPrefs.setSelectedCalendarIds(setOf(1L, 99L))
+        e.vm.refreshCalendars().join()
+        assertEquals(listOf(1L), e.vm.calendars.value.groups.single().items.filter { it.selected }.map { it.calendar.id })
+        e.vm.toggleCalendar(1).join()
+        assertEquals(emptySet<Long>(), e.repo.calendarPrefs.selectedCalendarIds.first())
+    }
+
+    @Test fun revokedPermissionFallsBackToNoPermission() = runTest {
+        val (e, src) = calEnv(FakeCalendarSource(calendarList = listOf(cal(1))))
+        e.vm.refreshCalendars().join()
+        assertTrue(e.vm.calendars.value.hasPermission)
+        src.permission = false
+        e.vm.refreshCalendars().join()
+        assertFalse(e.vm.calendars.value.hasPermission)
+        assertTrue(e.vm.calendars.value.groups.isEmpty())
     }
 }

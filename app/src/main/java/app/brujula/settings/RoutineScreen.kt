@@ -10,11 +10,21 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import android.Manifest
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -50,6 +60,17 @@ fun RoutineScreen(viewModel: RoutineViewModel, modifier: Modifier = Modifier) {
     val routine by viewModel.routine.collectAsStateWithLifecycle()
     val c = BrujulaTheme.colors
     val reduced = rememberReducedMotion()
+    val calendars by viewModel.calendars.collectAsStateWithLifecycle()
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        viewModel.onPermissionResult(result[Manifest.permission.READ_CALENDAR] == true)
+    }
+    // El permiso puede darse o quitarse desde los ajustes del sistema.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshCalendars() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Column(
         modifier.fillMaxSize().background(c.bg).verticalScroll(rememberScrollState())
@@ -117,6 +138,43 @@ fun RoutineScreen(viewModel: RoutineViewModel, modifier: Modifier = Modifier) {
             }
         }
 
+        Text("CALENDARIOS", color = c.textMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        Card {
+            if (!calendars.hasPermission) {
+                Text(
+                    "Brújula lee tus calendarios de Google y Outlook para saber qué huecos tienes libres. Nunca los modifica.",
+                    color = c.textMuted, fontSize = 13.sp,
+                )
+                Box(
+                    Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(RoundedCornerShape(14.dp)).background(c.accent)
+                        .clickable(role = Role.Button) {
+                            permissionLauncher.launch(arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR))
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("Conectar calendarios", color = c.onAccent, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+                }
+            } else {
+                if (calendars.groups.isEmpty()) {
+                    Text("No encontré calendarios en este teléfono.", color = c.textMuted, fontSize = 13.sp)
+                }
+                calendars.groups.forEach { group ->
+                    Text(
+                        if (group.source == group.accountName) group.accountName else "${group.source} · ${group.accountName}",
+                        color = c.textMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                    group.items.forEach { item ->
+                        CalendarRow(item, onToggle = { viewModel.toggleCalendar(item.calendar.id) })
+                    }
+                }
+                Text(
+                    "Para ver Outlook aquí, activa en la app de Outlook la opción de sincronizar calendarios con el teléfono.",
+                    color = c.textMuted, fontSize = 12.sp,
+                )
+            }
+        }
+
         Text("TEMA DE BRÚJULA", color = c.textMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ThemeOption("Claro", ThemeMode.LIGHT, routine.themeMode, reduced, Modifier.weight(1f), viewModel::setThemeMode)
@@ -124,6 +182,30 @@ fun RoutineScreen(viewModel: RoutineViewModel, modifier: Modifier = Modifier) {
             ThemeOption("Automático", ThemeMode.AUTO, routine.themeMode, reduced, Modifier.weight(1f), viewModel::setThemeMode)
         }
         Text("Automático es oscuro desde las 21:00 hasta que te levantas.", color = c.textMuted, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun CalendarRow(item: CalendarItem, onToggle: () -> Unit) {
+    val c = BrujulaTheme.colors
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 48.dp)
+            .toggleable(value = item.selected, role = Role.Switch, onValueChange = { onToggle() })
+            .semantics { contentDescription = "Importar ${item.calendar.name}" },
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(Modifier.size(12.dp).clip(RoundedCornerShape(4.dp)).background(Color(item.calendar.color or 0xFF000000.toInt())))
+        Text(
+            item.calendar.name, Modifier.weight(1f), color = c.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
+        Switch(
+            checked = item.selected, onCheckedChange = null,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White, checkedTrackColor = c.accent, checkedBorderColor = Color.Transparent,
+                uncheckedThumbColor = Color.White, uncheckedTrackColor = c.surface2, uncheckedBorderColor = Color.Transparent,
+            ),
+        )
     }
 }
 

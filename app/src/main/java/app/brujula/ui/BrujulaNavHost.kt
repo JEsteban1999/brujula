@@ -133,7 +133,12 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                 val container = LocalContext.current.container
                 val vm: RoutineViewModel = viewModel(
                     factory = viewModelFactory {
-                        initializer { RoutineViewModel(container.routineRepository, container.reminderSync) }
+                        initializer {
+                            RoutineViewModel(
+                                container.routineRepository, container.reminderSync,
+                                calendarSource = container.calendarSource,
+                            )
+                        }
                     },
                 )
                 RoutineScreen(viewModel = vm)
