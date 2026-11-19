@@ -16,9 +16,12 @@ import app.brujula.core.time.formatDayEs
 import app.brujula.habits.HabitIcon
 import app.brujula.habits.HabitRepository
 import app.brujula.reminders.PermissionStatus
+import app.brujula.routine.DayKind
+import app.brujula.routine.DayType
 import app.brujula.routine.Routine
 import app.brujula.routine.RoutineRepository
 import app.brujula.routine.awakeWindow
+import app.brujula.routine.dayTypeOf
 import app.brujula.routine.logicalDay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
@@ -42,14 +45,16 @@ data class TimelineEntry(val occurrence: Occurrence, val isNow: Boolean)
 data class TodayUiState(
     val dayLabel: String,
     val workMinutes: Int,
-    val workGoal: IntRange,
-    val workStatus: WorkStatus,
+    /** Null en días de descanso: no hay meta. */
+    val workGoal: IntRange?,
+    val workStatus: WorkStatus?,
     val habits: List<HabitChip>,
     val timeline: List<TimelineEntry>,
     val freeSlots: List<TimeSpan>,
     val permissions: PermissionStatus,
     /** Día lógico mostrado (para prellenar formularios). */
     val day: LocalDate,
+    val dayType: DayType = DayType(DayKind.WORKDAY),
 )
 
 private const val MAX_VISIBLE_HABITS = 2
@@ -99,11 +104,12 @@ class TodayViewModel(
 
     private fun initial(): TodayUiState {
         val day = logicalDay(clock.now())
-        val goal = Routine().workGoalMin
+        val type = dayTypeOf(day)
+        val goal = if (type.isRest) null else Routine().workGoalMin
         return TodayUiState(
             dayLabel = formatDayEs(day), workMinutes = 0, workGoal = goal,
-            workStatus = workStatus(0, goal), habits = emptyList(), timeline = emptyList(),
-            freeSlots = emptyList(), permissions = permissions.value, day = day,
+            workStatus = goal?.let { workStatus(0, it) }, habits = emptyList(), timeline = emptyList(),
+            freeSlots = emptyList(), permissions = permissions.value, day = day, dayType = type,
         )
     }
 
@@ -126,11 +132,13 @@ class TodayViewModel(
             .filter { logicalDay(it.span.start) != day && it.span.overlaps(window) }
         val timeline = (spill + logical).sortedBy { it.span.start }
         val minutes = workMinutes(logical)
+        val type = dayTypeOf(day)
+        val goal = if (type.isRest) null else routine.workGoalMin
         return TodayUiState(
             dayLabel = formatDayEs(day),
             workMinutes = minutes,
-            workGoal = routine.workGoalMin,
-            workStatus = workStatus(minutes, routine.workGoalMin),
+            workGoal = goal,
+            workStatus = goal?.let { workStatus(minutes, it) },
             habits = habits
                 .filter { it.active && it.dailyTarget > 0 && day.dayOfWeek in it.days }
                 .take(MAX_VISIBLE_HABITS)
@@ -139,6 +147,7 @@ class TodayViewModel(
             freeSlots = freeSlots(window, timeline.map { it.span }),
             permissions = perms,
             day = day,
+            dayType = type,
         )
     }
 

@@ -232,4 +232,30 @@ class TodayViewModelTest {
         vm.refreshPermissions()
         assertTrue(vm.state.first { it.permissions.ok }.permissions.ok)
     }
+
+    @Test fun saturdayIsRestWithoutGoalOrWorkdayExercise() = runTest {
+        clock.current = LocalDateTime.of(2026, 11, 21, 11, 0)
+        val sat = LocalDate.of(2026, 11, 21)
+        activities.upsert(act("Ejercicio", ActivityType.EXERCISE, "18:30", 30, date = day, repeat = Repeat.WORKDAYS))
+        val s = vm().state.first { it.day == sat && it.dayType.kind == app.brujula.routine.DayKind.WEEKEND && it.freeSlots.isNotEmpty() }
+        assertEquals(null, s.workGoal)
+        assertEquals(null, s.workStatus)
+        assertTrue(s.timeline.none { it.occurrence.activity.title == "Ejercicio" })
+        assertEquals(sat.atTime(10, 0), s.freeSlots.first().start)
+    }
+
+    @Test fun holidayTuesdayCarriesName() = runTest {
+        val d = LocalDate.of(2026, 12, 8)
+        clock.current = d.atTime(11, 0)
+        val s = vm().state.first { it.day == d && it.dayType.kind == app.brujula.routine.DayKind.HOLIDAY }
+        assertEquals("Inmaculada Concepción", s.dayType.holidayName)
+        assertEquals(null, s.workGoal)
+    }
+
+    @Test fun workdayKeepsGoal() = runTest {
+        val s = vm().state.first { it.day == day }
+        assertEquals(app.brujula.routine.DayKind.WORKDAY, s.dayType.kind)
+        assertEquals(360..420, s.workGoal)
+        assertTrue(s.workStatus != null)
+    }
 }

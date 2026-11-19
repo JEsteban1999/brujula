@@ -53,6 +53,8 @@ import app.brujula.core.theme.BrujulaTheme
 import app.brujula.core.time.formatMinutes
 import app.brujula.habits.HabitIcon
 import app.brujula.reminders.PermissionStatus
+import app.brujula.routine.DayKind
+import app.brujula.routine.DayType
 import app.brujula.ui.pressScale
 
 private val CardShape = RoundedCornerShape(24.dp)
@@ -60,23 +62,53 @@ private val CardShape = RoundedCornerShape(24.dp)
 @Composable
 fun TodayHeader(state: TodayUiState, reduced: Boolean) {
     val c = BrujulaTheme.colors
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(state.dayLabel, color = c.textMuted, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(state.dayLabel, color = c.textMuted, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            dayTypeLabel(state.dayType)?.let { DayTypePill(it, Modifier.weight(1f, fill = false)) }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
             Text(
                 "Hoy", color = c.text, fontFamily = BrujulaTheme.type.display, fontWeight = FontWeight.ExtraBold,
                 fontSize = 42.sp, letterSpacing = (-1.2).sp, lineHeight = 42.sp,
             )
+            WorkSummary(state, reduced)
         }
-        WorkSummary(state, reduced)
     }
+}
+
+internal fun dayTypeLabel(type: DayType): String? = when (type.kind) {
+    DayKind.WORKDAY -> null
+    DayKind.WEEKEND -> "Descanso"
+    DayKind.HOLIDAY -> type.holidayName?.let { "Festivo · $it" } ?: "Festivo"
+}
+
+@Composable
+private fun DayTypePill(text: String, modifier: Modifier) {
+    val c = BrujulaTheme.colors
+    Text(
+        text, color = c.accent2Text, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+        maxLines = 1, overflow = TextOverflow.Ellipsis,
+        modifier = modifier.clip(RoundedCornerShape(50)).background(c.soft2).padding(horizontal = 10.dp, vertical = 3.dp),
+    )
 }
 
 @Composable
 private fun WorkSummary(state: TodayUiState, reduced: Boolean) {
     val c = BrujulaTheme.colors
-    val goal = "${state.workGoal.first / 60}–${state.workGoal.last / 60} h"
-    val fraction = (state.workMinutes.toFloat() / state.workGoal.last).coerceIn(0f, 1f)
+    val goalRange = state.workGoal
+    if (goalRange == null) {
+        // Descanso: sin meta ni barra; solo se muestra si hubo trabajo.
+        if (state.workMinutes > 0) {
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Trabajo hoy", color = c.textMuted, fontSize = 12.sp)
+                Text(formatMinutes(state.workMinutes), color = c.text, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        return
+    }
+    val goal = "${goalRange.first / 60}–${goalRange.last / 60} h"
+    val fraction = (state.workMinutes.toFloat() / goalRange.last).coerceIn(0f, 1f)
     Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("Trabajo hoy", color = c.textMuted, fontSize = 12.sp)
         Text(

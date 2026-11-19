@@ -70,4 +70,14 @@ class RoutineViewModelTest {
         assertEquals(ThemeMode.DARK, r.themeMode)
         assertEquals(false, r.flexibleWork)
     }
+
+    @Test fun restHoursShiftPersistAndResync() = runTest {
+        val e = env()
+        e.vm.shiftRestWake(15).join()
+        assertEquals(LocalTime.of(10, 15), e.repo.routine.first().restWake)
+        assertEquals(1, e.sync.calls)
+        e.vm.shiftRestBed(-15).join()
+        assertEquals(LocalTime.of(0, 45), e.repo.routine.first().restBed)
+        assertEquals(2, e.sync.calls)
+    }
 }

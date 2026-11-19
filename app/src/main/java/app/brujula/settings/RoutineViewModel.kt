@@ -27,6 +27,10 @@ class RoutineViewModel(
 
     fun shiftBed(min: Int): Job = change(resyncAfter = true) { it.copy(bed = it.bed.plusMinutes(min.toLong())) }
 
+    fun shiftRestWake(min: Int): Job = change(resyncAfter = true) { it.copy(restWake = it.restWake.plusMinutes(min.toLong())) }
+
+    fun shiftRestBed(min: Int): Job = change(resyncAfter = true) { it.copy(restBed = it.restBed.plusMinutes(min.toLong())) }
+
     fun setFlexible(on: Boolean): Job = change { it.copy(flexibleWork = on) }
 
     fun setGoal(range: IntRange): Job? =

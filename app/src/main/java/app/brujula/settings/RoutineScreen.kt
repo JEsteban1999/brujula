@@ -75,6 +75,22 @@ fun RoutineScreen(viewModel: RoutineViewModel, modifier: Modifier = Modifier) {
             )
         }
 
+        Text("FINES DE SEMANA Y FESTIVOS", color = c.textMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        Card {
+            StepperRow(
+                "Me levanto", formatTime(routine.restWake), "Levantarme 15 minutos antes en descanso", "Levantarme 15 minutos después en descanso", reduced,
+                onMinus = { viewModel.shiftRestWake(-STEP) }, onPlus = { viewModel.shiftRestWake(STEP) },
+            )
+            StepperRow(
+                "Me acuesto", formatTime(routine.restBed), "Acostarme 15 minutos antes en descanso", "Acostarme 15 minutos después en descanso", reduced,
+                onMinus = { viewModel.shiftRestBed(-STEP) }, onPlus = { viewModel.shiftRestBed(STEP) },
+            )
+            Text(
+                "Sin meta de trabajo. El ejercicio es opcional: te pregunto si te animas.",
+                color = c.textMuted, fontSize = 12.sp,
+            )
+        }
+
         Card {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Column(Modifier.weight(1f)) {
