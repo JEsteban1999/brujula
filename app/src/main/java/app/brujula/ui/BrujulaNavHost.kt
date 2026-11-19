@@ -18,6 +18,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import app.brujula.activities.form.ActivityFormScreen
+import app.brujula.activities.form.ActivityFormViewModel
 import app.brujula.container
 import app.brujula.core.theme.BrujulaTheme
 import app.brujula.reminders.readPermissionStatus
@@ -98,7 +100,31 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                     navArgument("id") { type = NavType.LongType; defaultValue = -1L },
                     navArgument("start") { type = NavType.StringType; nullable = true; defaultValue = null },
                 ),
-            ) { PlaceholderScreen() }
+            ) { entry ->
+                val container = LocalContext.current.container
+                val id = entry.arguments?.getLong("id")?.takeIf { it >= 0 }
+                val start = entry.arguments?.getString("start")?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }
+                val vm: ActivityFormViewModel = viewModel(
+                    factory = viewModelFactory {
+                        initializer {
+                            ActivityFormViewModel(
+                                activityId = id,
+                                prefillStart = start,
+                                clock = container.clock,
+                                activityRepository = container.activityRepository,
+                                resync = container.reminderSync,
+                            )
+                        }
+                    },
+                )
+                ActivityFormScreen(
+                    viewModel = vm,
+                    onClose = { navController.popBackStack() },
+                    onHabit = {
+                        navController.navigate(Routes.habitForm()) { popUpTo(entry.destination.id) { inclusive = true } }
+                    },
+                )
+            }
             composable(
                 Routes.HABIT_FORM,
                 arguments = listOf(navArgument("id") { type = NavType.LongType; defaultValue = -1L }),
