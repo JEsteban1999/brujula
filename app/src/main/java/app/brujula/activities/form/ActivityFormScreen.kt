@@ -181,11 +181,15 @@ fun ActivityFormScreen(
             }
         }
 
+        val canSave = state.ready && !state.saving
         val saveSource = remember { MutableInteractionSource() }
         Box(
             Modifier.fillMaxWidth().height(56.dp).pressScale(saveSource, reduced)
-                .clip(RoundedCornerShape(18.dp)).background(c.accent)
-                .clickable(interactionSource = saveSource, indication = null, role = Role.Button, onClick = viewModel::save),
+                .clip(RoundedCornerShape(18.dp)).background(if (canSave) c.accent else c.accent.copy(alpha = 0.4f))
+                .clickable(
+                    enabled = canSave, interactionSource = saveSource, indication = null,
+                    role = Role.Button, onClick = viewModel::save,
+                ),
             contentAlignment = Alignment.Center,
         ) { Text("Guardar actividad", color = c.onAccent, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold) }
     }

@@ -12,7 +12,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.yield
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -81,9 +80,10 @@ class ActivityFormViewModelTest {
     }
 
     @Test fun noConflictWhenFree() = runTest {
-        val vm = newVm(); vm.setDateChoice(DateChoice.TOMORROW); vm.shiftStart(495 + 60) // 20:00, justo al terminar
-        vm.state.first { it.start == LocalTime.of(20, 0) }
-        yield()
+        val vm = newVm(); vm.setDateChoice(DateChoice.TOMORROW); vm.shiftStart(495) // 19:00: choca
+        vm.state.first { it.conflict != null } // prueba que el VM ya observa la lista del repositorio
+        vm.shiftStart(60) // 20:00, justo al terminar el bloque
+        assertEquals(LocalTime.of(20, 0), vm.state.value.start)
         assertNull(vm.state.value.conflict)
     }
 
@@ -133,10 +133,12 @@ class ActivityFormViewModelTest {
         assertEquals("Dentista", s.title); assertEquals(ActivityType.APPOINTMENT, s.type)
         assertEquals(DateChoice.TOMORROW, s.dateChoice); assertEquals(LocalTime.of(15, 0), s.start)
         assertEquals(30, s.durationMin); assertTrue(s.remind); assertTrue(s.copyToGoogle)
-        // Con el repo ya cargado, no choca contra sí misma.
-        edit.setDuration(45)
-        edit.state.first { it.durationMin == 45 }
-        yield()
+        // Primero prueba que la lista está cargada: a las 19:00 choca con "Ejercicio en casa".
+        edit.shiftStart(4 * 60)
+        assertEquals("Ejercicio en casa", edit.state.first { it.conflict != null }.conflict!!.activity.title)
+        // De vuelta a las 15:00 se solapa consigo misma, pero se ignora.
+        edit.shiftStart(-4 * 60)
+        assertEquals(LocalTime.of(15, 0), edit.state.value.start)
         assertNull(edit.state.value.conflict)
 
         edit.setTitle("Dentista Ruiz"); edit.save(); edit.state.first { it.saved }
@@ -162,5 +164,58 @@ class ActivityFormViewModelTest {
         vm.delete(); vm.state.first { it.saved }
         assertTrue(repo.observeAll().first().isEmpty())
         assertEquals(1, resyncs)
+    }
+
+    @Test fun doubleTapSaveCreatesOneActivity() = runTest {
+        val vm = newVm(); vm.setTitle("Una sola"); vm.save(); vm.save()
+        vm.state.first { it.saved }
+        assertEquals(1, repo.observeAll().first().count { it.title == "Una sola" })
+        assertEquals(1, resyncs)
+    }
+
+    @Test fun defaultAtMidnightUsesLogicalDayLabel() = runTest {
+        clock.current = LocalDateTime.of(2026, 11, 19, 0, 20) // día lógico: 18
+        val vm = newVm()
+        val s = vm.state.value
+        assertEquals(LocalTime.of(0, 30), s.start); assertEquals(LocalDate.of(2026, 11, 19), s.date)
+        assertEquals(DateChoice.TODAY, s.dateChoice)
+        vm.setDateChoice(DateChoice.TOMORROW) // lógico 19 -> 00:30 del 20 natural
+        assertEquals(DateChoice.TOMORROW, vm.state.value.dateChoice)
+        assertEquals(LocalDate.of(2026, 11, 20), vm.state.value.date)
+        vm.setDateChoice(DateChoice.TODAY)
+        assertEquals(LocalDate.of(2026, 11, 19), vm.state.value.date)
+    }
+
+    @Test fun roundingFrom2350GoesToNextCalendarDay() = runTest {
+        clock.current = LocalDateTime.of(2026, 11, 18, 23, 50)
+        val s = newVm().state.value
+        assertEquals(LocalTime.of(0, 0), s.start); assertEquals(LocalDate.of(2026, 11, 19), s.date)
+        assertEquals(DateChoice.TODAY, s.dateChoice) // 00:00 del 19 sigue siendo el día lógico 18
+    }
+
+    @Test fun shiftAcrossFourAmKeepsChosenLogicalDay() = runTest {
+        clock.current = LocalDateTime.of(2026, 11, 19, 0, 20)
+        val vm = newVm(); vm.shiftStart(3 * 60 + 30) // 04:00
+        assertEquals(LocalTime.of(4, 0), vm.state.value.start)
+        assertEquals(DateChoice.TODAY, vm.state.value.dateChoice)
+        assertEquals(LocalDate.of(2026, 11, 18), vm.state.value.date)
+    }
+
+    @Test fun editOfMissingActivityStaysUsableAsNew() = runTest {
+        val vm = newVm(id = 9999L)
+        vm.state.first { it.ready }
+        assertFalse(vm.state.value.isEdit)
+        vm.setTitle("Nueva"); vm.save(); vm.state.first { it.saved }
+        assertEquals(2, repo.observeAll().first().size)
+    }
+
+    @Test fun saveBeforeEditLoadedIsIgnored() = runTest {
+        val id = repo.observeAll().first().single().id
+        val vm = newVm(id = id)
+        assertFalse(vm.state.value.ready)
+        vm.save()
+        assertFalse(vm.state.value.saving)
+        vm.state.first { it.ready }
+        assertEquals(1, repo.observeAll().first().size)
     }
 }
