@@ -70,6 +70,7 @@ open class BrujulaApp : Application() {
     protected open fun startBackgroundWork() {
         appScope.launch {
             Seed.ensureDefaults(container.database, container.routineRepository, LocalDate.now())
+            Migrations.seedWellness(container.database, container.routineRepository)
             Migrations.exerciseToWorkdays(container.database, container.routineRepository)
         }
         launchReminderResync()

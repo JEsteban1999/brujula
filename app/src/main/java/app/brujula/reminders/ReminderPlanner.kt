@@ -5,6 +5,7 @@ import app.brujula.activities.ActivityType
 import app.brujula.activities.occurrencesOn
 import app.brujula.core.time.formatTime
 import app.brujula.habits.Habit
+import app.brujula.habits.HabitGroup
 import app.brujula.habits.HabitIcon
 import app.brujula.habits.timesFor
 import app.brujula.routine.Routine
@@ -14,6 +15,7 @@ import app.brujula.routine.wakeFor
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 
 object ReminderPlanner {
     private val KEY_MINUTE = DateTimeFormatter.ofPattern("yyyyMMddHHmm")
@@ -47,11 +49,15 @@ object ReminderPlanner {
                     out += Reminder(
                         key = key, at = at, kind = ReminderKind.HABIT,
                         title = habitTitle(habit), body = habitBody(habit, count),
-                        habitId = habit.id, day = day,
+                        habitId = habit.id, day = day, wellness = habit.group == HabitGroup.WELLNESS,
                     )
                 }
             }
         }
+
+        val wellnessOnes = out.filter { it.wellness }
+        out.removeAll(wellnessOnes.toSet())
+        out += mergeWellness(wellnessOnes)
 
         for (day in days) {
             for (occ in occurrencesOn(day, activities, doneKeys)) {
@@ -82,6 +88,31 @@ object ReminderPlanner {
         return out.sortedBy { it.at }
     }
 
+    /** Une los avisos de bienestar que caen en el mismo minuto; uno solo queda como aviso normal. */
+    private fun mergeWellness(items: List<Reminder>): List<Reminder> =
+        items.groupBy { it.at.truncatedTo(ChronoUnit.MINUTES) }.values.map { group ->
+            if (group.size == 1) return@map group.single()
+            val first = group.first()
+            Reminder(
+                key = "wellness:${first.at.format(KEY_MINUTE)}", at = first.at, kind = ReminderKind.HABIT,
+                title = "Pausa", body = group.joinToString(" \u00b7 ") { it.body },
+                habitId = first.habitId, habitIds = group.mapNotNull { it.habitId }, day = first.day, wellness = true,
+            )
+        }
+
+    private fun wellnessBody(h: Habit): String? = when (h.icon) {
+        HabitIcon.EYE -> "Mira algo lejano 20 segundos."
+        HabitIcon.WALK -> "P\u00e1rate y camina 2 minutos."
+        HabitIcon.STRETCH -> "Estira cuello, espalda y mu\u00f1ecas."
+        HabitIcon.POSTURE -> "Endereza la espalda y relaja los hombros."
+        HabitIcon.FOOD -> "Hora de comer algo."
+        HabitIcon.SCREEN_OFF -> "Deja las pantallas: en 45 min te acuestas."
+        HabitIcon.PILL -> "T\u00f3mate las vitaminas."
+        HabitIcon.SUN -> "Ponte protector solar."
+        HabitIcon.BOOK -> "Un rato de lectura sin pantalla."
+        else -> null
+    }
+
     private fun habitTitle(h: Habit) = when (h.icon) {
         HabitIcon.WATER -> "Hora de tomar agua"
         HabitIcon.LIP_BALM -> "Bálsamo labial"
@@ -91,6 +122,6 @@ object ReminderPlanner {
     private fun habitBody(h: Habit, count: Int) = when (h.icon) {
         HabitIcon.WATER -> "Vas $count de ${h.dailyTarget} vasos."
         HabitIcon.LIP_BALM -> "Vez ${count + 1} de ${h.dailyTarget} del día."
-        else -> "Vas $count de ${h.dailyTarget} hoy."
+        else -> wellnessBody(h) ?: "Vas $count de ${h.dailyTarget} hoy."
     }
 }

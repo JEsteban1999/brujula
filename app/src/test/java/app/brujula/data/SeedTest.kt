@@ -52,7 +52,7 @@ class SeedTest {
         val today = LocalDate.of(2026, 11, 18)
         Seed.ensureDefaults(db, routine, today)
         Seed.ensureDefaults(db, routine, today)
-        val hs = habits.observeHabits().first()
+        val hs = habits.observeHabits().first().filter { it.group == app.brujula.habits.HabitGroup.ESSENTIAL }
         assertEquals(2, hs.size)
         assertEquals(HabitSchedule.Every(90), hs.single { it.name == "Agua" }.schedule)
         assertEquals(8, hs.single { it.name == "Agua" }.dailyTarget)
@@ -109,5 +109,41 @@ class SeedTest {
         activities.upsert(activities.get(id)!!.copy(repeat = Repeat.DAILY))
         Migrations.exerciseToWorkdays(db, routine)
         assertEquals(Repeat.DAILY, activities.get(id)!!.repeat)
+    }
+
+    private val wellnessNames = listOf(
+        "Descanso visual 20-20-20", "Pararte y moverte", "Estiramientos", "Postura", "Comer a horas",
+        "Desconectar pantallas", "Vitaminas", "Protector solar", "Lectura sin pantalla",
+    )
+
+    private suspend fun wellness(habits: HabitRepository) =
+        habits.observeHabits().first().filter { it.group == app.brujula.habits.HabitGroup.WELLNESS }
+
+    @Test fun seedWellnessCreatesNineOnceAndVitaminsInactive() = runTest {
+        val habits = HabitRepository(db.habitDao())
+        val routine = routineRepo()
+        Migrations.seedWellness(db, routine)
+        Migrations.seedWellness(db, routine)
+        val ws = wellness(habits)
+        assertEquals(wellnessNames.toSet(), ws.map { it.name }.toSet())
+        assertEquals(9, ws.size)
+        assertEquals(false, ws.single { it.name == "Vitaminas" }.active)
+        assertEquals(8, ws.count { it.active })
+        val eye = ws.single { it.name == "Descanso visual 20-20-20" }
+        assertEquals(app.brujula.habits.HabitWindow.WORK, eye.window)
+        assertEquals(HabitSchedule.Every(30), eye.schedule)
+        assertEquals(14, eye.dailyTarget)
+        assertEquals(HabitSchedule.BeforeBed(45), ws.single { it.name == "Desconectar pantallas" }.schedule)
+        assertEquals(1, ws.single { it.name == "Desconectar pantallas" }.dailyTarget)
+        assertEquals(2, ws.single { it.name == "Postura" }.dailyTarget)
+    }
+
+    @Test fun deletedWellnessHabitIsNotRecreated() = runTest {
+        val habits = HabitRepository(db.habitDao())
+        val routine = routineRepo()
+        Migrations.seedWellness(db, routine)
+        habits.delete(wellness(habits).first().id)
+        Migrations.seedWellness(db, routine)
+        assertEquals(8, wellness(habits).size)
     }
 }

@@ -140,6 +140,43 @@ class ReceiversTest {
         assertEquals(1, countFor(id))
     }
 
+    private fun groupIntent(action: String, key: String, ids: List<Long>) =
+        Intent(ctx, NotificationActionReceiver::class.java).setAction(action)
+            .putExtra(NotificationActionReceiver.EXTRA_KEY, key)
+            .putExtra(NotificationActionReceiver.EXTRA_HABIT_ID, ids.first())
+            .putExtra(NotificationActionReceiver.EXTRA_HABIT_IDS, ids.toLongArray())
+            .putExtra(NotificationActionReceiver.EXTRA_DAY, "2026-11-18")
+            .putExtra(NotificationActionReceiver.EXTRA_TITLE, "Pausa")
+            .putExtra(NotificationActionReceiver.EXTRA_BODY, "a · b")
+            .putExtra(NotificationActionReceiver.EXTRA_KIND, ReminderKind.HABIT.name)
+
+    @Test fun groupedDoneLogsEachHabitOnceAndRepeatDoesNothing() {
+        val a = newHabit(); val b = newHabit()
+        val key = "wellness:202611181245"
+        val g = Reminder(key, now, ReminderKind.HABIT, "Pausa", "a · b", habitId = a, habitIds = listOf(a, b), day = now.toLocalDate())
+        Notifications.show(ctx, g)
+        val n = shadowOf(nm).allNotifications.single()
+        assertEquals(listOf("Hecho", "En 15 min"), n.actions.map { it.title.toString() })
+        assertEquals(Notifications.CHANNEL_WELLNESS, n.channelId)
+        val receiver = NotificationActionReceiver()
+        receiver.onReceive(ctx, groupIntent(NotificationActionReceiver.ACTION_DONE, key, listOf(a, b)))
+        receiver.onReceive(ctx, groupIntent(NotificationActionReceiver.ACTION_DONE, "$key:s", listOf(a, b)))
+        awaitCalls(2)
+        assertEquals(1, countFor(a))
+        assertEquals(1, countFor(b))
+        // un aviso individual posterior con la misma clave por habito tampoco duplica
+        runBlocking { assertEquals(false, ctx.container.habitRepository.logDone(a, now, "habit:$a:202611181245")) }
+    }
+
+    @Test fun groupedSnoozeKeepsAllHabitIds() {
+        val a = newHabit(); val b = newHabit()
+        NotificationActionReceiver().onReceive(ctx, groupIntent(NotificationActionReceiver.ACTION_SNOOZE_15, "wellness:202611181245", listOf(a, b)))
+        awaitCalls(1)
+        val s = scheduler.one.single()
+        assertEquals("wellness:202611181245:s", s.key)
+        assertEquals(listOf(a, b), s.habitIds)
+    }
+
     @Test fun bootAndTimeChangesTriggerResync() {
         val actions = listOf(Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED, Intent.ACTION_MY_PACKAGE_REPLACED)
         actions.forEachIndexed { i, a ->

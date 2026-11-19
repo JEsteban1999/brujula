@@ -12,6 +12,10 @@ data class Reminder(
     val title: String,
     val body: String,
     val habitId: Long? = null,
+    /** Solo en avisos agrupados de bienestar; [habitId] es el primero. */
+    val habitIds: List<Long> = emptyList(),
+    /** Aviso de un habito de bienestar (canal Pausas y bienestar). */
+    val wellness: Boolean = false,
     val activityId: Long? = null,
     val day: LocalDate,
 )

@@ -41,7 +41,13 @@ class NotificationActionReceiver : BroadcastReceiver() {
         val now = c.clock.now()
         when (action) {
             ACTION_DONE -> when (reminder?.kind) {
-                ReminderKind.HABIT -> reminder.habitId?.let { c.habitRepository.logDone(it, now, originalKey) }
+                ReminderKind.HABIT ->
+                    if (reminder.habitIds.size > 1) {
+                        val minute = originalKey.removePrefix("wellness:")
+                        reminder.habitIds.forEach { c.habitRepository.logDone(it, now, "habit:$it:$minute") }
+                    } else {
+                        reminder.habitId?.let { c.habitRepository.logDone(it, now, originalKey) }
+                    }
                 ReminderKind.ACTIVITY -> reminder.activityId?.let { c.activityRepository.setDone(it, reminder.day, true) }
                 ReminderKind.EXERCISE_PROMPT, null -> Unit
             }
@@ -98,6 +104,8 @@ class NotificationActionReceiver : BroadcastReceiver() {
         const val ACTION_SKIP = "app.brujula.action.SKIP"
         const val EXTRA_KEY = "key"
         const val EXTRA_HABIT_ID = "habitId"
+        const val EXTRA_HABIT_IDS = "habitIds"
+        const val EXTRA_WELLNESS = "wellness"
         const val EXTRA_ACTIVITY_ID = "activityId"
         const val EXTRA_DAY = "day"
         const val EXTRA_KIND = "kind"

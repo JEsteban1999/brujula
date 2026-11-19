@@ -41,5 +41,6 @@ object Seed {
             )
         }
         routine.markSeeded()
+        Migrations.seedWellness(db, routine)
     }
 }

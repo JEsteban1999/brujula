@@ -20,6 +20,8 @@ object ReminderExtras {
         .putExtra(NotificationActionReceiver.EXTRA_BODY, r.body)
         .putExtra(NotificationActionReceiver.EXTRA_DAY, r.day.toString())
         .putExtra(NotificationActionReceiver.EXTRA_HABIT_ID, r.habitId ?: -1L)
+        .putExtra(NotificationActionReceiver.EXTRA_HABIT_IDS, r.habitIds.toLongArray())
+        .putExtra(NotificationActionReceiver.EXTRA_WELLNESS, r.wellness)
         .putExtra(NotificationActionReceiver.EXTRA_ACTIVITY_ID, r.activityId ?: -1L)
 
     fun read(intent: Intent): Reminder? {
@@ -34,7 +36,9 @@ object ReminderExtras {
             key = key, at = LocalDateTime.now(), kind = kind,
             title = intent.getStringExtra(NotificationActionReceiver.EXTRA_TITLE).orEmpty(),
             body = intent.getStringExtra(NotificationActionReceiver.EXTRA_BODY).orEmpty(),
-            habitId = habit, activityId = act, day = day,
+            habitId = habit, habitIds = intent.getLongArrayExtra(NotificationActionReceiver.EXTRA_HABIT_IDS)?.toList().orEmpty(),
+            wellness = intent.getBooleanExtra(NotificationActionReceiver.EXTRA_WELLNESS, false),
+            activityId = act, day = day,
         )
     }
 }
@@ -42,6 +46,7 @@ object ReminderExtras {
 object Notifications {
     const val CHANNEL_HABITS = "habitos"
     const val CHANNEL_ACTIVITIES = "actividades"
+    const val CHANNEL_WELLNESS = "pausas"
 
     fun notificationId(key: String): Int = key.hashCode()
 
@@ -52,6 +57,10 @@ object Notifications {
                 .apply { description = "Avisos de agua, bálsamo y otros hábitos" },
         )
         nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_WELLNESS, "Pausas y bienestar", NotificationManager.IMPORTANCE_DEFAULT)
+                .apply { description = "Pausas, postura, comida y otros h\u00e1bitos de bienestar" },
+        )
+        nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ACTIVITIES, "Actividades", NotificationManager.IMPORTANCE_HIGH)
                 .apply { description = "Avisos antes de tus actividades" },
         )
@@ -59,13 +68,18 @@ object Notifications {
 
     fun show(context: Context, r: Reminder) {
         ensureChannels(context)
-        val channel = if (r.kind == ReminderKind.HABIT) CHANNEL_HABITS else CHANNEL_ACTIVITIES
+        val grouped = r.habitIds.size > 1
+        val channel = when {
+            r.kind != ReminderKind.HABIT -> CHANNEL_ACTIVITIES
+            grouped || r.wellness -> CHANNEL_WELLNESS
+            else -> CHANNEL_HABITS
+        }
         val b = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(r.title)
             .setContentText(r.body)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(if (channel == CHANNEL_WELLNESS) NotificationCompat.PRIORITY_DEFAULT else NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
         context.packageManager.getLaunchIntentForPackage(context.packageName)?.let { launch ->
             b.setContentIntent(
@@ -78,7 +92,7 @@ object Notifications {
         } else {
             b.addAction(0, "Hecho", actionIntent(context, r, NotificationActionReceiver.ACTION_DONE))
             b.addAction(0, "En 15 min", actionIntent(context, r, NotificationActionReceiver.ACTION_SNOOZE_15))
-            if (r.kind == ReminderKind.HABIT) {
+            if (r.kind == ReminderKind.HABIT && !grouped) {
                 b.addAction(0, "Saltar", actionIntent(context, r, NotificationActionReceiver.ACTION_SKIP))
             }
         }

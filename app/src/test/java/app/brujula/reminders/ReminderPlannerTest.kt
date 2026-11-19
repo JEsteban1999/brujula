@@ -90,4 +90,36 @@ class ReminderPlannerTest {
         assertTrue(prompts(sat.atTime(12, 30)).none { it.day == sat })
         assertEquals(prompts(sat.atTime(9, 0)).single().key, prompts(sat.atTime(11, 59)).single().key)
     }
+
+    private val eye = Habit(10, "Descanso visual 20-20-20", HabitIcon.EYE, HabitSchedule.Every(30), 16,
+        group = app.brujula.habits.HabitGroup.WELLNESS, window = app.brujula.habits.HabitWindow.WORK)
+    private val walk = Habit(11, "Pararte y moverte", HabitIcon.WALK, HabitSchedule.Every(60), 8,
+        group = app.brujula.habits.HabitGroup.WELLNESS, window = app.brujula.habits.HabitWindow.WORK)
+    private fun wellness(now: LocalDateTime, counts: Map<LocalDate, Map<Long, Int>> = emptyMap(), handled: Set<String> = emptySet()) =
+        ReminderPlanner.plan(now, Routine(), listOf(eye, walk), counts, handled, emptyList(), emptySet())
+
+    @Test fun sameMinuteWellnessRemindersMergeIntoOnePausa() {
+        val r = wellness(d.atTime(8, 0)).filter { it.at == d.atTime(9, 0) }.single()
+        assertEquals("wellness:202611180900", r.key)
+        assertEquals("Pausa", r.title)
+        assertEquals(listOf(10L, 11L), r.habitIds)
+        assertEquals(10L, r.habitId)
+        assertEquals("Mira algo lejano 20 segundos. · Párate y camina 2 minutos.", r.body)
+        assertEquals(ReminderKind.HABIT, r.kind)
+        val half = wellness(d.atTime(8, 0)).filter { it.at == d.atTime(8, 30) }.single()
+        assertEquals("habit:10:202611180830", half.key)
+        assertEquals("Descanso visual 20-20-20", half.title)
+        assertTrue(half.habitIds.isEmpty())
+    }
+
+    @Test fun groupShrinksWhenOneReachedTargetOrHandled() {
+        val reached = wellness(d.atTime(8, 0), counts = mapOf(d to mapOf(11L to 8))).single { it.at == d.atTime(9, 0) }
+        assertEquals("habit:10:202611180900", reached.key)
+        val handled = wellness(d.atTime(8, 0), handled = setOf("habit:11:202611180900")).single { it.at == d.atTime(9, 0) }
+        assertEquals("habit:10:202611180900", handled.key)
+    }
+
+    @Test fun saturdayHasNoWorkWindowWellness() {
+        val r = wellness(LocalDate.of(2026, 11, 21).atTime(8, 0)).filter { it.kind == ReminderKind.HABIT }; assertTrue(r.toString(), r.isEmpty())
+    }
 }
