@@ -15,7 +15,6 @@ import com.anthropic.errors.UnauthorizedException
 import com.anthropic.models.beta.AnthropicBeta
 import com.anthropic.models.beta.messages.BetaMessage
 import com.anthropic.models.beta.messages.BetaOutputConfig
-import com.anthropic.models.beta.messages.StructuredMessage
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -36,8 +35,7 @@ class DictationCallTest {
 
     @After fun restoreLog() { DictationCall.warn = originalWarn }
 
-    @Test fun structuredParamsBuildWithDerivedSchema() {
-        // Si la derivación del schema desde DictationResult fallara, build() lanzaría aquí.
+    @Test fun structuredParamsUseTheHandWrittenSchema() {
         val p = DictationCall.params("SISTEMA", "USUARIO")
         assertEquals(ClaudeModels.DICTATION, p.model().asString())
         assertEquals(4096L, p.maxTokens())
@@ -65,18 +63,14 @@ class DictationCallTest {
         assertTrue(p.messages().single().toString().contains("USUARIO"))
     }
 
-    private fun message(stopReason: String, content: String): StructuredMessage<DictationResult> {
+    private fun message(stopReason: String, content: String): BetaMessage {
         val json = """
             {"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5-5",
              "content":$content,"stop_reason":"$stopReason","stop_sequence":null,"stop_details":null,
              "container":null,"context_management":null,
              "usage":{"input_tokens":10,"output_tokens":5}}
         """.trimIndent()
-        val raw = jsonMapper().readValue(json, BetaMessage::class.java)
-        // El constructor es internal en Kotlin (público en bytecode): es el mismo que usa el SDK al recibir la respuesta.
-        @Suppress("UNCHECKED_CAST")
-        return StructuredMessage::class.java.getConstructor(Class::class.java, BetaMessage::class.java)
-            .newInstance(DictationResult::class.java, raw) as StructuredMessage<DictationResult>
+        return jsonMapper().readValue(json, BetaMessage::class.java)
     }
 
     private fun textBlock(text: String): String =
@@ -91,6 +85,18 @@ class DictationCallTest {
         assertEquals("Listo.", ok.value.reply)
         assertEquals(60, ok.value.actions.single().intervalMin)
         assertEquals("EVERY", ok.value.actions.single().habitMode)
+    }
+
+    @Test fun unknownPropertiesAndOmittedNullablesAreTolerated() {
+        val body = """{"actions":[{"type":"need_more_info","question":"¿A qué hora?","extra":1}],"reply":"Dime la hora.","otro":true}"""
+        val ok = DictationCall.read(message("end_turn", textBlock(body))) as GatewayResult.Ok
+        assertEquals("¿A qué hora?", ok.value.actions.single().question)
+        assertEquals(null, ok.value.actions.single().title)
+    }
+
+    @Test fun jsonNullIsANonRetryableError() {
+        assertEquals(GatewayResult.Error(retryable = false), DictationCall.read(message("end_turn", textBlock("null"))))
+        assertFalse(logged.single().contains("null"))
     }
 
     @Test fun refusalIsRefusedWithoutReadingContent() {

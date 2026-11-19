@@ -14,18 +14,14 @@ import com.anthropic.errors.RequestTimeoutException
 import com.anthropic.errors.UnauthorizedException
 import com.anthropic.models.beta.AnthropicBeta
 import com.anthropic.models.beta.messages.BetaCacheControlEphemeral
+import com.anthropic.models.beta.messages.BetaMessage
 import com.anthropic.models.beta.messages.BetaOutputConfig
 import com.anthropic.models.beta.messages.BetaStopReason
 import com.anthropic.models.beta.messages.BetaTextBlockParam
-import com.anthropic.models.beta.messages.StructuredMessage
-import com.anthropic.models.beta.messages.StructuredMessageCreateParams
-import com.anthropic.models.beta.messages.StructuredOutputConfig
+import com.anthropic.models.messages.Message
 import com.anthropic.models.messages.MessageCreateParams
 import com.anthropic.models.messages.OutputConfig
 import com.anthropic.models.messages.StopReason
-import com.anthropic.models.messages.StructuredMessage as NonBetaStructuredMessage
-import com.anthropic.models.messages.StructuredMessageCreateParams as NonBetaStructuredParams
-import com.anthropic.models.messages.StructuredOutputConfig as NonBetaStructuredOutputConfig
 import com.anthropic.models.beta.messages.MessageCreateParams as BetaMessageCreateParams
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -34,8 +30,19 @@ import java.io.InterruptedIOException
 import java.security.MessageDigest
 import java.time.Duration
 
-/** Gateway con el SDK oficial; el cliente se crea al usarlo y se reutiliza mientras la clave no cambie. */
-class AnthropicClaudeGateway(private val keyStore: ClaudeKeyStore) : ClaudeGateway {
+/**
+ * Gateway con el SDK oficial; el cliente se crea al usarlo y se reutiliza mientras la clave no cambie.
+ *
+ * Los constructores de parámetros se inyectan solo para las pruebas (p. ej. simular un NoSuchMethodError del SDK en ART).
+ */
+class AnthropicClaudeGateway internal constructor(
+    private val readKey: suspend () -> String?,
+    private val dictationParams: (String, String) -> BetaMessageCreateParams = DictationCall::params,
+    private val classificationParams: (String, String) -> MessageCreateParams = ClassificationCall::params,
+    private val keyTestParams: () -> MessageCreateParams = ::keyTestParams,
+) : ClaudeGateway {
+    constructor(keyStore: ClaudeKeyStore) : this(keyStore::read)
+
     // Solo se guarda el hash de la clave, nunca la clave en claro.
     private var cached: Pair<ByteArray, AnthropicClient>? = null
 
@@ -59,51 +66,55 @@ class AnthropicClaudeGateway(private val keyStore: ClaudeKeyStore) : ClaudeGatew
         cached = null
     }
 
+    // LinkageError (NoSuchMethodError, NoClassDefFoundError, ExceptionInInitializerError, ...) = el SDK o una dependencia no
+    // encaja con el runtime de Android. Se captura para no tumbar la app; OutOfMemoryError y demás VirtualMachineError no.
+
     override suspend fun interpret(system: String, user: String): GatewayResult<DictationResult> = withContext(Dispatchers.IO) {
         try {
-            val key = keyStore.read()
+            val key = readKey()
             if (key == null) {
                 dropClient()
                 return@withContext GatewayResult.NoKey
             }
+            val params = dictationParams(system, user)
             // Tiempo propio del dictado (el cliente queda en 30 s para testKey).
-            DictationCall.read(clientFor(key).beta().messages().create(DictationCall.params(system, user), DictationCall.requestOptions()))
+            DictationCall.read(clientFor(key).beta().messages().create(params, DictationCall.requestOptions()))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             DictationCall.failureOf(e)
+        } catch (e: LinkageError) {
+            DictationCall.incompatible(e)
         }
     }
 
     override suspend fun classify(system: String, user: String): GatewayResult<ClassificationResult> = withContext(Dispatchers.IO) {
         try {
-            val key = keyStore.read()
+            val key = readKey()
             if (key == null) {
                 dropClient()
                 return@withContext GatewayResult.NoKey
             }
-            ClassificationCall.read(clientFor(key).messages().create(ClassificationCall.params(system, user)))
+            val params = classificationParams(system, user)
+            ClassificationCall.read(clientFor(key).messages().create(params))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             DictationCall.failureOf(e, "Clasificación")
+        } catch (e: LinkageError) {
+            DictationCall.incompatible(e, "Clasificación")
         }
     }
 
     override suspend fun testKey(): KeyTestResult = withContext(Dispatchers.IO) {
         try {
-            val key = keyStore.read()
+            val key = readKey()
             if (key == null) {
                 dropClient()
                 return@withContext KeyTestResult.INVALID
             }
-            clientFor(key).messages().create(
-                MessageCreateParams.builder()
-                    .model(ClaudeModels.DICTATION)
-                    .maxTokens(16L)
-                    .addUserMessage("ok")
-                    .build(),
-            )
+            val params = keyTestParams()
+            clientFor(key).messages().create(params)
             KeyTestResult.OK
         } catch (e: CancellationException) {
             throw e
@@ -113,9 +124,20 @@ class AnthropicClaudeGateway(private val keyStore: ClaudeKeyStore) : ClaudeGatew
             KeyTestResult.NETWORK
         } catch (e: Exception) {
             KeyTestResult.ERROR
+        } catch (e: LinkageError) {
+            DictationCall.incompatible(e, "Prueba de clave")
+            KeyTestResult.ERROR
         }
     }
 }
+
+/** Petición mínima para comprobar la clave. */
+internal fun keyTestParams(): MessageCreateParams =
+    MessageCreateParams.builder()
+        .model(ClaudeModels.DICTATION)
+        .maxTokens(16L)
+        .addUserMessage("ok")
+        .build()
 
 /**
  * Petición de dictado y lectura de su respuesta; separado para probarlo sin red.
@@ -127,8 +149,11 @@ class AnthropicClaudeGateway(private val keyStore: ClaudeKeyStore) : ClaudeGatew
 internal object DictationCall {
     private const val MAX_TOKENS = 4096L
 
-    /** Salida estructurada derivada de [DictationResult]; esfuerzo bajo, sin `thinking`, sin temperatura ni prefill. */
-    fun params(system: String, user: String): StructuredMessageCreateParams<DictationResult> =
+    /**
+     * Salida estructurada con el schema escrito a mano ([Schemas.DICTATION]; nunca el derivado de la clase, que revienta en
+     * ART); esfuerzo bajo, sin `thinking`, sin temperatura ni prefill.
+     */
+    fun params(system: String, user: String): BetaMessageCreateParams =
         BetaMessageCreateParams.builder()
             .model(ClaudeModels.DICTATION)
             .maxTokens(MAX_TOKENS)
@@ -142,9 +167,9 @@ internal object DictationCall {
             )
             .addUserMessage(user)
             .outputConfig(
-                StructuredOutputConfig.builder<DictationResult>()
+                BetaOutputConfig.builder()
                     .effort(BetaOutputConfig.Effort.LOW)
-                    .format(DictationResult::class.java)
+                    .format(Schemas.betaFormat(Schemas.DICTATION))
                     .build(),
             )
             .build()
@@ -158,7 +183,7 @@ internal object DictationCall {
     @Volatile var warn: (String) -> Unit = { Log.w("ClaudeGateway", it) }
 
     /** Revisa stopReason antes de leer el contenido. */
-    fun read(response: StructuredMessage<DictationResult>): GatewayResult<DictationResult> {
+    fun read(response: BetaMessage): GatewayResult<DictationResult> {
         val stop = response.stopReason().orElse(null)
         if (stop == BetaStopReason.REFUSAL) return GatewayResult.Refused
         // Truncada por max_tokens: puede salir bien al repetir.
@@ -167,9 +192,9 @@ internal object DictationCall {
         return try {
             // Tras un respaldo puede haber texto parcial del primer modelo antes del bloque fallback: vale el último texto.
             val block = response.content().lastOrNull { it.isText() } ?: return GatewayResult.Error(retryable = false)
-            GatewayResult.Ok(block.asText().text())
-        } catch (e: RuntimeException) {
-            // JSON que no encaja en DictationResult (AnthropicInvalidDataException) u otra respuesta ilegible.
+            GatewayResult.Ok(StructuredJson.parse(block.asText().text(), DictationResult::class.java))
+        } catch (e: Exception) {
+            // JSON que no encaja en DictationResult (excepción de Jackson) u otra respuesta ilegible.
             warn("Respuesta de dictado ilegible: ${e.javaClass.simpleName}")
             GatewayResult.Error(retryable = false)
         }
@@ -193,40 +218,50 @@ internal object DictationCall {
         }
     }
 
+    /**
+     * El SDK no encaja con el runtime (p. ej. NoSuchMethodError en ART): es de configuración, no del dictado; no se arregla
+     * repitiendo y un dictado en cola se conserva. Solo se registra la clase.
+     */
+    fun incompatible(e: LinkageError, what: String = "Dictado"): GatewayResult<Nothing> {
+        warn("$what falló: ${e.javaClass.simpleName}")
+        return GatewayResult.Error(retryable = false, config = true)
+    }
+
     private fun Throwable.causes(): Sequence<Throwable> = generateSequence(cause) { it.cause?.takeIf { c -> c !== it } }
 }
 
 /**
  * Petición de clasificación (Haiku 5.5) y lectura de su respuesta. Va por el endpoint NO beta: sin respaldo en el servidor,
  * un rechazo (stopReason == REFUSAL) significa simplemente "sin clasificar". Esfuerzo bajo, sin `thinking`, sin temperatura ni prefill.
+ * Schema escrito a mano ([Schemas.CLASSIFICATION]).
  */
 internal object ClassificationCall {
     private const val MAX_TOKENS = 4096L
 
-    fun params(system: String, user: String): NonBetaStructuredParams<ClassificationResult> =
+    fun params(system: String, user: String): MessageCreateParams =
         MessageCreateParams.builder()
             .model(ClaudeModels.CLASSIFICATION)
             .maxTokens(MAX_TOKENS)
             .system(system)
             .addUserMessage(user)
             .outputConfig(
-                NonBetaStructuredOutputConfig.builder<ClassificationResult>()
+                OutputConfig.builder()
                     .effort(OutputConfig.Effort.LOW)
-                    .format(ClassificationResult::class.java)
+                    .format(Schemas.format(Schemas.CLASSIFICATION))
                     .build(),
             )
             .build()
 
     /** Revisa stopReason antes de leer el contenido. */
-    fun read(response: NonBetaStructuredMessage<ClassificationResult>): GatewayResult<ClassificationResult> {
+    fun read(response: Message): GatewayResult<ClassificationResult> {
         val stop = response.stopReason().orElse(null)
         if (stop == StopReason.REFUSAL) return GatewayResult.Refused
         if (stop == StopReason.MAX_TOKENS) return GatewayResult.Error(retryable = true)
         if (stop != StopReason.END_TURN) return GatewayResult.Error(retryable = false)
         return try {
             val block = response.content().lastOrNull { it.isText() } ?: return GatewayResult.Error(retryable = false)
-            GatewayResult.Ok(block.asText().text())
-        } catch (e: RuntimeException) {
+            GatewayResult.Ok(StructuredJson.parse(block.asText().text(), ClassificationResult::class.java))
+        } catch (e: Exception) {
             DictationCall.warn("Respuesta de clasificación ilegible: ${e.javaClass.simpleName}")
             GatewayResult.Error(retryable = false)
         }

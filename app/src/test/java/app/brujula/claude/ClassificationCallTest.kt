@@ -3,7 +3,6 @@ package app.brujula.claude
 import com.anthropic.core.jsonMapper
 import com.anthropic.models.messages.Message
 import com.anthropic.models.messages.OutputConfig
-import com.anthropic.models.messages.StructuredMessage
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -36,16 +35,13 @@ class ClassificationCallTest {
         assertFalse("Sin nombre alterno por el prefijo is", schema.contains("\"work\""))
     }
 
-    private fun message(stopReason: String, content: String): StructuredMessage<ClassificationResult> {
+    private fun message(stopReason: String, content: String): Message {
         val json = """
             {"id":"msg_1","type":"message","role":"assistant","model":"claude-haiku-5-5",
              "content":$content,"stop_reason":"$stopReason","stop_sequence":null,
              "usage":{"input_tokens":10,"output_tokens":5}}
         """.trimIndent()
-        val raw = jsonMapper().readValue(json, Message::class.java)
-        @Suppress("UNCHECKED_CAST")
-        return StructuredMessage::class.java.getConstructor(Class::class.java, Message::class.java)
-            .newInstance(ClassificationResult::class.java, raw) as StructuredMessage<ClassificationResult>
+        return jsonMapper().readValue(json, Message::class.java)
     }
 
     private fun textBlock(text: String): String =
