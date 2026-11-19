@@ -16,10 +16,11 @@ class Converters {
     @TypeConverter fun stringToDateTime(v: String): LocalDateTime = LocalDateTime.parse(v)
 }
 
-/** "every:90" o "at:09:00,13:00". */
+/** "every:90", "at:09:00,13:00" o "bed:45". */
 fun HabitSchedule.encode(): String = when (this) {
     is HabitSchedule.Every -> "every:$intervalMin"
     is HabitSchedule.AtTimes -> "at:" + times.joinToString(",") { it.toString() }
+    is HabitSchedule.BeforeBed -> "bed:$minutes"
 }
 
 fun decodeSchedule(text: String): HabitSchedule = when {
@@ -27,6 +28,7 @@ fun decodeSchedule(text: String): HabitSchedule = when {
     text.startsWith("at:") -> HabitSchedule.AtTimes(
         text.removePrefix("at:").split(",").filter { it.isNotBlank() }.map { LocalTime.parse(it) },
     )
+    text.startsWith("bed:") -> HabitSchedule.BeforeBed(text.removePrefix("bed:").toInt())
     else -> error("Horario de habito desconocido: $text")
 }
 

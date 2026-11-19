@@ -60,4 +60,34 @@ class HabitTimesTest {
         assertEquals(sat.atTime(23, 30), t.last())
         assertEquals(9, t.size)
     }
+
+    private fun work(schedule: HabitSchedule) =
+        Habit(9, "Pausa", HabitIcon.EYE, schedule, 4, group = HabitGroup.WELLNESS, window = HabitWindow.WORK)
+
+    @Test fun workEvery30PerBlock() {
+        val t = work(HabitSchedule.Every(30)).timesFor(d, Routine())
+        val expected = (listOf(8 to 30, 9 to 0, 9 to 30, 10 to 0, 10 to 30, 11 to 0, 11 to 30) +
+            listOf(14 to 30, 15 to 0, 15 to 30, 16 to 0, 16 to 30, 17 to 0, 17 to 30)).map { d.atTime(it.first, it.second) }
+        assertEquals(14, t.size)
+        assertEquals(expected, t)
+        assertTrue(work(HabitSchedule.Every(30)).timesFor(sat, Routine()).isEmpty())
+    }
+
+    @Test fun workEvery60() {
+        assertEquals(listOf(9, 10, 11, 15, 16, 17), work(HabitSchedule.Every(60)).timesFor(d, Routine()).map { it.hour })
+    }
+
+    @Test fun workAtTimesKeepsOnlyInsideBlocks() {
+        val h = work(HabitSchedule.AtTimes(listOf(LocalTime.of(10, 15), LocalTime.of(16, 15))))
+        assertEquals(listOf(d.atTime(10, 15), d.atTime(16, 15)), h.timesFor(d, Routine()))
+        assertTrue(h.timesFor(sat, Routine()).isEmpty())
+        val out = work(HabitSchedule.AtTimes(listOf(LocalTime.of(10, 15), LocalTime.of(13, 0), LocalTime.of(20, 0))))
+        assertEquals(listOf(d.atTime(10, 15)), out.timesFor(d, Routine()))
+    }
+
+    @Test fun beforeBed() {
+        val h = Habit(10, "Pantallas", HabitIcon.SCREEN_OFF, HabitSchedule.BeforeBed(45), 1, group = HabitGroup.WELLNESS)
+        assertEquals(listOf(d.atTime(23, 45)), h.timesFor(d, Routine()))
+        assertEquals(listOf(sat.plusDays(1).atTime(0, 15)), h.timesFor(sat, Routine()))
+    }
 }

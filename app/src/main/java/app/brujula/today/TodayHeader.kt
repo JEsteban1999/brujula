@@ -25,6 +25,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.automirrored.outlined.DirectionsWalk
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.outlined.AccessibilityNew
+import androidx.compose.material.icons.outlined.Medication
+import androidx.compose.material.icons.outlined.PhonelinkOff
+import androidx.compose.material.icons.outlined.Restaurant
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.WbSunny
 import androidx.compose.material.icons.outlined.NotificationsOff
 import androidx.compose.material.icons.outlined.Spa
 import androidx.compose.material.icons.outlined.SelfImprovement
@@ -169,6 +177,14 @@ private fun HabitIcon.vector(): ImageVector = when (this) {
     HabitIcon.LIP_BALM -> Icons.Outlined.Spa
     HabitIcon.STRETCH -> Icons.Outlined.SelfImprovement
     HabitIcon.GENERIC -> Icons.Outlined.TaskAlt
+    HabitIcon.EYE -> Icons.Outlined.Visibility
+    HabitIcon.WALK -> Icons.AutoMirrored.Outlined.DirectionsWalk
+    HabitIcon.POSTURE -> Icons.Outlined.AccessibilityNew
+    HabitIcon.FOOD -> Icons.Outlined.Restaurant
+    HabitIcon.SCREEN_OFF -> Icons.Outlined.PhonelinkOff
+    HabitIcon.PILL -> Icons.Outlined.Medication
+    HabitIcon.SUN -> Icons.Outlined.WbSunny
+    HabitIcon.BOOK -> Icons.AutoMirrored.Outlined.MenuBook
 }
 
 @Composable

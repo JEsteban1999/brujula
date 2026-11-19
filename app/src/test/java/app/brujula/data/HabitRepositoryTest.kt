@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.brujula.data.db.BrujulaDatabase
+import app.brujula.data.db.toModel
 import app.brujula.habits.Habit
 import app.brujula.habits.HabitIcon
 import app.brujula.habits.HabitRepository
@@ -83,5 +84,24 @@ class HabitRepositoryTest {
         repo.delete(id)
         assertTrue(repo.observeHabits().first().isEmpty())
         assertTrue(repo.observeHandledKeys().first().isEmpty())
+    }
+
+    @Test fun groupWindowAndBeforeBedRoundTrip() = runTest {
+        val id = repo.upsert(
+            Habit(
+                name = "Pantallas", icon = HabitIcon.SCREEN_OFF, schedule = HabitSchedule.BeforeBed(45), dailyTarget = 1,
+                group = app.brujula.habits.HabitGroup.WELLNESS, window = app.brujula.habits.HabitWindow.WORK,
+            ),
+        )
+        val h = repo.observeHabits().first().single { it.id == id }
+        assertEquals(app.brujula.habits.HabitGroup.WELLNESS, h.group)
+        assertEquals(app.brujula.habits.HabitWindow.WORK, h.window)
+        assertEquals(HabitSchedule.BeforeBed(45), h.schedule)
+        assertEquals(HabitIcon.SCREEN_OFF, h.icon)
+    }
+
+    @Test fun unknownIconFallsBackToGeneric() = runTest {
+        val e = app.brujula.data.db.HabitEntity(1, "X", "NOPE", "every:60", 1, "1,2", true)
+        assertEquals(HabitIcon.GENERIC, e.toModel().icon)
     }
 }
