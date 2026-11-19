@@ -21,6 +21,12 @@ interface ActivityDao {
 
     @Upsert suspend fun upsert(e: ActivityEntity): Long
 
+    @Query("UPDATE activities SET googleEventId = :eventId WHERE id = :id")
+    suspend fun setGoogleEventId(id: Long, eventId: Long?)
+
+    @Query("SELECT googleEventId FROM activities WHERE googleEventId IS NOT NULL")
+    fun observeGoogleEventIds(): Flow<List<Long>>
+
     @Query("DELETE FROM activities WHERE id = :id")
     suspend fun delete(id: Long)
 
@@ -68,4 +74,12 @@ interface HabitDao {
 
     @Query("SELECT reminderKey FROM habit_logs WHERE reminderKey IS NOT NULL")
     fun observeHandledKeys(): Flow<List<String>>
+}
+
+@Dao
+interface WorkClassificationDao {
+    @Query("SELECT * FROM work_classifications")
+    fun observeAll(): Flow<List<WorkClassificationEntity>>
+
+    @Upsert suspend fun upsert(e: WorkClassificationEntity)
 }

@@ -19,9 +19,16 @@ class ActivityRepository(private val dao: ActivityDao) {
     suspend fun count(): Int = dao.count()
 
     suspend fun upsert(a: Activity): Long {
-        val rowId = dao.upsert(a.toEntity())
+        // Editar desde el formulario no debe perder el vinculo con Google: si llega null se conserva el guardado.
+        // Para cambiarlo o borrarlo a proposito se usa setGoogleEventId.
+        val kept = if (a.id != 0L && a.googleEventId == null) dao.get(a.id)?.googleEventId else a.googleEventId
+        val rowId = dao.upsert(a.copy(googleEventId = kept).toEntity())
         return if (a.id != 0L) a.id else rowId
     }
+
+    suspend fun setGoogleEventId(activityId: Long, eventId: Long?) = dao.setGoogleEventId(activityId, eventId)
+
+    fun observeGoogleEventIds(): Flow<Set<Long>> = dao.observeGoogleEventIds().map { it.toSet() }
 
     suspend fun delete(id: Long) = dao.delete(id)
 

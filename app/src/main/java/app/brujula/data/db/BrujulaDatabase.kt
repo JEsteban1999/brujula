@@ -8,15 +8,16 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 
 @Database(
-    entities = [ActivityEntity::class, ActivityCompletionEntity::class, HabitEntity::class, HabitLogEntity::class],
-    version = 2,
+    entities = [ActivityEntity::class, ActivityCompletionEntity::class, HabitEntity::class, HabitLogEntity::class, WorkClassificationEntity::class],
+    version = 3,
     exportSchema = true,
-    autoMigrations = [AutoMigration(from = 1, to = 2)],
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
 )
 @TypeConverters(Converters::class)
 abstract class BrujulaDatabase : RoomDatabase() {
     abstract fun activityDao(): ActivityDao
     abstract fun habitDao(): HabitDao
+    abstract fun workClassificationDao(): WorkClassificationDao
 
     companion object {
         fun create(context: Context): BrujulaDatabase =

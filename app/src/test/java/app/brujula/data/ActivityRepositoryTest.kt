@@ -69,4 +69,20 @@ class ActivityRepositoryTest {
         assertNull(repo.get(id))
         assertTrue(repo.observeDoneKeys().first().isEmpty())
     }
+
+    @Test fun editKeepsStoredGoogleEventId() = runTest {
+        val id = repo.upsert(sample)
+        repo.setGoogleEventId(id, 77L)
+        repo.upsert(sample.copy(id = id, title = "Otro"))
+        assertEquals(77L, repo.get(id)!!.googleEventId)
+        assertEquals(setOf(77L), repo.observeGoogleEventIds().first())
+    }
+
+    @Test fun setGoogleEventIdNullClears() = runTest {
+        val id = repo.upsert(sample)
+        repo.setGoogleEventId(id, 77L)
+        repo.setGoogleEventId(id, null)
+        assertNull(repo.get(id)!!.googleEventId)
+        assertEquals(emptySet<Long>(), repo.observeGoogleEventIds().first())
+    }
 }

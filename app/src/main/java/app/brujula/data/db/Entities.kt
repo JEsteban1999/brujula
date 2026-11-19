@@ -27,6 +27,7 @@ data class ActivityEntity(
     val repeat: String,
     val remindBeforeMin: Int?,
     val copyToGoogle: Boolean,
+    @ColumnInfo(defaultValue = "NULL") val googleEventId: Long? = null,
 )
 
 @Entity(
@@ -66,12 +67,18 @@ data class HabitLogEntity(
     val reminderKey: String?,
 )
 
+@Entity(tableName = "work_classifications")
+data class WorkClassificationEntity(
+    @PrimaryKey val key: String,
+    val isWork: Boolean,
+)
+
 data class HabitCountRow(val habitId: Long, val count: Int)
 
-fun Activity.toEntity() = ActivityEntity(id, title, type.name, date, start, durationMin, repeat.name, remindBeforeMin, copyToGoogle)
+fun Activity.toEntity() = ActivityEntity(id, title, type.name, date, start, durationMin, repeat.name, remindBeforeMin, copyToGoogle, googleEventId)
 
 fun ActivityEntity.toModel() = Activity(
-    id, title, ActivityType.valueOf(type), date, start, durationMin, Repeat.valueOf(repeat), remindBeforeMin, copyToGoogle,
+    id, title, ActivityType.valueOf(type), date, start, durationMin, Repeat.valueOf(repeat), remindBeforeMin, copyToGoogle, googleEventId,
 )
 
 fun Habit.toEntity() = HabitEntity(id, name, icon.name, schedule.encode(), dailyTarget, days.encodeDays(), active, group.name, window.name)

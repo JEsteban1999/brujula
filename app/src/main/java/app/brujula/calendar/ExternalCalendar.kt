@@ -56,3 +56,14 @@ fun eventsOnLogicalDay(
     }
     .distinctBy { it.key }
     .sortedBy { it.span.start }
+
+private val DIACRITICS = Regex("""\p{Mn}+""")
+private val WHITESPACE = Regex("""\s+""")
+
+/** Clave para recordar si un evento cuenta como trabajo: titulo sin tildes, en minusculas, espacios colapsados. */
+fun classificationKey(e: ExternalEvent): String =
+    java.text.Normalizer.normalize(e.title, java.text.Normalizer.Form.NFD)
+        .replace(DIACRITICS, "")
+        .lowercase(java.util.Locale.ROOT)
+        .replace(WHITESPACE, " ")
+        .trim()
