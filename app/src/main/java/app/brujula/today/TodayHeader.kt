@@ -45,6 +45,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -167,9 +168,16 @@ private fun HabitCard(chip: HabitChip, warm: Boolean, reduced: Boolean, modifier
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                Modifier.weight(1f).padding(end = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 Icon(chip.icon.vector(), null, tint = label, modifier = Modifier.size(16.dp))
-                Text(chip.name, color = BrujulaTheme.colors.text, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                Text(
+                    chip.name, color = BrujulaTheme.colors.text, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
             }
             Box(Modifier.size(28.dp).clip(CircleShape).background(accent), contentAlignment = Alignment.Center) {
                 Icon(Icons.Outlined.Add, null, tint = onAccent, modifier = Modifier.size(16.dp))
