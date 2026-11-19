@@ -24,8 +24,10 @@ class ReminderSync(
     private val scheduler: ReminderScheduler,
     /** Días con un plan ACCEPTED (producción: `proposalRepository.acceptedDays()`). */
     private val plannedDays: suspend () -> Set<LocalDate> = { emptySet() },
-    /** Hora de dormir elegida (producción: `routineRepository.bedtimeChoice.first()`). */
+    /** Hora de dormir de esta noche y su interruptor, calculada en cada resincronización (producción: `BedtimeSource.choice`). */
     private val bedtime: suspend () -> BedtimeChoice? = { null },
+    /** Quita un aviso ya publicado por su clave (producción: `Notifications.cancel`). */
+    private val cancelPosted: (String) -> Unit = {},
 ) : ReminderResync {
     private val mutex = Mutex()
 
@@ -34,6 +36,7 @@ class ReminderSync(
         val now = clock.now()
         val today = logicalDay(now)
         val counts = listOf(today, today.plusDays(1)).associateWith { habitRepo.observeCountsFor(it).first() }
+        val planned = plannedDays()
         val reminders = ReminderPlanner.plan(
             now = now,
             routine = routineRepo.routine.first(),
@@ -44,9 +47,11 @@ class ReminderSync(
             doneKeys = activityRepo.observeDoneKeys().first(),
             exercisePromptAnswered = routineRepo.exercisePromptAnswered.first(),
             overrides = activityRepo.observeOverrides().first(),
-            plannedDays = plannedDays(),
+            plannedDays = planned,
             bedtime = bedtime(),
         )
+        // Si mañana ya tiene plan aceptado, el aviso "¿Armamos mañana?" que siga publicado ya no tiene sentido (M5).
+        planned.forEach { cancelPosted(ReminderPlanner.nightKey(it.minusDays(1))) }
         scheduler.replaceAll(reminders)
     }
 }

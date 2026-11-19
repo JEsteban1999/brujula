@@ -106,6 +106,12 @@ fun RoutineScreen(viewModel: RoutineViewModel, modifier: Modifier = Modifier) {
                 "Avisarme 15 minutos después para armar mañana", reduced,
                 onMinus = { viewModel.shiftNightNotice(-STEP) }, onPlus = { viewModel.shiftNightNotice(STEP) },
             )
+            val bedtimeReminder by viewModel.bedtimeReminder.collectAsStateWithLifecycle()
+            SwitchRow(
+                label = "Aviso para dormir", checked = bedtimeReminder,
+                description = "Aviso para dormir", dot = null,
+                onToggle = { viewModel.setBedtimeReminder(!bedtimeReminder) },
+            )
         }
 
         Text("FINES DE SEMANA Y FESTIVOS", color = c.textMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)

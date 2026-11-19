@@ -23,7 +23,7 @@ private const val TAG = "ResyncTrigger"
 const val RESYNC_DEBOUNCE_MS = 500L
 private const val RESYNC_RETRY_MS = 5_000L
 
-/** Emite cada vez que cambian rutina, actividades, hechos, habitos, avisos atendidos, conteos del dia logico, planes aceptados o la hora de dormir. */
+/** Emite cada vez que cambian rutina, actividades, hechos, habitos, avisos atendidos, conteos del dia logico, planes aceptados o el aviso para dormir. */
 fun reminderChanges(
     routineRepository: RoutineRepository,
     activityRepository: ActivityRepository,
@@ -40,7 +40,7 @@ fun reminderChanges(
     habitRepository.observeCountsFor(logicalDay(clock.now())),
     activityRepository.observeOverrides(),
     acceptedDays,
-    routineRepository.bedtimeChoice,
+    routineRepository.bedtimeReminderOn,
 ) { _ -> }
 
 /**

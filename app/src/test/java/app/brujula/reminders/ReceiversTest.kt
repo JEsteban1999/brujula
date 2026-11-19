@@ -521,4 +521,51 @@ class ReceiversTest {
         assertEquals(1, shadowOf(nm).allNotifications.size)
         awaitCalls(1)
     }
+
+    private fun morningIntent(day: LocalDate) = Intent(ctx, ReminderReceiver::class.java)
+        .putExtra(NotificationActionReceiver.EXTRA_KEY, "morning:${day.toString().replace("-", "")}")
+        .putExtra(NotificationActionReceiver.EXTRA_DAY, day.toString())
+        .putExtra(NotificationActionReceiver.EXTRA_TITLE, "Tu día está listo")
+        .putExtra(NotificationActionReceiver.EXTRA_BODY, "Toca para ver tu día.")
+        .putExtra(NotificationActionReceiver.EXTRA_KIND, ReminderKind.PLAN_MORNING.name)
+
+    private fun snapshotProvider(block: suspend (LocalDate) -> app.brujula.planning.DaySnapshot) = object : app.brujula.planning.DaySnapshotProvider(
+        ctx.container.routineRepository, ctx.container.activityRepository, ctx.container.habitRepository,
+        ctx.container.calendarSource, ctx.container.workClassificationRepository,
+    ) {
+        override suspend fun snapshot(day: LocalDate) = block(day)
+    }
+
+    @Test fun morningFallsBackWhenTheSnapshotThrows() {
+        ctx.container.daySnapshots = snapshotProvider { error("boom") }
+        ReminderReceiver().onReceive(ctx, morningIntent(LocalDate.of(2026, 12, 3)))
+        awaitCalls(1)
+        val n = shadowOf(nm).allNotifications.single()
+        assertEquals("Toca para ver tu día.", n.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString())
+    }
+
+    @Test fun morningFallsBackWhenTheSnapshotHangs() {
+        val previous = morningSnapshotTimeoutMs
+        morningSnapshotTimeoutMs = 200
+        try {
+            ctx.container.daySnapshots = snapshotProvider { kotlinx.coroutines.awaitCancellation() }
+            ReminderReceiver().onReceive(ctx, morningIntent(LocalDate.of(2026, 12, 4)))
+            awaitCalls(1)
+            val n = shadowOf(nm).allNotifications.single()
+            assertEquals("Toca para ver tu día.", n.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString())
+        } finally {
+            morningSnapshotTimeoutMs = previous
+        }
+    }
+
+    @Test fun morningActionsCancelTheNotificationWhenOpened() {
+        val day = LocalDate.of(2026, 12, 5)
+        Notifications.show(ctx, planningReminder(ReminderKind.PLAN_MORNING, "morning:20261205", day, "Tu día está listo", "Toca para ver tu día."))
+        val n = shadowOf(nm).allNotifications.single()
+        val action = shadowOf(n.actions[0].actionIntent).savedIntent
+        assertEquals(Notifications.notificationId("morning:20261205"), action.getIntExtra(Notifications.EXTRA_CANCEL_ID, -1))
+        org.robolectric.Robolectric.buildActivity(app.brujula.ui.MainActivity::class.java).create().newIntent(action)
+        assertTrue(shadowOf(nm).allNotifications.isEmpty())
+        assertTrue("el extra se consume", !action.hasExtra(Notifications.EXTRA_CANCEL_ID))
+    }
 }

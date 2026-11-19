@@ -1,6 +1,7 @@
 package app.brujula.planning
 
 import app.brujula.activities.ActivityType
+import app.brujula.routine.BEDTIME_REMIND_BEFORE_MIN
 import app.brujula.routine.Routine
 import app.brujula.routine.logicalDay
 import app.brujula.routine.awakeWindow
@@ -14,7 +15,6 @@ import java.time.temporal.ChronoUnit
 data class BedtimeSuggestion(val bedtime: LocalDateTime, val sleepMinutes: Int, val remindAt: LocalDateTime)
 
 const val SLEEP_TARGET_MIN = 8 * 60
-const val BEDTIME_REMIND_BEFORE_MIN = 30
 /** Margen entre levantarse y lo primero fijo del día siguiente. */
 private const val WAKE_MARGIN_MIN = 30L
 private val EARLIEST_WAKE: LocalTime = LocalTime.of(5, 0)

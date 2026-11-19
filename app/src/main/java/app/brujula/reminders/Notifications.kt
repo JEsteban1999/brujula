@@ -50,6 +50,9 @@ object Notifications {
     const val CHANNEL_ACTIVITIES = "actividades"
     const val CHANNEL_WELLNESS = "pausas"
     const val CHANNEL_PLANNING = "planificacion"
+
+    /** Id de la notificación que un botón (actividad) debe quitar al abrirse: Android no la cierra solo. */
+    const val EXTRA_CANCEL_ID = "app.brujula.cancelId"
     private const val WELLNESS_TIMEOUT_MS = 25 * 60_000L
 
     fun notificationId(key: String): Int = key.hashCode()
@@ -137,8 +140,8 @@ object Notifications {
         when (r.kind) {
             ReminderKind.PLAN_NIGHT -> b.addAction(0, "Mañana lo veo", actionIntent(context, r, NotificationActionReceiver.ACTION_LATER))
             ReminderKind.PLAN_MORNING -> {
-                b.addAction(0, "Ver mi día", activity(context, (r.key + DeepLinks.TODAY).hashCode(), DeepLinks.intent(context, DeepLinks.TODAY)))
-                b.addAction(0, "Ajustar", activity(context, (r.key + DeepLinks.VOICE).hashCode(), DeepLinks.intent(context, DeepLinks.VOICE)))
+                b.addAction(0, "Ver mi día", activity(context, (r.key + DeepLinks.TODAY).hashCode(), DeepLinks.intent(context, DeepLinks.TODAY).putExtra(EXTRA_CANCEL_ID, id)))
+                b.addAction(0, "Ajustar", activity(context, (r.key + DeepLinks.VOICE).hashCode(), DeepLinks.intent(context, DeepLinks.VOICE).putExtra(EXTRA_CANCEL_ID, id)))
             }
             else -> Unit
         }

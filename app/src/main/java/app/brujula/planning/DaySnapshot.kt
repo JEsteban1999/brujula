@@ -49,14 +49,14 @@ data class DaySnapshot(
 )
 
 /** Foto de un día con las mismas reglas que Hoy. Si los calendarios fallan, sigue sin externos. */
-class DaySnapshotProvider(
+open class DaySnapshotProvider(
     private val routineRepository: RoutineRepository,
     private val activityRepository: ActivityRepository,
     private val habitRepository: HabitRepository,
     private val calendarSource: CalendarSource,
     private val classifications: WorkClassificationRepository,
 ) {
-    suspend fun snapshot(day: LocalDate): DaySnapshot {
+    open suspend fun snapshot(day: LocalDate): DaySnapshot {
         val routine = routineRepository.routine.first()
         val activities = activityRepository.observeAll().first()
         val done = activityRepository.observeDoneKeys().first()

@@ -78,6 +78,8 @@ fun NightScreen(
                     fontWeight = FontWeight.Bold, fontSize = 36.sp, lineHeight = 40.sp,
                 )
             }
+            val failed by viewModel.failed.collectAsStateWithLifecycle()
+            if (failed && state == null) ErrorCard(onRetry = { viewModel.retry() })
             state?.let { s ->
                 TodayCard(s.today)
                 TomorrowCard(s.tomorrow)
@@ -173,7 +175,7 @@ private fun BedtimeCard(s: NightUiState, onToggle: (Boolean) -> Unit) {
             Row(
                 Modifier.fillMaxWidth().heightIn(min = 48.dp)
                     .toggleable(value = s.reminderOn, role = Role.Switch, onValueChange = onToggle)
-                    .semantics { contentDescription = "Aviso para dormir" },
+                    .semantics { contentDescription = "Aviso para dormir, ${s.reminderText}" },
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(s.reminderText, Modifier.weight(1f), color = c.text, fontSize = 14.sp)
@@ -186,6 +188,19 @@ private fun BedtimeCard(s: NightUiState, onToggle: (Boolean) -> Unit) {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun ErrorCard(onRetry: () -> Unit) {
+    val c = BrujulaTheme.colors
+    CardBox {
+        Text("No pude cargar tu día.", color = c.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Box(
+            Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(RoundedCornerShape(14.dp)).background(c.accent)
+                .clickable(role = Role.Button, onClick = onRetry),
+            contentAlignment = Alignment.Center,
+        ) { Text("Reintentar", color = c.onAccent, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold) }
     }
 }
 

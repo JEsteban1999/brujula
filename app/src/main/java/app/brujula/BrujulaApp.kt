@@ -25,6 +25,7 @@ import app.brujula.claude.DictationInterpreter
 import app.brujula.claude.DayPlanner
 import app.brujula.claude.PlanContext
 import app.brujula.claude.PlanContextProvider
+import app.brujula.planning.BedtimeSource
 import app.brujula.planning.DaySnapshotProvider
 import app.brujula.planning.ProposalExecutor
 import app.brujula.planning.ProposalLock
@@ -103,8 +104,14 @@ class AppContainer(val context: Context) {
         get() = DictationInterpreter(claudeGateway, { at -> dictationContext(at) }, isOnline = { isOnline(context) })
 
     /** Foto de un día con las mismas reglas que Hoy; usa las dependencias vigentes (calendarios sustituibles). */
-    val daySnapshots: DaySnapshotProvider
-        get() = DaySnapshotProvider(routineRepository, activityRepository, habitRepository, calendarSource, workClassificationRepository)
+    private var daySnapshotsOverride: DaySnapshotProvider? = null
+    var daySnapshots: DaySnapshotProvider
+        get() = daySnapshotsOverride ?: DaySnapshotProvider(routineRepository, activityRepository, habitRepository, calendarSource, workClassificationRepository)
+        set(value) { daySnapshotsOverride = value }
+
+    /** Hora de dormir de esta noche y su interruptor; la leen los avisos, la pantalla de la noche y la confirmación del plan. */
+    val bedtimeSource: BedtimeSource
+        get() = BedtimeSource(clock, routineRepository, daySnapshots)
 
     /** Contexto para planificar un día; usa el reloj y los calendarios vigentes. */
     val planContextProvider: PlanContextProvider
@@ -233,7 +240,18 @@ class AppContainer(val context: Context) {
         ReminderSync(
             clock, routineRepository, activityRepository, habitRepository, reminderScheduler,
             plannedDays = { proposalRepository.acceptedDays() },
-            bedtime = { routineRepository.bedtimeChoice.first() },
+            bedtime = {
+                // Un fallo leyendo la agenda no debe tumbar el resto de los avisos.
+                try {
+                    bedtimeSource.choice()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("AppContainer", "No pude calcular la hora de dormir", e)
+                    null
+                }
+            },
+            cancelPosted = { Notifications.cancel(context.applicationContext, it) },
         )
     }
 

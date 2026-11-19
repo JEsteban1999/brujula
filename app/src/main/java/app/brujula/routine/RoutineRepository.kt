@@ -8,7 +8,6 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import app.brujula.calendar.CalendarPrefs
 import app.brujula.core.theme.ThemeMode
-import app.brujula.planning.BEDTIME_REMIND_BEFORE_MIN
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -17,8 +16,9 @@ import java.time.LocalDateTime
 import java.time.LocalTime
 
 /**
- * Hora de dormir elegida para la noche del día lógico [day] (D12). [bedtime] puede caer después de las 00:00 (otra fecha de
- * calendario, mismo día lógico). [remind]: avisar 30 min antes ([remindAt]); viene encendido por defecto.
+ * Hora de dormir sugerida para la noche del día lógico [day] (D12), calculada en cada resincronización. [bedtime] puede caer
+ * después de las 00:00 (otra fecha de calendario, mismo día lógico). [remind]: la preferencia "Aviso para dormir"; el aviso
+ * sale 30 min antes ([remindAt]).
  */
 data class BedtimeChoice(val day: LocalDate, val bedtime: LocalDateTime, val sleepMinutes: Int, val remind: Boolean) {
     val remindAt: LocalDateTime get() = bedtime.minusMinutes(BEDTIME_REMIND_BEFORE_MIN.toLong())
@@ -41,34 +41,17 @@ class RoutineRepository(private val dataStore: DataStore<Preferences>) {
         val wellnessSeeded = booleanPreferencesKey("wellness_seeded")
         val exerciseMigrated = booleanPreferencesKey("exercise_workdays_migrated")
         val nightNotice = stringPreferencesKey("night_notice")
-        val bedDay = stringPreferencesKey("bedtime_day")
-        val bedAt = stringPreferencesKey("bedtime_at")
-        val bedSleep = intPreferencesKey("bedtime_sleep_min")
         val bedRemind = booleanPreferencesKey("bedtime_remind")
     }
 
     val routine: Flow<Routine> = dataStore.data.map(::read)
 
-    /** Última hora de dormir elegida (o `null` si nunca se abrió "¿Armamos mañana?" o está ilegible). */
-    val bedtimeChoice: Flow<BedtimeChoice?> = dataStore.data.map(::readBedtime)
+    /** Interruptor "Aviso para dormir" (por defecto encendido): una preferencia, no una elección de cada noche. */
+    val bedtimeReminderOn: Flow<Boolean> = dataStore.data.map { it[Keys.bedRemind] ?: true }
 
-    suspend fun setBedtimeChoice(c: BedtimeChoice) {
-        dataStore.edit { p ->
-            p[Keys.bedDay] = c.day.toString()
-            p[Keys.bedAt] = c.bedtime.toString()
-            p[Keys.bedSleep] = c.sleepMinutes
-            p[Keys.bedRemind] = c.remind
-        }
+    suspend fun setBedtimeReminder(on: Boolean) {
+        dataStore.edit { it[Keys.bedRemind] = on }
     }
-
-    private fun readBedtime(p: Preferences): BedtimeChoice? = runCatching {
-        BedtimeChoice(
-            day = LocalDate.parse(p[Keys.bedDay] ?: return null),
-            bedtime = LocalDateTime.parse(p[Keys.bedAt] ?: return null),
-            sleepMinutes = p[Keys.bedSleep] ?: return null,
-            remind = p[Keys.bedRemind] ?: true,
-        )
-    }.getOrNull()
 
     /** Calendarios del telefono elegidos, en el mismo DataStore. */
     val calendarPrefs = CalendarPrefs(dataStore)

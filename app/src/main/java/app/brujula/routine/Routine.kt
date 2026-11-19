@@ -6,6 +6,9 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 
+/** El aviso para dormir sale 30 min antes de la hora de acostarse sugerida. */
+const val BEDTIME_REMIND_BEFORE_MIN = 30
+
 data class Routine(
     val wake: LocalTime = LocalTime.of(8, 15),
     val bed: LocalTime = LocalTime.of(0, 30),

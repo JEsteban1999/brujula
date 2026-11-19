@@ -30,7 +30,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.core.app.NotificationManagerCompat
 import app.brujula.container
+import app.brujula.reminders.Notifications
 import app.brujula.core.theme.BrujulaTheme
 import app.brujula.core.theme.darkFlow
 
@@ -42,6 +44,11 @@ class MainActivity : ComponentActivity() {
     private fun deliverRoute(intent: Intent?) {
         // Reabrir la app desde Recientes reutiliza el intent viejo: su enlace ya se siguió una vez.
         if (intent == null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        // Los botones del resumen de la mañana piden quitar su notificación; se hace aunque la ruta no valga.
+        if (intent.hasExtra(Notifications.EXTRA_CANCEL_ID)) {
+            NotificationManagerCompat.from(this).cancel(intent.getIntExtra(Notifications.EXTRA_CANCEL_ID, 0))
+            intent.removeExtra(Notifications.EXTRA_CANCEL_ID)
+        }
         val route = DeepLinks.parse(intent?.getStringExtra(DeepLinks.EXTRA_ROUTE)) ?: return
         // Se quita el extra: al recrear la actividad (rotación) el mismo enlace no se vuelve a seguir.
         intent?.removeExtra(DeepLinks.EXTRA_ROUTE)

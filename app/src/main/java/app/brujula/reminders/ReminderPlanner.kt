@@ -12,6 +12,7 @@ import app.brujula.habits.HabitSchedule
 import app.brujula.routine.logicalDay
 import app.brujula.habits.timesFor
 import app.brujula.core.time.formatMinutes
+import app.brujula.planning.MORNING_FALLBACK_BODY
 import app.brujula.routine.BedtimeChoice
 import app.brujula.routine.Routine
 import app.brujula.routine.awakeWindow
@@ -26,6 +27,9 @@ object ReminderPlanner {
     private val KEY_MINUTE = DateTimeFormatter.ofPattern("yyyyMMddHHmm")
     private val KEY_DAY = DateTimeFormatter.ofPattern("yyyyMMdd")
     private const val NIGHT_BEFORE_BED_MIN = 30L
+
+    /** Clave del aviso nocturno de [day] (el que pregunta por el día siguiente). */
+    fun nightKey(day: LocalDate): String = "night:${day.format(KEY_DAY)}"
 
     /** Clave del aviso de la ocurrencia de [activityId] en [day] (fecha de la serie). */
     fun activityKey(activityId: Long, day: LocalDate): String = "act:$activityId:${day.format(KEY_DAY)}"
@@ -117,11 +121,13 @@ object ReminderPlanner {
             // Por dia logico: la noche de `day` cae en su fecha de calendario; si la hora de acostarse es mas temprana, se corre.
             if (day.plusDays(1) !in plannedDays) {
                 val window = routine.awakeWindow(day)
+                // Una hora de dormir más temprana (p. ej. una cita temprano mañana) adelanta el aviso para armar el día.
                 var at = day.atTime(routine.nightNotice)
+                if (bedtime != null && bedtime.day == day) at = minOf(at, bedtime.remindAt)
                 if (at !in window) at = window.end.minusMinutes(NIGHT_BEFORE_BED_MIN)
                 if (at > now && at <= limit) {
                     out += Reminder(
-                        key = "night:${day.format(KEY_DAY)}", at = at, kind = ReminderKind.PLAN_NIGHT,
+                        key = nightKey(day), at = at, kind = ReminderKind.PLAN_NIGHT,
                         title = "¿Armamos mañana?", body = "Mira cómo te fue hoy y deja listo tu día de mañana.", day = day,
                     )
                 }
@@ -131,7 +137,7 @@ object ReminderPlanner {
                 if (at > now && at <= limit) {
                     out += Reminder(
                         key = "morning:${day.format(KEY_DAY)}", at = at, kind = ReminderKind.PLAN_MORNING,
-                        title = "Tu día está listo", body = "Toca para ver tu día.", day = day,
+                        title = "Tu día está listo", body = MORNING_FALLBACK_BODY, day = day,
                     )
                 }
             }

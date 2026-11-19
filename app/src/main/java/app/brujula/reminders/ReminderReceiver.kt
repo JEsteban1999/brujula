@@ -7,6 +7,10 @@ import app.brujula.container
 import app.brujula.planning.MORNING_FALLBACK_BODY
 import app.brujula.planning.morningBody
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
+
+/** Tope para armar el resumen de la mañana dentro de goAsync(); las pruebas lo acortan. */
+internal var morningSnapshotTimeoutMs = 5_000L
 
 class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -17,7 +21,9 @@ class ReminderReceiver : BroadcastReceiver() {
             // El resumen se arma al entregarlo con el dia real (D14); si falla, sale con el texto de respaldo.
             launchAsync("ReminderReceiver") {
                 val body = try {
-                    morningBody(app.container.daySnapshots.snapshot(reminder.day))
+                    // goAsync() da unos segundos: sin tope, un calendario lento dejaría el aviso sin salir.
+                    withTimeoutOrNull(morningSnapshotTimeoutMs) { morningBody(app.container.daySnapshots.snapshot(reminder.day)) }
+                        ?: MORNING_FALLBACK_BODY
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {

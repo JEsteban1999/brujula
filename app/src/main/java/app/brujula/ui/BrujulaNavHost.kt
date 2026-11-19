@@ -193,10 +193,9 @@ fun BrujulaNavHost(
                                 clock = container.clock,
                                 wakeFor = { d -> container.routineRepository.routine.first().wakeFor(d) },
                                 bedtimeRemindAt = {
-                                    // El aviso de dormir de la noche anterior al día armado (o de esta noche si se arma hoy).
+                                    // El aviso de esta noche, solo si el plan es de hoy o de mañana (la misma fuente que los avisos).
                                     val today = logicalDay(container.clock.now())
-                                    val night = if (day > today) day.minusDays(1) else day
-                                    container.routineRepository.bedtimeChoice.first()?.takeIf { it.remind && it.day == night }?.remindAt
+                                    if (day == today || day == today.plusDays(1)) container.bedtimeSource.remindAt() else null
                                 },
                                 saved = createSavedStateHandle(),
                             )

@@ -99,12 +99,12 @@ class NightViewModelTest {
         assertEquals(ExerciseState.NONE, s.today.exercise)
     }
 
-    @Test fun firstOpenTurnsReminderOn() = runTest {
+    @Test fun defaultPrefIsOn() = runTest {
         val e = env(thu.atTime(22, 45))
-        assertEquals(null, e.routine.bedtimeChoice.first())
-        e.loaded()
-        assertEquals(BedtimeChoice(thu, fri.atTime(0, 15), 480, remind = true), e.routine.bedtimeChoice.first())
-        assertEquals(1, sync.calls)
+        assertTrue(e.loaded().reminderOn)
+        assertTrue(e.routine.bedtimeReminderOn.first())
+        // Abrir la pantalla no escribe nada ni reprograma: el aviso ya existe por la preferencia.
+        assertEquals(0, sync.calls)
     }
 
     @Test fun toggleOffPersists() = runTest {
@@ -113,18 +113,17 @@ class NightViewModelTest {
         e.loaded()
         e.vm.setReminder(false).join()
         assertFalse(e.vm.state.first()!!.reminderOn)
-        assertEquals(false, routine.bedtimeChoice.first()?.remind)
-        assertEquals(2, sync.calls)
-        // Una pantalla nueva el mismo dia respeta la eleccion y no reprograma otra vez.
+        assertEquals(false, routine.bedtimeReminderOn.first())
+        assertEquals(1, sync.calls)
+        // Una pantalla nueva respeta la preferencia (la misma de Tu rutina) y no reprograma otra vez.
         val again = env(thu.atTime(22, 50), routine).loaded()
         assertFalse(again.reminderOn)
-        assertEquals(2, sync.calls)
-        // Al encenderlo de nuevo tambien se guarda.
+        assertEquals(1, sync.calls)
         val e2 = env(thu.atTime(22, 55), routine)
         e2.loaded()
         e2.vm.setReminder(true).join()
-        assertEquals(true, routine.bedtimeChoice.first()?.remind)
-        assertEquals(3, sync.calls)
+        assertEquals(true, routine.bedtimeReminderOn.first())
+        assertEquals(2, sync.calls)
     }
 
     @Test fun pastReminderHidesToggle() = runTest {
@@ -140,10 +139,9 @@ class NightViewModelTest {
         assertEquals(thu, e.vm.today)
         assertEquals(fri, e.vm.tomorrow)
         assertEquals("12:30 am · Buenas noches", s.timeLabel)
-        // La hora de dormir no se pone en el pasado: 0:15 ya paso, se corre a 0:30 y no hay aviso que encender.
-        assertEquals(fri.atTime(0, 30), s.bedtime.bedtime)
+        // Misma funcion que los avisos (sin "ahora"): 0:15 de la noche del jueves; el aviso de las 23:45 ya paso.
+        assertEquals(fri.atTime(0, 15), s.bedtime.bedtime)
         assertFalse(s.reminderVisible)
-        assertEquals(thu, e.routine.bedtimeChoice.first()?.day)
     }
 
     @Test fun tomorrowWithNothingIsEmpty() = runTest {
@@ -160,5 +158,22 @@ class NightViewModelTest {
         assertEquals("12:05 am", formatClock12(LocalTime.of(0, 5)))
         assertEquals("12:00 pm", formatClock12(LocalTime.NOON))
         assertEquals("10:45 pm", formatClock12(LocalTime.of(22, 45)))
+    }
+
+    @Test fun loadFailureShowsErrorAndRetryRecovers() = runTest {
+        val routine = newRoutine()
+        routine.calendarPrefs.setSelectedCalendarIds(setOf(1L))
+        val real = DaySnapshotProvider(routine, activities, habits, calendar, WorkClassificationRepository(db.workClassificationDao()))
+        var broken = true
+        val flaky = object : DaySnapshotProvider(routine, activities, habits, calendar, WorkClassificationRepository(db.workClassificationDao())) {
+            override suspend fun snapshot(day: LocalDate): DaySnapshot = if (broken) error("agenda ilegible") else real.snapshot(day)
+        }
+        val vm = NightViewModel(FixedClock(thu.atTime(22, 45)), flaky, routine, sync, backgroundScope)
+        vm.failed.first { it }
+        assertEquals(null, vm.state.value)
+        broken = false
+        vm.retry()
+        assertEquals("10:45 pm · Buenas noches", vm.state.filterNotNull().first().timeLabel)
+        assertFalse(vm.failed.value)
     }
 }

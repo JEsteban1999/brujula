@@ -354,4 +354,15 @@ class RoutineViewModelTest {
         assertEquals(LocalTime.of(18, 0), e.repo.routine.first().nightNotice)
         assertEquals(5, e.sync.calls)
     }
+
+    @Test fun bedtimeReminderRowPersistsAndResyncs() = runTest {
+        val e = env()
+        assertEquals(true, e.repo.bedtimeReminderOn.first())
+        e.vm.setBedtimeReminder(false).join()
+        assertEquals(false, e.repo.bedtimeReminderOn.first())
+        assertEquals(1, e.sync.calls)
+        e.vm.setBedtimeReminder(true).join()
+        assertEquals(true, e.repo.bedtimeReminderOn.first())
+        assertEquals(2, e.sync.calls)
+    }
 }

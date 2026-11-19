@@ -1,9 +1,5 @@
 package app.brujula.data
 
-import java.time.LocalDateTime
-import java.time.LocalDate
-import org.junit.Assert.assertNull
-import app.brujula.routine.BedtimeChoice
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import app.brujula.core.theme.ThemeMode
 import app.brujula.routine.Routine
@@ -71,14 +67,13 @@ class RoutineRepositoryTest {
         assertEquals(LocalTime.of(21, 30), r.routine.first().nightNotice)
     }
 
-    @Test fun bedtimeChoiceRoundTrip() = runTest {
-        val r = repo()
-        assertNull(r.bedtimeChoice.first())
-        val c = BedtimeChoice(LocalDate.of(2026, 11, 19), LocalDateTime.of(2026, 11, 20, 0, 15), 480, remind = true)
-        r.setBedtimeChoice(c)
-        assertEquals(c, r.bedtimeChoice.first())
-        assertEquals(LocalDateTime.of(2026, 11, 19, 23, 45), r.bedtimeChoice.first()?.remindAt)
-        r.setBedtimeChoice(c.copy(remind = false))
-        assertEquals(false, r.bedtimeChoice.first()?.remind)
+    @Test fun bedtimeReminderDefaultsOnAndPersists() = runTest {
+        val file = File(tmp.root, "bed.preferences_pb")
+        val r = repo(file)
+        assertEquals(true, r.bedtimeReminderOn.first())
+        r.setBedtimeReminder(false)
+        assertEquals(false, r.bedtimeReminderOn.first())
+        r.setBedtimeReminder(true)
+        assertEquals(true, r.bedtimeReminderOn.first())
     }
 }

@@ -241,4 +241,14 @@ class ReminderPlannerTest {
         // A las 00:05 del viernes el aviso del jueves ya paso.
         assertTrue(planning(thu.plusDays(1).atTime(0, 5), bedtime = bed).none { it.kind == ReminderKind.BEDTIME })
     }
+
+    @Test fun nightNoticeFollowsAnEarlierBedtime() {
+        // Una cita temprano mañana pulla acostarse a las 22:00: el aviso sale 30 min antes (21:30), no a las 22:45.
+        val bed = app.brujula.routine.BedtimeChoice(thu, thu.atTime(22, 0), 480, remind = true)
+        val r = planning(thu.atTime(12, 0), bedtime = bed).single { it.kind == ReminderKind.PLAN_NIGHT }
+        assertEquals(thu.atTime(21, 30), r.at)
+        // Una hora de dormir tardía no atrasa el aviso: manda la hora configurada.
+        val late = app.brujula.routine.BedtimeChoice(thu, thu.plusDays(1).atTime(0, 15), 480, remind = false)
+        assertEquals(thu.atTime(22, 45), planning(thu.atTime(12, 0), bedtime = late).single { it.kind == ReminderKind.PLAN_NIGHT }.at)
+    }
 }

@@ -85,6 +85,15 @@ class RoutineViewModel(
         it.copy(nightNotice = java.time.LocalTime.of(minutes / 60, minutes % 60))
     }
 
+    /** "Aviso para dormir" (por defecto encendido); la pantalla de la noche cambia esta misma preferencia. */
+    val bedtimeReminder: StateFlow<Boolean> =
+        repository.bedtimeReminderOn.stateIn(scope, SharingStarted.WhileSubscribed(5_000), true)
+
+    fun setBedtimeReminder(on: Boolean): Job = scope.launch {
+        repository.setBedtimeReminder(on)
+        runCatching { resync.resync() }
+    }
+
     fun setFlexible(on: Boolean): Job = change { it.copy(flexibleWork = on) }
 
     fun setGoal(range: IntRange): Job? =

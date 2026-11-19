@@ -8,7 +8,6 @@ import app.brujula.core.time.Clock
 import app.brujula.core.time.formatMinutes
 import app.brujula.core.time.formatTime
 import app.brujula.reminders.ReminderResync
-import app.brujula.routine.BedtimeChoice
 import app.brujula.routine.RoutineRepository
 import app.brujula.routine.logicalDay
 import kotlinx.coroutines.CancellationException
@@ -22,7 +21,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
-import java.time.LocalDateTime
 import java.time.LocalTime
 
 /** Una fila de "Mañana ya tienes": [timeLabel] es la hora ("15:00") y [sourceLabel] el origen (Outlook, "lo dictaste", tipo). */
@@ -80,14 +78,30 @@ class NightViewModel(
     val today: LocalDate = logicalDay(clock.now())
     val tomorrow: LocalDate = today.plusDays(1)
 
-    private val loading: Job = scope.launch {
+    private val _failed = MutableStateFlow(false)
+
+    /** Verdadero si no se pudo armar la pantalla (agenda ilegible); la pantalla ofrece reintentar. */
+    val failed: StateFlow<Boolean> = _failed.asStateFlow()
+
+    private var loading: Job = startLoading()
+
+    private fun startLoading(): Job = scope.launch {
+        _failed.value = false
         try {
             load()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.w("NightViewModel", "No se pudo armar la pantalla de la noche", e)
+            _failed.value = true
         }
+    }
+
+    /** Vuelve a armar la pantalla tras un fallo. */
+    fun retry(): Job {
+        if (loading.isActive) return loading
+        loading = startLoading()
+        return loading
     }
 
     private suspend fun load() {
@@ -95,20 +109,14 @@ class NightViewModel(
         val routine = routineRepository.routine.first()
         val todaySnap = snapshots.snapshot(today)
         val tomorrowSnap = snapshots.snapshot(tomorrow)
-        val bedtime = suggestBedtime(today, routine, firstFixedStart(tomorrowSnap), notBefore = now)
-        val stored = routineRepository.bedtimeChoice.first()
-        // Primera vez en este día lógico: el aviso viene encendido (como el boceto). Después manda lo que eligió el usuario.
-        val remind = if (stored?.day == today) stored.remind else true
-        if (stored == null || stored.day != today || stored.bedtime != bedtime.bedtime || stored.sleepMinutes != bedtime.sleepMinutes) {
-            routineRepository.setBedtimeChoice(BedtimeChoice(today, bedtime.bedtime, bedtime.sleepMinutes, remind))
-            runCatching { resync.resync() }
-        }
+        // La misma función que usan los avisos y la confirmación del plan: lo que se ve es lo que va a sonar.
+        val bedtime = bedtimeFor(today, routine, tomorrowSnap)
         _state.value = NightUiState(
-            timeLabel = "${formatClock12(now.toLocalTime())} \u00b7 ${greeting(now.toLocalTime())}",
+            timeLabel = "${formatClock12(now.toLocalTime())} · ${greeting(now.toLocalTime())}",
             today = todaySnap.summary,
             tomorrow = items(tomorrowSnap),
             bedtime = bedtime,
-            reminderOn = remind,
+            reminderOn = routineRepository.bedtimeReminderOn.first(),
             reminderVisible = bedtime.remindAt > now,
         )
     }
@@ -125,15 +133,13 @@ class NightViewModel(
             .map { (start, title, source) -> NightItem(title, formatTime(start.toLocalTime()), source) }
     }
 
-    /** Enciende o apaga el aviso para dormir: se guarda y se reprograman los avisos. */
+    /** Enciende o apaga "Aviso para dormir" (la misma preferencia de Tu rutina): se guarda y se reprograman los avisos. */
     fun setReminder(on: Boolean): Job = scope.launch {
         loading.join()
-        val current = _state.value ?: return@launch
-        _state.value = current.copy(reminderOn = on)
-        val b = current.bedtime
+        _state.value = _state.value?.copy(reminderOn = on)
         // Guardar y reprogramar terminan aunque se cierre la pantalla.
         withContext(NonCancellable) {
-            routineRepository.setBedtimeChoice(BedtimeChoice(today, b.bedtime, b.sleepMinutes, on))
+            routineRepository.setBedtimeReminder(on)
             runCatching { resync.resync() }
         }
     }
