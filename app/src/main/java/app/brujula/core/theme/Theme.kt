@@ -1,6 +1,8 @@
 package app.brujula.core.theme
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Typography
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -41,6 +43,22 @@ fun BrujulaTheme(dark: Boolean, content: @Composable () -> Unit) {
         )
     }
     CompositionLocalProvider(LocalColors provides c, LocalType provides BrujulaType.Default) {
-        MaterialTheme(colorScheme = scheme, content = content)
+        MaterialTheme(colorScheme = scheme, typography = brujulaTypography(BrujulaType.Default), content = content)
     }
+}
+
+/** Material usa DM Sans en todo el texto; los titulos grandes usan Bricolage. */
+private fun brujulaTypography(t: BrujulaType): Typography {
+    val base = Typography()
+    fun TextStyle.body() = copy(fontFamily = t.body)
+    fun TextStyle.display() = copy(fontFamily = t.display)
+    return Typography(
+        displayLarge = base.displayLarge.display(), displayMedium = base.displayMedium.display(),
+        displaySmall = base.displaySmall.display(),
+        headlineLarge = base.headlineLarge.display(), headlineMedium = base.headlineMedium.display(),
+        headlineSmall = base.headlineSmall.display(),
+        titleLarge = base.titleLarge.body(), titleMedium = base.titleMedium.body(), titleSmall = base.titleSmall.body(),
+        bodyLarge = base.bodyLarge.body(), bodyMedium = base.bodyMedium.body(), bodySmall = base.bodySmall.body(),
+        labelLarge = base.labelLarge.body(), labelMedium = base.labelMedium.body(), labelSmall = base.labelSmall.body(),
+    )
 }

@@ -1,37 +1,50 @@
 package app.brujula.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Text
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.sp
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import app.brujula.container
 import app.brujula.core.theme.BrujulaTheme
+import app.brujula.core.theme.resolveDark
+import app.brujula.routine.Routine
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         setContent {
-            BrujulaTheme(dark = isSystemInDarkTheme()) {
-                Box(
-                    modifier = Modifier.fillMaxSize().background(BrujulaTheme.colors.bg),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "Brújula",
-                        color = BrujulaTheme.colors.text,
-                        fontFamily = BrujulaTheme.type.display,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 40.sp,
-                    )
-                }
+            val container = LocalContext.current.container
+            val routine by container.routineRepository.routine.collectAsState(initial = Routine())
+            val dark = resolveDark(routine.themeMode, container.clock.now().toLocalTime(), routine.wake)
+            BrujulaTheme(dark = dark) {
+                AskNotificationsOnFirstOpen()
+                BrujulaNavHost()
             }
+        }
+    }
+
+    /** Pide POST_NOTIFICATIONS solo la primera vez que se abre la app. */
+    @androidx.compose.runtime.Composable
+    private fun AskNotificationsOnFirstOpen() {
+        val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+        LaunchedEffect(Unit) {
+            val prefs = getSharedPreferences("brujula_ui", MODE_PRIVATE)
+            if (prefs.getBoolean("asked_notifications", false)) return@LaunchedEffect
+            prefs.edit().putBoolean("asked_notifications", true).apply()
+            val granted = ContextCompat.checkSelfPermission(
+                this@MainActivity, Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 }

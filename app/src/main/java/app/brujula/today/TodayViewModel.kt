@@ -1,0 +1,175 @@
+package app.brujula.today
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import app.brujula.activities.Activity
+import app.brujula.activities.ActivityRepository
+import app.brujula.activities.Occurrence
+import app.brujula.activities.WorkStatus
+import app.brujula.activities.occurrencesOn
+import app.brujula.activities.workMinutes
+import app.brujula.activities.workStatus
+import app.brujula.core.time.Clock
+import app.brujula.core.time.TimeSpan
+import app.brujula.core.time.formatDayEs
+import app.brujula.habits.HabitIcon
+import app.brujula.habits.HabitRepository
+import app.brujula.reminders.PermissionStatus
+import app.brujula.routine.Routine
+import app.brujula.routine.RoutineRepository
+import app.brujula.routine.awakeWindow
+import app.brujula.routine.logicalDay
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import java.time.LocalDate
+import java.time.LocalDateTime
+
+data class HabitChip(val habitId: Long, val name: String, val icon: HabitIcon, val count: Int, val target: Int)
+
+data class TimelineEntry(val occurrence: Occurrence, val isNow: Boolean)
+
+data class TodayUiState(
+    val dayLabel: String,
+    val workMinutes: Int,
+    val workGoal: IntRange,
+    val workStatus: WorkStatus,
+    val habits: List<HabitChip>,
+    val timeline: List<TimelineEntry>,
+    val freeSlots: List<TimeSpan>,
+    val permissions: PermissionStatus,
+    /** Día lógico mostrado (para prellenar formularios). */
+    val day: LocalDate,
+)
+
+private const val MIN_FREE_SLOT_MIN = 30L
+private const val MAX_VISIBLE_HABITS = 2
+private const val TICK_MS = 30_000L
+
+class TodayViewModel(
+    private val clock: Clock,
+    routineRepository: RoutineRepository,
+    private val activityRepository: ActivityRepository,
+    private val habitRepository: HabitRepository,
+    private val readPermissions: () -> PermissionStatus,
+    scopeOverride: CoroutineScope? = null,
+    private val tickMs: Long = TICK_MS,
+) : ViewModel() {
+    private val scope: CoroutineScope = scopeOverride ?: viewModelScope
+
+    private val permissions = MutableStateFlow(readPermissions())
+
+    private val ticker = flow {
+        while (true) {
+            emit(clock.now())
+            if (tickMs <= 0) awaitCancellation()
+            delay(tickMs)
+        }
+    }
+
+    private val data = combine(
+        routineRepository.routine,
+        activityRepository.observeAll(),
+        activityRepository.observeDoneKeys(),
+    ) { routine, activities, done -> Triple(routine, activities, done) }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val state: StateFlow<TodayUiState> = ticker
+        .flatMapLatest { now ->
+            val day = logicalDay(now)
+            combine(
+                data,
+                habitRepository.observeHabits(),
+                habitRepository.observeCountsFor(day),
+                permissions,
+            ) { (routine, activities, done), habits, counts, perms ->
+                build(now, day, routine, activities, done, habits, counts, perms)
+            }
+        }
+        .stateIn(scope, SharingStarted.Eagerly, initial())
+
+    private fun initial(): TodayUiState {
+        val day = logicalDay(clock.now())
+        val goal = Routine().workGoalMin
+        return TodayUiState(
+            dayLabel = formatDayEs(day), workMinutes = 0, workGoal = goal,
+            workStatus = workStatus(0, goal), habits = emptyList(), timeline = emptyList(),
+            freeSlots = emptyList(), permissions = permissions.value, day = day,
+        )
+    }
+
+    private fun build(
+        now: LocalDateTime,
+        day: LocalDate,
+        routine: Routine,
+        activities: List<Activity>,
+        done: Set<Pair<Long, LocalDate>>,
+        habits: List<app.brujula.habits.Habit>,
+        counts: Map<Long, Int>,
+        perms: PermissionStatus,
+    ): TodayUiState {
+        val window = routine.awakeWindow(day)
+        val today = occurrencesOn(day, activities, done)
+        val timeline = (occurrencesOn(day.minusDays(1), activities, done) + today)
+            .filter { it.span.overlaps(window) }
+            .sortedBy { it.span.start }
+        val minutes = workMinutes(today)
+        return TodayUiState(
+            dayLabel = formatDayEs(day),
+            workMinutes = minutes,
+            workGoal = routine.workGoalMin,
+            workStatus = workStatus(minutes, routine.workGoalMin),
+            habits = habits
+                .filter { it.active && it.dailyTarget > 0 && day.dayOfWeek in it.days }
+                .take(MAX_VISIBLE_HABITS)
+                .map { HabitChip(it.id, it.name, it.icon, counts[it.id] ?: 0, it.dailyTarget) },
+            timeline = timeline.map { TimelineEntry(it, now in it.span) },
+            freeSlots = freeSlots(window, timeline.map { it.span }),
+            permissions = perms,
+            day = day,
+        )
+    }
+
+    fun addHabit(habitId: Long) {
+        scope.launch { habitRepository.logDone(habitId, clock.now()) }
+    }
+
+    fun toggleDone(activityId: Long) {
+        scope.launch {
+            val entry = state.value.timeline.firstOrNull { it.occurrence.activity.id == activityId }
+            val occ = entry?.occurrence
+            val day = occ?.day ?: logicalDay(clock.now())
+            activityRepository.setDone(activityId, day, !(occ?.done ?: false))
+        }
+    }
+
+    fun refreshPermissions() {
+        permissions.value = readPermissions()
+    }
+}
+
+/** Huecos de al menos 30 min dentro de la vigilia que no tocan ninguna actividad. */
+internal fun freeSlots(window: TimeSpan, busy: List<TimeSpan>): List<TimeSpan> {
+    val slots = mutableListOf<TimeSpan>()
+    var cursor = window.start
+    for (b in busy.sortedBy { it.start }) {
+        if (b.start > cursor) addSlot(slots, cursor, minOf(b.start, window.end))
+        if (b.end > cursor) cursor = b.end
+        if (cursor >= window.end) return slots
+    }
+    if (cursor < window.end) addSlot(slots, cursor, window.end)
+    return slots
+}
+
+private fun addSlot(slots: MutableList<TimeSpan>, start: LocalDateTime, end: LocalDateTime) {
+    val span = TimeSpan(start, end)
+    if (span.minutes >= MIN_FREE_SLOT_MIN) slots.add(span)
+}
