@@ -440,7 +440,7 @@ private fun WellnessRowItem(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(
-            Modifier.weight(1f).defaultMinSize(minHeight = 48.dp).alpha(if (h.active) 1f else 0.5f)
+            Modifier.weight(1f).defaultMinSize(minHeight = 48.dp)
                 .combinedClickable(
                     role = Role.Button, onClickLabel = "Editar o eliminar ${h.name}", onClick = { onMenu(h) },
                     onLongClickLabel = "Editar o eliminar ${h.name}", onLongClick = { onMenu(h) },
@@ -448,9 +448,9 @@ private fun WellnessRowItem(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Icon(h.icon.vector(), contentDescription = null, tint = c.accentText, modifier = Modifier.size(22.dp))
+            Icon(h.icon.vector(), contentDescription = null, tint = if (h.active) c.accentText else c.textMuted, modifier = Modifier.size(22.dp))
             Column(Modifier.weight(1f)) {
-                Text(h.name, color = c.text, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(h.name, color = if (h.active) c.text else c.textMuted, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 Text(row.summary, color = c.textMuted, fontSize = 12.sp, lineHeight = 16.sp)
             }
             Text(

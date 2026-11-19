@@ -26,6 +26,7 @@ import app.brujula.habits.HabitFormScreen
 import app.brujula.habits.HabitGroup
 import app.brujula.habits.HabitFormViewModel
 import app.brujula.habits.HabitsScreen
+import app.brujula.habits.parseHabitGroup
 import app.brujula.habits.HabitsViewModel
 import app.brujula.reminders.readPermissionStatus
 import app.brujula.settings.RoutineScreen
@@ -170,15 +171,20 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
             }
             composable(
                 Routes.HABIT_FORM,
-                arguments = listOf(navArgument("id") { type = NavType.LongType; defaultValue = -1L }),
+                arguments = listOf(
+                    navArgument("id") { type = NavType.LongType; defaultValue = -1L },
+                    navArgument("group") { type = NavType.StringType; defaultValue = HabitGroup.ESSENTIAL.name },
+                ),
             ) { entry ->
                 val container = LocalContext.current.container
                 val id = entry.arguments?.getLong("id")?.takeIf { it >= 0 }
+                val group = parseHabitGroup(entry.arguments?.getString("group"))
                 val vm: HabitFormViewModel = viewModel(
                     factory = viewModelFactory {
                         initializer {
                             HabitFormViewModel(
                                 habitId = id,
+                                group = group,
                                 habitRepository = container.habitRepository,
                                 resync = container.reminderSync,
                                 routineProvider = { container.routineRepository.routine.first() },

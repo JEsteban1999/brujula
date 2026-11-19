@@ -32,3 +32,6 @@ data class Habit(
     val group: HabitGroup = HabitGroup.ESSENTIAL,
     val window: HabitWindow = HabitWindow.AWAKE,
 )
+
+/** Grupo desde el argumento de ruta; cualquier valor ausente o desconocido es ESSENTIAL. */
+fun parseHabitGroup(raw: String?): HabitGroup = HabitGroup.entries.firstOrNull { it.name == raw } ?: HabitGroup.ESSENTIAL
