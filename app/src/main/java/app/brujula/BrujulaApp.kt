@@ -4,6 +4,8 @@ import android.app.Application
 import android.content.Context
 import androidx.datastore.preferences.preferencesDataStore
 import app.brujula.activities.ActivityRepository
+import app.brujula.calendar.CalendarSource
+import app.brujula.calendar.DeviceCalendarSource
 import app.brujula.core.time.Clock
 import app.brujula.core.time.SystemClock
 import app.brujula.reminders.AlarmReminderScheduler
@@ -33,6 +35,9 @@ class AppContainer(val context: Context) {
     val activityRepository: ActivityRepository by lazy { ActivityRepository(database.activityDao()) }
     val habitRepository: HabitRepository by lazy { HabitRepository(database.habitDao()) }
     val routineRepository: RoutineRepository by lazy { RoutineRepository(context.applicationContext.routineDataStore) }
+
+    /** Calendarios del telefono (solo lectura); las pruebas lo sustituyen por uno falso. */
+    var calendarSource: CalendarSource = DeviceCalendarSource(context.applicationContext)
 
     /** Reloj de los receptores; las pruebas lo sustituyen. */
     var clock: Clock = SystemClock
