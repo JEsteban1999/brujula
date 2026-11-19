@@ -11,6 +11,7 @@ import app.brujula.habits.HabitIcon
 import app.brujula.habits.HabitSchedule
 import app.brujula.habits.HabitWindow
 import app.brujula.habits.MAX_BEFORE_BED_MIN
+import app.brujula.habits.MAX_DAILY_TARGET
 import app.brujula.habits.MAX_INTERVAL_MIN
 import app.brujula.habits.MIN_BEFORE_BED_MIN
 import app.brujula.habits.MIN_INTERVAL_MIN
@@ -97,6 +98,7 @@ object ActionValidator {
                 if (raw.isEmpty()) return Validated.Invalid("$label: faltan las horas del hábito.")
                 val times = raw.map { parseTime(it) ?: return Validated.Invalid("$label: la hora $it no es válida.") }
                     .distinct().sorted()
+                if (times.size > MAX_DAILY_TARGET) return Validated.Invalid("$label: son más de $MAX_DAILY_TARGET horas al día.")
                 Triple(HabitSchedule.AtTimes(times), times.size, if (workOnly) HabitWindow.WORK else HabitWindow.AWAKE)
             }
             "BEFORE_BED" -> {
@@ -109,8 +111,10 @@ object ActionValidator {
             }
             else -> return Validated.Invalid("$label: modo de hábito desconocido (${a.habitMode}).")
         }
+        // Solo en horario de trabajo = pausa de bienestar (grupo WELLNESS); el resto, esencial.
+        val group = if (window == HabitWindow.WORK) HabitGroup.WELLNESS else HabitGroup.ESSENTIAL
         return Validated.Habit(
-            Habit(name = name, icon = iconFor(name), schedule = schedule, dailyTarget = target, group = HabitGroup.ESSENTIAL, window = window),
+            Habit(name = name, icon = iconFor(name), schedule = schedule, dailyTarget = target, group = group, window = window),
         )
     }
 

@@ -47,9 +47,15 @@ class DictationInterpreterTest {
         assertEquals(InterpretOutcome.NoKey, interpreter.interpret("algo"))
     }
 
-    @Test fun invalidKeyMapsToNoKey() = runTest {
+    @Test fun invalidKeyMapsToInvalidKey() = runTest {
         gateway.dictation = GatewayResult.InvalidKey
-        assertEquals(InterpretOutcome.NoKey, interpreter.interpret("algo"))
+        assertEquals(InterpretOutcome.InvalidKey, interpreter.interpret("algo"))
+        assertEquals("Tu clave de Claude no funciona. Revísala en Tu rutina.", DictationInterpreter.INVALID_KEY)
+    }
+
+    @Test fun timeoutIsRetryableAndNotOffline() = runTest {
+        gateway.dictation = GatewayResult.Timeout
+        assertEquals(InterpretOutcome.Failed("Claude tardó demasiado. Inténtalo de nuevo.", retryable = true), interpreter.interpret("algo"))
     }
 
     @Test fun connectionFailureIsRetryable() = runTest {

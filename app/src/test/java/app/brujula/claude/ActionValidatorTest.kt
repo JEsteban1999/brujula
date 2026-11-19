@@ -2,6 +2,7 @@ package app.brujula.claude
 
 import app.brujula.activities.ActivityType
 import app.brujula.activities.Repeat
+import app.brujula.habits.HabitGroup
 import app.brujula.habits.HabitIcon
 import app.brujula.habits.HabitSchedule
 import app.brujula.habits.HabitWindow
@@ -138,6 +139,21 @@ class ActionValidatorTest {
     @Test fun workOnlyHabitUsesWorkWindow() {
         val h = (ActionValidator.validate(habit("EVERY", intervalMin = 45, workOnly = true, title = "Estirar"), ctx) as Validated.Habit).habit
         assertEquals(HabitWindow.WORK, h.window)
+        assertEquals(HabitGroup.WELLNESS, h.group)
+    }
+
+    @Test fun nonWorkHabitIsEssential() {
+        val h = (ActionValidator.validate(habit("EVERY", intervalMin = 45, workOnly = false, title = "Estirar"), ctx) as Validated.Habit).habit
+        assertEquals(HabitWindow.AWAKE, h.window)
+        assertEquals(HabitGroup.ESSENTIAL, h.group)
+        val bed = (ActionValidator.validate(habit("BEFORE_BED", beforeBedMin = 30, workOnly = true, title = "Leer"), ctx) as Validated.Habit).habit
+        assertEquals(HabitGroup.ESSENTIAL, bed.group)
+    }
+
+    @Test fun moreFixedTimesThanTheDailyMaximumIsInvalid() {
+        val hundred = (0 until 100).map { "%02d:%02d".format(it / 60, it % 60) }
+        assertInvalid(habit("AT_TIMES", times = hundred))
+        assertTrue(ActionValidator.validate(habit("AT_TIMES", times = hundred.take(99)), ctx) is Validated.Habit)
     }
 
     @Test fun beforeBedOutOfRangeIsInvalid() = assertInvalid(habit("BEFORE_BED", beforeBedMin = 5))

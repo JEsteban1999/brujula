@@ -1,7 +1,9 @@
 package app.brujula.claude
 
+import android.util.Log
 import com.anthropic.client.AnthropicClient
 import com.anthropic.client.okhttp.AnthropicOkHttpClient
+import com.anthropic.core.RequestOptions
 import com.anthropic.errors.AnthropicIoException
 import com.anthropic.errors.AnthropicRetryableException
 import com.anthropic.errors.AnthropicServiceException
@@ -23,6 +25,7 @@ import com.anthropic.models.beta.messages.MessageCreateParams as BetaMessageCrea
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.InterruptedIOException
 import java.security.MessageDigest
 import java.time.Duration
 
@@ -58,7 +61,8 @@ class AnthropicClaudeGateway(private val keyStore: ClaudeKeyStore) : ClaudeGatew
                 dropClient()
                 return@withContext GatewayResult.NoKey
             }
-            DictationCall.read(clientFor(key).beta().messages().create(DictationCall.params(system, user)))
+            // Tiempo propio del dictado (el cliente queda en 30 s para testKey).
+            DictationCall.read(clientFor(key).beta().messages().create(DictationCall.params(system, user), DictationCall.requestOptions()))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -125,10 +129,20 @@ internal object DictationCall {
             )
             .build()
 
+    /** Opus 5.5 siempre piensa y un respaldo puede correr dos modelos en la misma llamada: más que los 30 s del cliente. */
+    val TIMEOUT: Duration = Duration.ofSeconds(60)
+
+    fun requestOptions(): RequestOptions = RequestOptions.builder().timeout(TIMEOUT).build()
+
+    /** Aviso en logcat: solo la clase de la excepción y el código HTTP; nunca mensaje, cuerpo, cabeceras ni clave. */
+    @Volatile var warn: (String) -> Unit = { Log.w("ClaudeGateway", it) }
+
     /** Revisa stopReason antes de leer el contenido. */
     fun read(response: StructuredMessage<DictationResult>): GatewayResult<DictationResult> {
         val stop = response.stopReason().orElse(null)
         if (stop == BetaStopReason.REFUSAL) return GatewayResult.Refused
+        // Truncada por max_tokens: puede salir bien al repetir.
+        if (stop == BetaStopReason.MAX_TOKENS) return GatewayResult.Error(retryable = true)
         if (stop != BetaStopReason.END_TURN) return GatewayResult.Error(retryable = false)
         return try {
             // Tras un respaldo puede haber texto parcial del primer modelo antes del bloque fallback: vale el último texto.
@@ -136,17 +150,25 @@ internal object DictationCall {
             GatewayResult.Ok(block.asText().text())
         } catch (e: RuntimeException) {
             // JSON que no encaja en DictationResult (AnthropicInvalidDataException) u otra respuesta ilegible.
+            warn("Respuesta de dictado ilegible: ${e.javaClass.simpleName}")
             GatewayResult.Error(retryable = false)
         }
     }
 
     /** Clasifica por tipo de excepción, nunca por el texto del mensaje. */
-    fun failureOf(e: Exception): GatewayResult<Nothing> = when (e) {
-        is UnauthorizedException, is PermissionDeniedException -> GatewayResult.InvalidKey
-        is AnthropicIoException -> GatewayResult.Network
-        is RateLimitException, is InternalServerException, is RequestTimeoutException, is AnthropicRetryableException ->
-            GatewayResult.Error(retryable = true)
-        is AnthropicServiceException -> GatewayResult.Error(retryable = e.statusCode() >= 500)
-        else -> GatewayResult.Error(retryable = false)
+    fun failureOf(e: Exception): GatewayResult<Nothing> {
+        val status = (e as? AnthropicServiceException)?.statusCode()
+        warn("Dictado falló: ${e.javaClass.simpleName}" + (status?.let { " (HTTP $it)" } ?: ""))
+        return when (e) {
+            is UnauthorizedException, is PermissionDeniedException -> GatewayResult.InvalidKey
+            // OkHttp señala el tiempo agotado con InterruptedIOException (SocketTimeoutException es una subclase).
+            is AnthropicIoException -> if (e.causes().any { it is InterruptedIOException }) GatewayResult.Timeout else GatewayResult.Network
+            is RateLimitException, is InternalServerException, is RequestTimeoutException, is AnthropicRetryableException ->
+                GatewayResult.Error(retryable = true)
+            is AnthropicServiceException -> GatewayResult.Error(retryable = e.statusCode() >= 500)
+            else -> GatewayResult.Error(retryable = false)
+        }
     }
+
+    private fun Throwable.causes(): Sequence<Throwable> = generateSequence(cause) { it.cause?.takeIf { c -> c !== it } }
 }

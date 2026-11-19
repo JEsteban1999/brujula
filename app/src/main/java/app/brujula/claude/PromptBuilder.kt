@@ -15,8 +15,18 @@ import java.util.Locale
 object PromptBuilder {
     private val ES = Locale.forLanguageTag("es")
     private const val UPCOMING_DAYS = 7
-    /** El dictado no puede abrir ni cerrar su propia etiqueta. */
-    private val TAG = Regex("""</?\s*dictado\s*>""", RegexOption.IGNORE_CASE)
+    /** Cualquier variante de la etiqueta del dictado (mayúsculas, espacios, atributos): nadie puede abrirla ni cerrarla. */
+    private val TAG = Regex("""<\s*/?\s*dictado[^>]*>""", RegexOption.IGNORE_CASE)
+    private val CONTROL = Regex("""[\p{Cc}\p{Zl}\p{Zp}]+""")
+    private val SPACES = Regex(""" {2,}""")
+    private const val MAX_FOREIGN_TEXT = 120
+
+    /**
+     * Texto que no dictó el usuario (títulos de eventos, que pueden venir de calendarios compartidos, y nombres de hábitos):
+     * sin etiquetas del dictado, en una sola línea y con un tope de largo.
+     */
+    internal fun sanitize(s: String): String =
+        s.replace(TAG, "").replace(CONTROL, " ").replace(SPACES, " ").trim().take(MAX_FOREIGN_TEXT)
 
     private val SYSTEM = """
 Eres el asistente de agenda de Brújula, una app personal de Android. El usuario vive en Colombia y te dicta, en español colombiano, cosas que quiere agendar. Conviertes cada dictado en acciones estructuradas: la app las valida, las guarda y le muestra tu respuesta. Tú no guardas nada.
@@ -90,7 +100,7 @@ En español colombiano neutro, tuteando, en una o dos frases, sin emojis ni form
             appendLine()
             appendBusy("OCUPADO MAÑANA (${shortDay(tomorrow)})", tomorrow, ctx.busyTomorrow)
             appendLine()
-            appendLine("HÁBITOS QUE YA EXISTEN: " + (ctx.habitNames.joinToString(", ").ifEmpty { "(ninguno)" }))
+            appendLine("HÁBITOS QUE YA EXISTEN: " + (ctx.habitNames.map(::sanitize).filter { it.isNotEmpty() }.joinToString(", ").ifEmpty { "(ninguno)" }))
             appendLine()
             appendLine("<dictado>")
             appendLine(clean)
@@ -106,7 +116,7 @@ En español colombiano neutro, tuteando, en una o dos frases, sin emojis ni form
         }
         items.sortedBy { it.start }.forEach { b ->
             val source = if (b.external) " (calendario externo)" else ""
-            appendLine("- ${at(b.start, day)}–${at(b.end, day)} ${b.title}$source")
+            appendLine("- ${at(b.start, day)}–${at(b.end, day)} ${sanitize(b.title).ifEmpty { "(Sin título)" }}$source")
         }
     }
 

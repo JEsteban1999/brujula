@@ -10,9 +10,11 @@ sealed interface GatewayResult<out T> {
     data object NoKey : GatewayResult<Nothing>
     /** 401/403: la clave guardada no sirve. */
     data object InvalidKey : GatewayResult<Nothing>
-    /** Sin conexión, DNS o tiempo agotado. */
+    /** Sin conexión o sin DNS. */
     data object Network : GatewayResult<Nothing>
-    /** 429/5xx son reintentables; 400, respuesta ilegible o truncada no. */
+    /** Claude no respondió a tiempo (la conexión sí funcionaba). */
+    data object Timeout : GatewayResult<Nothing>
+    /** 429/5xx y respuesta truncada son reintentables; 400 o respuesta ilegible no. */
     data class Error(val retryable: Boolean) : GatewayResult<Nothing>
 }
 

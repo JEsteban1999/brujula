@@ -14,13 +14,26 @@ import com.anthropic.models.beta.AnthropicBeta
 import com.anthropic.models.beta.messages.BetaMessage
 import com.anthropic.models.beta.messages.BetaOutputConfig
 import com.anthropic.models.beta.messages.StructuredMessage
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
+import java.io.InterruptedIOException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import java.time.Duration
 
 /** La petición y la lectura de la respuesta, sin red ni clave real. */
 class DictationCallTest {
+    private val logged = mutableListOf<String>()
+    private val originalWarn = DictationCall.warn
+
+    @Before fun captureLog() { DictationCall.warn = { logged += it } }
+
+    @After fun restoreLog() { DictationCall.warn = originalWarn }
+
     @Test fun structuredParamsBuildWithDerivedSchema() {
         // Si la derivación del schema desde DictationResult fallara, build() lanzaría aquí.
         val p = DictationCall.params("SISTEMA", "USUARIO")
@@ -77,16 +90,23 @@ class DictationCallTest {
         assertEquals(GatewayResult.Refused, DictationCall.read(message("refusal", "[]")))
     }
 
-    @Test fun truncatedOutputIsANonRetryableError() {
-        assertEquals(GatewayResult.Error(retryable = false), DictationCall.read(message("max_tokens", textBlock("{\"actions\":["))))
+    @Test fun truncatedOutputIsARetryableError() {
+        assertEquals(GatewayResult.Error(retryable = true), DictationCall.read(message("max_tokens", textBlock("{\"actions\":["))))
     }
 
-    @Test fun unparseableTextIsANonRetryableError() {
-        assertEquals(GatewayResult.Error(retryable = false), DictationCall.read(message("end_turn", textBlock("no es json"))))
+    @Test fun unparseableTextIsANonRetryableErrorAndLogsOnlyTheClass() {
+        assertEquals(GatewayResult.Error(retryable = false), DictationCall.read(message("end_turn", textBlock("no es json secreto"))))
+        val line = logged.single()
+        assertTrue(line, line.contains("Exception"))
+        assertFalse("Nunca el contenido", line.contains("secreto") || line.contains("no es json"))
     }
 
     @Test fun endTurnWithoutTextIsANonRetryableError() {
         assertEquals(GatewayResult.Error(retryable = false), DictationCall.read(message("end_turn", "[]")))
+    }
+
+    @Test fun dictationHasItsOwn60sTimeout() {
+        assertEquals(Duration.ofSeconds(60), DictationCall.requestOptions().timeout().get().request())
     }
 
     private val headers = Headers.builder().build()
@@ -94,6 +114,7 @@ class DictationCallTest {
 
     @Test fun exceptionsAreMappedByType() {
         assertEquals(GatewayResult.Network, DictationCall.failureOf(AnthropicIoException("sin red")))
+        assertEquals(GatewayResult.Network, DictationCall.failureOf(AnthropicIoException("sin red", UnknownHostException("api.anthropic.com"))))
         assertEquals(GatewayResult.InvalidKey, DictationCall.failureOf(UnauthorizedException.builder().headers(headers).body(body).build()))
         assertEquals(GatewayResult.InvalidKey, DictationCall.failureOf(PermissionDeniedException.builder().headers(headers).body(body).build()))
         assertEquals(GatewayResult.Error(retryable = true), DictationCall.failureOf(RateLimitException.builder().headers(headers).body(body).build()))
@@ -101,5 +122,17 @@ class DictationCallTest {
         assertEquals(GatewayResult.Error(retryable = true), DictationCall.failureOf(OverloadedException.builder().statusCode(529).headers(headers).body(body).build()))
         assertEquals(GatewayResult.Error(retryable = false), DictationCall.failureOf(BadRequestException.builder().headers(headers).body(body).build()))
         assertEquals(GatewayResult.Error(retryable = false), DictationCall.failureOf(IllegalStateException("x")))
+    }
+
+    @Test fun timeoutIsNotOffline() {
+        // Así lo envuelve el cliente OkHttp del SDK: AnthropicIoException con la IOException original como causa.
+        assertEquals(GatewayResult.Timeout, DictationCall.failureOf(AnthropicIoException("timeout", SocketTimeoutException("timeout"))))
+        assertEquals(GatewayResult.Timeout, DictationCall.failureOf(AnthropicIoException("timeout", InterruptedIOException("timeout"))))
+    }
+
+    @Test fun failureLogHasClassAndStatusOnly() {
+        DictationCall.failureOf(RateLimitException.builder().headers(headers).body(JsonValue.from(mapOf("error" to "sk-ant-secreto"))).build())
+        DictationCall.failureOf(AnthropicIoException("mensaje privado"))
+        assertEquals(listOf("Dictado falló: RateLimitException (HTTP 429)", "Dictado falló: AnthropicIoException"), logged)
     }
 }
