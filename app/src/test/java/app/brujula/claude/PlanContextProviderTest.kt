@@ -174,6 +174,35 @@ class PlanContextProviderTest {
         assertTrue("Mañana todo lo no hecho se puede mover", ctx.items.single { it.title == "Tarde" }.movable)
     }
 
+    @Test fun itemStartingExactlyNowIsMovable() = runTest {
+        add("Llamar al banco", thu, LocalTime.of(15, 0))
+        val ctx = provider(thu.atTime(15, 0)).forDay(thu)
+        assertTrue("start >= now", ctx.items.single().movable)
+    }
+
+    @Test fun planningTodayAt0030OfTheNextCalendarDay() = runTest {
+        add("Cena", thu, LocalTime.of(22, 0))
+        add("Madrugada", fri, LocalTime.of(2, 0), min = 30)
+
+        val ctx = provider(fri.atTime(0, 30)).forDay(thu)
+        val byTitle = ctx.items.associateBy { it.title }
+
+        assertEquals(thu, ctx.logicalToday)
+        assertFalse("22:00 ya pasó", byTitle.getValue("Cena").movable)
+        assertTrue("02:00 del viernes es del día lógico jueves y aún no empieza", byTitle.getValue("Madrugada").movable)
+        assertEquals(fri, byTitle.getValue("Madrugada").occurrenceDay)
+    }
+
+    @Test fun nextDayFirstStartIgnoresSpillFromTheDayBeingPlanned() = runTest {
+        add("Turno", thu, LocalTime.of(23, 0), min = 600) // del jueves, cruza la vigilia del viernes
+        add("Reunión con Ana", fri, LocalTime.of(10, 0))
+        calendar.eventList = listOf(ext(1, "Vuelo nocturno", thu.atTime(23, 30), fri.atTime(9, 0)))
+
+        val ctx = provider(wed.atTime(21, 0)).forDay(thu)
+
+        assertEquals(fri.atTime(10, 0), ctx.nextDayFirstStart)
+    }
+
     @Test fun at0030ThursdayTodayIsWednesday() = runTest {
         val ctx = provider(thu.atTime(0, 30)).forDay(thu)
         assertEquals(wed, ctx.logicalToday)

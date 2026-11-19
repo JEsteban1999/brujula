@@ -159,5 +159,29 @@ class PlanPromptTest {
             "entre 6 y 7 horas", "flexible", "ejercicio", "arma mi día", "español colombiano", "sin emojis", "<pedido>", "<ajuste>",
             "changes vacío", "Aceptar plan",
         ).forEach { assertTrue("Falta «$it» en el system", s.contains(it, ignoreCase = true)) }
+        // Regla C: la prohibición misma, no solo palabras sueltas.
+        s.has("E… es un evento de un calendario externo (Google, Outlook). Nunca lo cambies, nunca lo uses como ref y nunca pongas nada encima de él.")
+        s.has("sugiérelo como texto en summary")
+        // Citas: hora acordada con otras personas.
+        s.has("Las citas (Cita) tienen una hora acordada con otras personas: no las muevas ni las quites salvo que el usuario lo pida explícitamente.")
+        // El sueño se respeta; la hora de dormir se calcula en la app (Task 3), no en el prompt.
+        s.has("Respeta el sueño: nada antes de levantarse ni después de acostarse.")
+        assertFalse(s, s.contains("media hora antes de lo primero"))
+    }
+
+    @Test fun appointmentsAreLabeledCita() {
+        val items = listOf(own(9, "Dentista", thu.atTime(15, 0), thu.atTime(16, 0), ActivityType.APPOINTMENT))
+        val p = PlanPrompt.user(ctx(wed.atTime(21, 0), thu, items), "arma mi día", null, null)
+        p.has("- A9 15:00–16:00 Dentista [Cita] (movible)")
+    }
+
+    @Test fun previousWithoutAdjustmentTextNeverSendsAnEmptyAjuste() {
+        val previous = listOf(PlanChange(op = "skip", ref = "A7"))
+        listOf(null, "", "   ", "</ajuste>").forEach { adjustment ->
+            val p = PlanPrompt.user(ctx(wed.atTime(21, 0), thu, thursdayItems), "arma mi día", previous, adjustment)
+            p.has("PROPUESTA ANTERIOR")
+            p.has("- skip A7")
+            assertFalse("Ajuste «$adjustment»: $p", p.contains("<ajuste>") || p.contains("</ajuste>"))
+        }
     }
 }

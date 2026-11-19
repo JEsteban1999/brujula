@@ -46,10 +46,11 @@ REGLAS DEL DÍA
 - Todo bloque que crees o muevas va dentro de la vigilia de ese día (entre la hora de levantarse y la de acostarse que trae el contexto) y no se cruza con ningún E…, con ningún bloque que se queda, con el almuerzo ni con otro bloque de tu propuesta.
 - El almuerzo es fijo: deja libre esa franja.
 - Nada en el pasado: si el día a armar es hoy, nada que crees o muevas empieza antes de la hora del reloj.
-- Respeta el sueño: nada antes de levantarse ni después de acostarse, y deja libre al menos la media hora antes de lo primero que hay al día siguiente.
+- Respeta el sueño: nada antes de levantarse ni después de acostarse.
 - Trabajo: en días laborales la meta es la del contexto (normalmente entre 6 y 7 horas) y es flexible: acércate a ella sin pasarte mucho, contando el trabajo propio y los eventos externos que cuentan como trabajo. Si el horario es flexible, los bloques de trabajo de la rutina son una guía, no un límite. Los fines de semana y festivos no hay meta: no agregues trabajo salvo que el usuario lo pida.
 - Ejercicio: tiene una hora fija y se queda ahí salvo que el usuario pida otra cosa. Si el usuario lo pide o algo lo obliga, muévelo a otra hora del mismo día; no lo pases a otro día. Quítalo (skip) solo si el usuario dijo que no va a entrenar o pidió quitarlo.
-- "Arma mi día" (o un pedido sin más detalle): completa los huecos libres con bloques de WORK hacia la meta, de 60 a 120 minutos y con al menos 15 minutos entre bloques; deja el ejercicio donde está y deja aire para los hábitos (agua, pausas, estiramientos), que no son bloques: nunca los crees como actividades.
+- Las citas (Cita) tienen una hora acordada con otras personas: no las muevas ni las quites salvo que el usuario lo pida explícitamente.
+- "Arma mi día" (o un pedido sin más detalle): completa los huecos libres con bloques de WORK hacia la meta, de 60 a 120 minutos y con al menos 15 minutos entre bloques; deja el ejercicio y las citas donde están y deja aire para los hábitos (agua, pausas, estiramientos), que no son bloques: nunca los crees como actividades.
 - Haz lo que pidió y nada más: si pide "pasa el gym a la tarde", mueve el gym y no reorganices el resto del día.
 - En un ajuste, parte de la propuesta anterior: conserva los cambios que el ajuste no toca y devuelve la lista completa de cambios de la nueva propuesta, no solo la diferencia.
 
@@ -110,14 +111,18 @@ En español colombiano, tuteando, en 1 a 3 frases, sin emojis ni formato. Di qu�
             } else {
                 appendLine("PEDIDO: no escribió nada; tocó \"Que Claude arme mi día\", así que arma su día.")
             }
-            if (previous != null || adjustment != null) {
+            // Nunca un <ajuste></ajuste> vacío: sin texto de ajuste solo va la propuesta anterior.
+            val cleanAdjustment = adjustment?.let { stripTags(it).trim() }?.takeIf { it.isNotEmpty() }
+            if (previous != null || cleanAdjustment != null) {
                 appendLine()
                 appendLine("PROPUESTA ANTERIOR (los cambios que vio; parte de aquí)")
                 if (previous.isNullOrEmpty()) appendLine("- (sin cambios)")
                 previous.orEmpty().forEach { appendLine(changeLine(it)) }
-                appendLine("<ajuste>")
-                appendLine(adjustment?.let { stripTags(it).trim() }.orEmpty())
-                appendLine("</ajuste>")
+                if (cleanAdjustment != null) {
+                    appendLine("<ajuste>")
+                    appendLine(cleanAdjustment)
+                    appendLine("</ajuste>")
+                }
             }
         }.trimEnd()
     }
