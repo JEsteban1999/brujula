@@ -15,8 +15,11 @@ import java.util.Locale
 object PromptBuilder {
     private val ES = Locale.forLanguageTag("es")
     private const val UPCOMING_DAYS = 7
-    /** Cualquier variante de la etiqueta del dictado (mayúsculas, espacios, atributos): nadie puede abrirla ni cerrarla. */
-    private val TAG = Regex("""<\s*/?\s*dictado[^>]*>""", RegexOption.IGNORE_CASE)
+    /**
+     * Cualquier variante de las etiquetas de texto del usuario (dictado, y pedido/ajuste al planificar; mayúsculas, espacios,
+     * atributos): nadie puede abrirlas ni cerrarlas desde un texto.
+     */
+    private val TAG = Regex("""<\s*/?\s*(?:dictado|pedido|ajuste)[^>]*>""", RegexOption.IGNORE_CASE)
     private val CONTROL = Regex("""[\p{Cc}\p{Zl}\p{Zp}]+""")
     private val SPACES = Regex(""" {2,}""")
     private const val MAX_FOREIGN_TEXT = 120
@@ -26,7 +29,10 @@ object PromptBuilder {
      * sin etiquetas del dictado, en una sola línea y con un tope de largo.
      */
     internal fun sanitize(s: String): String =
-        s.replace(TAG, "").replace(CONTROL, " ").replace(SPACES, " ").trim().take(MAX_FOREIGN_TEXT)
+        stripTags(s).replace(CONTROL, " ").replace(SPACES, " ").trim().take(MAX_FOREIGN_TEXT)
+
+    /** Quita las etiquetas de texto del usuario sin tocar el resto (para el propio texto dictado, pedido o ajuste). */
+    internal fun stripTags(s: String): String = s.replace(TAG, "")
 
     private val SYSTEM = """
 Eres el asistente de agenda de Brújula, una app personal de Android. El usuario vive en Colombia y te dicta, en español colombiano, cosas que quiere agendar. Conviertes cada dictado en acciones estructuradas: la app las valida, las guarda y le muestra tu respuesta. Tú no guardas nada.
@@ -81,7 +87,7 @@ En español colombiano neutro, tuteando, en una o dos frases, sin emojis ni form
         val today = ctx.logicalToday
         val tomorrow = today.plusDays(1)
         val r = ctx.routine
-        val clean = text.replace(TAG, "").trim()
+        val clean = stripTags(text).trim()
         return buildString {
             appendLine("CONTEXTO (datos de la app)")
             appendLine("- Reloj: ${longDay(ctx.now.toLocalDate())}, ${hm(ctx.now.toLocalTime())} (zona ${ctx.zone.id}).")
@@ -127,21 +133,21 @@ En español colombiano neutro, tuteando, en una o dos frases, sin emojis ni form
     }
 
     /** "09:00", o "01:00 del jueves 19" si cae en otra fecha de calendario. */
-    private fun at(t: LocalDateTime, day: LocalDate): String =
+    internal fun at(t: LocalDateTime, day: LocalDate): String =
         if (t.toLocalDate() == day) hm(t.toLocalTime()) else "${hm(t.toLocalTime())} del ${shortDay(t.toLocalDate())}"
 
-    private fun hm(t: LocalTime): String = String.format(Locale.ROOT, "%02d:%02d", t.hour, t.minute)
+    internal fun hm(t: LocalTime): String = String.format(Locale.ROOT, "%02d:%02d", t.hour, t.minute)
 
     private fun weekday(d: LocalDate): String = d.dayOfWeek.getDisplayName(TextStyle.FULL, ES).lowercase(ES)
 
     /** "jueves 19". */
-    private fun shortDay(d: LocalDate): String = "${weekday(d)} ${d.dayOfMonth}"
+    internal fun shortDay(d: LocalDate): String = "${weekday(d)} ${d.dayOfMonth}"
 
     /** "miércoles 18 de noviembre de 2026". */
-    private fun longDay(d: LocalDate): String =
+    internal fun longDay(d: LocalDate): String =
         "${weekday(d)} ${d.dayOfMonth} de ${d.month.getDisplayName(TextStyle.FULL, ES).lowercase(ES)} de ${d.year}"
 
-    private fun typeLabel(t: DayType): String = when (t.kind) {
+    internal fun typeLabel(t: DayType): String = when (t.kind) {
         DayKind.WORKDAY -> "día laboral"
         DayKind.WEEKEND -> "fin de semana"
         DayKind.HOLIDAY -> "festivo (${t.holidayName})"

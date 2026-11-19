@@ -8,6 +8,11 @@ import app.brujula.calendar.CalendarSource
 import app.brujula.calendar.ExternalEvent
 import app.brujula.core.time.TimeSpan
 import app.brujula.routine.logicalDay
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.LocalTime
 
@@ -43,4 +48,17 @@ suspend fun CalendarSource.eventsAroundLogicalDay(selectedIds: Set<Long>?, day: 
     if (selectedIds.isNullOrEmpty() || !hasReadPermission()) return emptyList()
     val start = day.atTime(LOGICAL_DAY_START)
     return events(selectedIds, start.minusDays(1), start.plusDays(2))
+}
+
+/**
+ * [eventsAroundLogicalDay] con los calendarios elegidos ([selectedIds]), fuera del hilo principal. Un fallo al leer los
+ * calendarios (permiso revocado, proveedor caído) no impide seguir: da una lista vacía y se sigue solo con lo propio.
+ */
+suspend fun CalendarSource.selectedEventsAroundOrEmpty(selectedIds: Flow<Set<Long>?>, day: LocalDate): List<ExternalEvent> = try {
+    val ids = selectedIds.first()
+    withContext(Dispatchers.IO) { eventsAroundLogicalDay(ids, day) }
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    emptyList()
 }

@@ -36,6 +36,18 @@ class SchemasTest {
         assertEquals(expected, schemaOf(handWritten))
     }
 
+    @Test fun planSchemaMatchesTheSdkDerivedOne() {
+        val derived = BetaStructuredOutputConfig.builder<PlanResult>().format(PlanResult::class.java).build()
+        val handWritten = PlanCall.params("s", "u").outputConfig().get()
+        val expected = schemaOf(derived.rawOutputConfig)
+        assertEquals(setOf("summary", "changes"), expected.path("properties").fieldNames().asSequence().toSet())
+        assertEquals(
+            setOf("op", "ref", "title", "activityType", "date", "start", "durationMin"),
+            expected.path("properties").path("changes").path("items").path("properties").fieldNames().asSequence().toSet(),
+        )
+        assertEquals(expected, schemaOf(handWritten))
+    }
+
     @Test fun formatTypeIsJsonSchema() {
         val d = mapper.readTree(mapper.writeValueAsString(DictationCall.params("s", "u").outputConfig().get()))
         val c = mapper.readTree(mapper.writeValueAsString(ClassificationCall.params("s", "u").outputConfig().get()))

@@ -10,13 +10,10 @@ import app.brujula.routine.RoutineRepository
 import app.brujula.routine.awakeWindow
 import app.brujula.routine.dayTypeOf
 import app.brujula.routine.logicalDay
-import app.brujula.today.eventsAroundLogicalDay
 import app.brujula.today.logicalOccurrences
+import app.brujula.today.selectedEventsAroundOrEmpty
 import app.brujula.today.spillOccurrences
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -71,12 +68,6 @@ class DictationContextProvider(
     }
 
     /** Un fallo al leer los calendarios no impide dictar: se sigue solo con lo propio. */
-    private suspend fun externalAround(day: LocalDate): List<ExternalEvent> = try {
-        val ids = routineRepository.calendarPrefs.selectedCalendarIds.first()
-        withContext(Dispatchers.IO) { calendarSource.eventsAroundLogicalDay(ids, day) }
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        emptyList()
-    }
+    private suspend fun externalAround(day: LocalDate): List<ExternalEvent> =
+        calendarSource.selectedEventsAroundOrEmpty(routineRepository.calendarPrefs.selectedCalendarIds, day)
 }
