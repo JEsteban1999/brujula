@@ -3,7 +3,7 @@ package app.brujula.reminders
 import java.time.LocalDate
 import java.time.LocalDateTime
 
-enum class ReminderKind { HABIT, ACTIVITY }
+enum class ReminderKind { HABIT, ACTIVITY, EXERCISE_PROMPT }
 
 data class Reminder(
     val key: String,

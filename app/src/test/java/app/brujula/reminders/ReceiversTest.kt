@@ -214,4 +214,105 @@ class ReceiversTest {
             NotificationActionReceiver().onReceive(ctx, actionIntent(NotificationActionReceiver.ACTION_SNOOZE_15, "habit:1:202611181245", 1))
         }, sync.calls, 1)
     }
+
+    // --- Aviso de ejercicio en descanso ---
+    // Room y DataStore persisten entre pruebas Robolectric: cada prueba usa un sabado distinto.
+    private var sat = LocalDate.of(2026, 11, 21)
+    private fun saturday(n: Long) { sat = LocalDate.of(2026, 11, 21).plusWeeks(n) }
+
+    private fun promptIntent(action: String, day: LocalDate = sat) =
+        Intent(ctx, NotificationActionReceiver::class.java).setAction(action)
+            .putExtra(NotificationActionReceiver.EXTRA_KEY, "exprompt:${day.toString().replace("-", "")}")
+            .putExtra(NotificationActionReceiver.EXTRA_DAY, day.toString())
+            .putExtra(NotificationActionReceiver.EXTRA_TITLE, "¿Te animas a hacer ejercicio hoy?")
+            .putExtra(NotificationActionReceiver.EXTRA_BODY, "Si te sientes con ganas, te busco un hueco de 30 min.")
+            .putExtra(NotificationActionReceiver.EXTRA_KIND, ReminderKind.EXERCISE_PROMPT.name)
+
+    private fun setNow(t: LocalDateTime) { ctx.container.clock = FixedClock(t) }
+
+    private fun busy(day: LocalDate, h: Int, m: Int, minutes: Int, title: String = "Cita") = runBlocking {
+        ctx.container.activityRepository.upsert(
+            app.brujula.activities.Activity(
+                title = title, type = app.brujula.activities.ActivityType.PERSONAL, date = day,
+                start = java.time.LocalTime.of(h, m), durationMin = minutes, repeat = app.brujula.activities.Repeat.NONE,
+            ),
+        )
+    }
+
+    private fun exercises() = runBlocking {
+        ctx.container.activityRepository.observeAll().first().filter { it.type == app.brujula.activities.ActivityType.EXERCISE && it.date in setOf(sat, sat.plusDays(1)) }
+    }
+
+    private fun answered() = runBlocking { ctx.container.routineRepository.exercisePromptAnswered.first() }
+
+    @Test fun exerciseYesSchedulesFirstFreeSlotAfterBusyBlock() {
+        saturday(1)
+        setNow(sat.atTime(12, 0))
+        busy(sat, 12, 0, 60)
+        Notifications.show(ctx, Reminder("exprompt:${sat.toString().replace("-", "")}", sat.atTime(12, 0), ReminderKind.EXERCISE_PROMPT, "t", "b", day = sat))
+        val n = shadowOf(nm).allNotifications.single()
+        assertEquals(listOf("Sí, agéndalo", "Hoy no"), n.actions.map { it.title.toString() })
+        NotificationActionReceiver().onReceive(ctx, promptIntent(NotificationActionReceiver.ACTION_EXERCISE_YES))
+        awaitCalls(1)
+        val a = exercises().single()
+        assertEquals("Ejercicio en casa", a.title)
+        assertEquals(sat, a.date)
+        assertEquals(java.time.LocalTime.of(13, 0), a.start)
+        assertEquals(30, a.durationMin)
+        assertEquals(app.brujula.activities.Repeat.NONE, a.repeat)
+        assertEquals(15, a.remindBeforeMin)
+        assertTrue(sat in answered())
+        assertTrue(shadowOf(nm).allNotifications.isEmpty())
+    }
+
+    @Test fun exerciseYesTwiceCreatesOnlyOneActivity() {
+        saturday(2)
+        setNow(sat.atTime(12, 0))
+        val receiver = NotificationActionReceiver()
+        receiver.onReceive(ctx, promptIntent(NotificationActionReceiver.ACTION_EXERCISE_YES))
+        receiver.onReceive(ctx, promptIntent(NotificationActionReceiver.ACTION_EXERCISE_YES))
+        awaitCalls(2)
+        assertEquals(1, exercises().size)
+    }
+
+    @Test fun exerciseYesRoundsUpToNextQuarterHour() {
+        saturday(3)
+        setNow(sat.atTime(12, 7))
+        NotificationActionReceiver().onReceive(ctx, promptIntent(NotificationActionReceiver.ACTION_EXERCISE_YES))
+        awaitCalls(1)
+        assertEquals(java.time.LocalTime.of(12, 15), exercises().single().start)
+    }
+
+    @Test fun exerciseYesAfterMidnightStillUsesTheRestDayOfThePrompt() {
+        saturday(4)
+        setNow(sat.plusDays(1).atTime(0, 20))
+        NotificationActionReceiver().onReceive(ctx, promptIntent(NotificationActionReceiver.ACTION_EXERCISE_YES))
+        awaitCalls(1)
+        // Sigue siendo el sabado logico: vigilia hasta la 01:00, cabe 00:30-01:00 (no la vigilia del domingo).
+        val a = exercises().single()
+        assertEquals(sat.plusDays(1), a.date)
+        assertEquals(java.time.LocalTime.of(0, 30), a.start)
+        assertTrue(sat in answered())
+    }
+
+    @Test fun exerciseNoOnlyMarksAnswered() {
+        saturday(5)
+        setNow(sat.atTime(12, 0))
+        NotificationActionReceiver().onReceive(ctx, promptIntent(NotificationActionReceiver.ACTION_EXERCISE_NO))
+        awaitCalls(1)
+        assertTrue(exercises().isEmpty())
+        assertTrue(sat in answered())
+    }
+
+    @Test fun exerciseYesWithoutFreeSlotMarksAnsweredAndNotifies() {
+        saturday(6)
+        setNow(sat.atTime(12, 0))
+        busy(sat, 11, 0, 14 * 60)
+        NotificationActionReceiver().onReceive(ctx, promptIntent(NotificationActionReceiver.ACTION_EXERCISE_YES))
+        awaitCalls(1)
+        assertTrue(exercises().isEmpty())
+        assertTrue(sat in answered())
+        val n = shadowOf(nm).allNotifications.single()
+        assertEquals("No encontré un hueco libre hoy para ejercicio.", n.extras.getCharSequence(android.app.Notification.EXTRA_TITLE).toString())
+    }
 }

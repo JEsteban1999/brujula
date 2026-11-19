@@ -1,12 +1,16 @@
 package app.brujula.reminders
 
 import app.brujula.activities.Activity
+import app.brujula.activities.ActivityType
 import app.brujula.activities.occurrencesOn
 import app.brujula.core.time.formatTime
 import app.brujula.habits.Habit
 import app.brujula.habits.HabitIcon
 import app.brujula.habits.timesFor
 import app.brujula.routine.Routine
+import app.brujula.routine.awakeWindow
+import app.brujula.routine.dayTypeOf
+import app.brujula.routine.wakeFor
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -25,6 +29,7 @@ object ReminderPlanner {
         activities: List<Activity>,
         doneKeys: Set<Pair<Long, LocalDate>>,
         horizonHours: Long = 24,
+        exercisePromptAnswered: Set<LocalDate> = emptySet(),
     ): List<Reminder> {
         val limit = now.plusHours(horizonHours)
         // La vigilia de ayer puede cruzar la medianoche; la de manana puede caer dentro del horizonte.
@@ -61,6 +66,18 @@ object ReminderPlanner {
                     activityId = occ.activity.id, day = day,
                 )
             }
+        }
+        for (day in days) {
+            if (!dayTypeOf(day).isRest || day in exercisePromptAnswered) continue
+            if (occurrencesOn(day, activities, doneKeys).any { it.activity.type == ActivityType.EXERCISE }) continue
+            val at = day.atTime(routine.wakeFor(day)).plusHours(2)
+            if (at <= now || at > limit || at !in routine.awakeWindow(day)) continue
+            out += Reminder(
+                key = "exprompt:${day.format(KEY_DAY)}", at = at, kind = ReminderKind.EXERCISE_PROMPT,
+                title = "¿Te animas a hacer ejercicio hoy?",
+                body = "Si te sientes con ganas, te busco un hueco de 30 min.",
+                day = day,
+            )
         }
         return out.sortedBy { it.at }
     }

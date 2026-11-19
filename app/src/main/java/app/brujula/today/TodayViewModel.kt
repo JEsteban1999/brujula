@@ -6,6 +6,7 @@ import app.brujula.activities.Activity
 import app.brujula.activities.ActivityRepository
 import app.brujula.activities.Occurrence
 import app.brujula.activities.WorkStatus
+import app.brujula.activities.freeSlots
 import app.brujula.activities.occurrencesOn
 import app.brujula.activities.workMinutes
 import app.brujula.activities.workStatus
@@ -51,7 +52,6 @@ data class TodayUiState(
     val day: LocalDate,
 )
 
-private const val MIN_FREE_SLOT_MIN = 30L
 private const val MAX_VISIBLE_HABITS = 2
 private const val TICK_MS = 30_000L
 
@@ -157,22 +157,4 @@ class TodayViewModel(
     fun refreshPermissions() {
         permissions.value = readPermissions()
     }
-}
-
-/** Huecos de al menos 30 min dentro de la vigilia que no tocan ninguna actividad. */
-internal fun freeSlots(window: TimeSpan, busy: List<TimeSpan>): List<TimeSpan> {
-    val slots = mutableListOf<TimeSpan>()
-    var cursor = window.start
-    for (b in busy.sortedBy { it.start }) {
-        if (b.start > cursor) addSlot(slots, cursor, minOf(b.start, window.end))
-        if (b.end > cursor) cursor = b.end
-        if (cursor >= window.end) return slots
-    }
-    if (cursor < window.end) addSlot(slots, cursor, window.end)
-    return slots
-}
-
-private fun addSlot(slots: MutableList<TimeSpan>, start: LocalDateTime, end: LocalDateTime) {
-    val span = TimeSpan(start, end)
-    if (span.minutes >= MIN_FREE_SLOT_MIN) slots.add(span)
 }

@@ -10,6 +10,7 @@ import app.brujula.core.theme.ThemeMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import java.time.LocalDate
 import java.time.LocalTime
 
 /** Rutina en DataStore Preferences; las horas se guardan como "HH:mm". */
@@ -25,6 +26,7 @@ class RoutineRepository(private val dataStore: DataStore<Preferences>) {
         val goalMax = intPreferencesKey("work_goal_max")
         val theme = stringPreferencesKey("theme_mode")
         val seeded = booleanPreferencesKey("defaults_seeded")
+        val exercisePrompts = stringPreferencesKey("exercise_prompt_answered")
         val exerciseMigrated = booleanPreferencesKey("exercise_workdays_migrated")
     }
 
@@ -38,6 +40,19 @@ class RoutineRepository(private val dataStore: DataStore<Preferences>) {
     suspend fun markExerciseMigrated() {
         dataStore.edit { it[Keys.exerciseMigrated] = true }
     }
+
+    /** Días (lógicos) en que ya se respondió el aviso de ejercicio; solo se guardan los últimos 14. */
+    val exercisePromptAnswered: Flow<Set<LocalDate>> = dataStore.data.map { decodeDays(it[Keys.exercisePrompts]) }
+
+    suspend fun markExercisePromptAnswered(day: LocalDate) {
+        dataStore.edit { p ->
+            val days = (decodeDays(p[Keys.exercisePrompts]) + day).sortedDescending().take(14)
+            p[Keys.exercisePrompts] = days.joinToString(",")
+        }
+    }
+
+    private fun decodeDays(text: String?): Set<LocalDate> =
+        text.orEmpty().split(",").mapNotNull { runCatching { LocalDate.parse(it) }.getOrNull() }.toSet()
 
     suspend fun markSeeded() {
         dataStore.edit { it[Keys.seeded] = true }

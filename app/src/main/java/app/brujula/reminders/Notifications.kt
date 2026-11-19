@@ -72,13 +72,33 @@ object Notifications {
                 PendingIntent.getActivity(context, notificationId(r.key), launch, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT),
             )
         }
-        b.addAction(0, "Hecho", actionIntent(context, r, NotificationActionReceiver.ACTION_DONE))
-        b.addAction(0, "En 15 min", actionIntent(context, r, NotificationActionReceiver.ACTION_SNOOZE_15))
-        if (r.kind == ReminderKind.HABIT) {
-            b.addAction(0, "Saltar", actionIntent(context, r, NotificationActionReceiver.ACTION_SKIP))
+        if (r.kind == ReminderKind.EXERCISE_PROMPT) {
+            b.addAction(0, "Sí, agéndalo", actionIntent(context, r, NotificationActionReceiver.ACTION_EXERCISE_YES))
+            b.addAction(0, "Hoy no", actionIntent(context, r, NotificationActionReceiver.ACTION_EXERCISE_NO))
+        } else {
+            b.addAction(0, "Hecho", actionIntent(context, r, NotificationActionReceiver.ACTION_DONE))
+            b.addAction(0, "En 15 min", actionIntent(context, r, NotificationActionReceiver.ACTION_SNOOZE_15))
+            if (r.kind == ReminderKind.HABIT) {
+                b.addAction(0, "Saltar", actionIntent(context, r, NotificationActionReceiver.ACTION_SKIP))
+            }
         }
+        post(context, notificationId(r.key), b)
+    }
+
+    /** Aviso informativo sin botones. */
+    fun showInfo(context: Context, key: String, title: String) {
+        ensureChannels(context)
+        val b = NotificationCompat.Builder(context, CHANNEL_ACTIVITIES)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(title)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+        post(context, notificationId(key), b)
+    }
+
+    private fun post(context: Context, id: Int, b: NotificationCompat.Builder) {
         try {
-            context.getSystemService(NotificationManager::class.java).notify(notificationId(r.key), b.build())
+            context.getSystemService(NotificationManager::class.java).notify(id, b.build())
         } catch (_: SecurityException) {
             // Sin permiso de notificaciones; Hoy mostrara el aviso para arreglarlo.
         }
