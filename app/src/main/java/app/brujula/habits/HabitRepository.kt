@@ -20,6 +20,8 @@ class HabitRepository(private val dao: HabitDao) {
         return if (h.id != 0L) h.id else rowId
     }
 
+    suspend fun setActive(id: Long, active: Boolean) = dao.setActive(id, active)
+
     suspend fun delete(id: Long) = dao.delete(id)
 
     /** Cuenta por dia logico (04:00). */

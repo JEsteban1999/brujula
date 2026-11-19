@@ -140,7 +140,7 @@ class TodayViewModel(
             workGoal = goal,
             workStatus = goal?.let { workStatus(minutes, it) },
             habits = habits
-                .filter { it.active && it.dailyTarget > 0 && day.dayOfWeek in it.days }
+                .filter { it.active && it.group == app.brujula.habits.HabitGroup.ESSENTIAL && it.dailyTarget > 0 && day.dayOfWeek in it.days }
                 .take(MAX_VISIBLE_HABITS)
                 .map { HabitChip(it.id, it.name, it.icon, counts[it.id] ?: 0, it.dailyTarget) },
             timeline = timeline.map { TimelineEntry(it, now in it.span) },

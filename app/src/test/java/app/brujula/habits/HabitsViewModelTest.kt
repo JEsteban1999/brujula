@@ -127,4 +127,55 @@ class HabitsViewModelTest {
         // lunes 16 nov 2026 es festivo (Independencia de Cartagena, 11 nov trasladado)
         assertEquals(listOf(true, false, false, false, false, true, true), st.weekRest)
     }
+
+    private suspend fun seeded(routine: RoutineRepository) {
+        app.brujula.data.db.Migrations.seedWellness(db, routine)
+    }
+
+    @Test fun wellnessRowsInSpecOrderAndEssentialCardsStay() = runTest {
+        water()
+        val routine = RoutineRepository(PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "w.preferences_pb") })
+        seeded(routine)
+        val vm = HabitsViewModel(clock, routine, activities, habits, scopeOverride = backgroundScope, tickMs = 0)
+        val s = vm.state.first { it.wellness.size == 9 && it.cards.isNotEmpty() }
+        assertEquals(listOf("Agua"), s.cards.map { it.habit.name })
+        assertEquals(
+            listOf(
+                "Descanso visual 20-20-20", "Pararte y moverte", "Estiramientos", "Postura", "Comer a horas",
+                "Desconectar pantallas", "Vitaminas", "Protector solar", "Lectura sin pantalla",
+            ),
+            s.wellness.map { it.habit.name },
+        )
+        assertEquals(
+            listOf(
+                "Cada 30 min en horario de trabajo", "Cada 60 min en horario de trabajo", "Cada 2 h en horario de trabajo",
+                "10:15 y 16:15 en horario de trabajo", "12:30 y 16:00", "45 min antes de dormir", "9:00",
+                "9:00 y 12:30", "21:30",
+            ),
+            s.wellness.map { it.summary },
+        )
+        assertEquals(s.wellness.map { it.habit.dailyTarget }, s.wellness.map { it.target })
+    }
+
+    @Test fun setActiveTogglesAndResyncs() = runTest {
+        val routine = RoutineRepository(PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "w2.preferences_pb") })
+        seeded(routine)
+        var resyncs = 0
+        val vm = HabitsViewModel(clock, routine, activities, habits, resync = { resyncs++ }, scopeOverride = backgroundScope, tickMs = 0)
+        val vit = vm.state.first { it.wellness.size == 9 }.wellness.first { it.habit.name == "Vitaminas" }
+        assertEquals(false, vit.habit.active)
+        vm.setActive(vit.habit.id, true)
+        val after = vm.state.first { s -> s.wellness.any { it.habit.name == "Vitaminas" && it.habit.active } }
+        assertEquals(9, after.wellness.size)
+        assertEquals(1, resyncs)
+    }
+
+    @Test fun wellnessCountUpdatesOnAdd() = runTest {
+        val routine = RoutineRepository(PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "w3.preferences_pb") })
+        seeded(routine)
+        val vm = HabitsViewModel(clock, routine, activities, habits, scopeOverride = backgroundScope, tickMs = 0)
+        val eye = vm.state.first { it.wellness.size == 9 }.wellness.first()
+        vm.add(eye.habit.id)
+        assertEquals(1, vm.state.first { s -> s.wellness.first().count == 1 }.wellness.first().count)
+    }
 }

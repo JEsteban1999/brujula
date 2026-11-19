@@ -172,7 +172,7 @@ internal fun openPermissionSettings(context: Context, permissions: PermissionSta
     runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 }
 
-private fun HabitIcon.vector(): ImageVector = when (this) {
+internal fun HabitIcon.vector(): ImageVector = when (this) {
     HabitIcon.WATER -> Icons.Outlined.WaterDrop
     HabitIcon.LIP_BALM -> Icons.Outlined.Spa
     HabitIcon.STRETCH -> Icons.Outlined.SelfImprovement

@@ -31,6 +31,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -40,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
@@ -52,6 +56,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -62,6 +67,7 @@ import app.brujula.core.theme.BrujulaTheme
 import app.brujula.core.time.formatDayEs
 import app.brujula.core.time.formatTime
 import app.brujula.routine.logicalDay
+import app.brujula.today.vector
 import app.brujula.ui.pressScale
 import app.brujula.ui.rememberReducedMotion
 import java.time.LocalDateTime
@@ -72,6 +78,7 @@ private val WEEK_LETTERS = listOf("L", "M", "X", "J", "V", "S", "D")
 fun HabitsScreen(
     viewModel: HabitsViewModel,
     onNewHabit: () -> Unit,
+    onNewWellness: () -> Unit,
     onEditHabit: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -96,6 +103,12 @@ fun HabitsScreen(
             }
         }
         item(key = "streak") { StreakCard(state, reduced) }
+        item(key = "wellness") {
+            WellnessSection(
+                rows = state.wellness, reduced = reduced, onAdd = viewModel::add, onUndo = viewModel::undo,
+                onActive = viewModel::setActive, onMenu = { menuFor = it; confirmDelete = false }, onNew = onNewWellness,
+            )
+        }
     }
 
     menuFor?.let { habit ->
@@ -368,5 +381,101 @@ private fun Flame(color: Color, modifier: Modifier) {
             close()
         }
         drawPath(p, color)
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun WellnessSection(
+    rows: List<WellnessRow>,
+    reduced: Boolean,
+    onAdd: (Long) -> Unit,
+    onUndo: (Long) -> Unit,
+    onActive: (Long, Boolean) -> Unit,
+    onMenu: (Habit) -> Unit,
+    onNew: () -> Unit,
+) {
+    val c = BrujulaTheme.colors
+    val shape = RoundedCornerShape(20.dp)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            "Pausas y bienestar", color = c.text, fontFamily = BrujulaTheme.type.display,
+            fontWeight = FontWeight.ExtraBold, fontSize = 22.sp,
+            modifier = Modifier.semantics { heading() },
+        )
+        Column(Modifier.fillMaxWidth().clip(shape).background(c.surface).border(1.dp, c.line, shape)) {
+            rows.forEachIndexed { i, row ->
+                if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
+                WellnessRowItem(row, reduced, onAdd, onUndo, onActive, onMenu)
+            }
+            val source = remember { MutableInteractionSource() }
+            Box(
+                Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp).pressScale(source, reduced)
+                    .clickable(interactionSource = source, indication = null, role = Role.Button, onClick = onNew)
+                    .padding(horizontal = 16.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                Text("Agregar a pausas y bienestar", color = c.accentText, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun WellnessRowItem(
+    row: WellnessRow,
+    reduced: Boolean,
+    onAdd: (Long) -> Unit,
+    onUndo: (Long) -> Unit,
+    onActive: (Long, Boolean) -> Unit,
+    onMenu: (Habit) -> Unit,
+) {
+    val c = BrujulaTheme.colors
+    val h = row.habit
+    val addSource = remember { MutableInteractionSource() }
+    Row(
+        Modifier.fillMaxWidth().defaultMinSize(minHeight = 56.dp).padding(start = 14.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            Modifier.weight(1f).defaultMinSize(minHeight = 48.dp).alpha(if (h.active) 1f else 0.5f)
+                .combinedClickable(
+                    role = Role.Button, onClickLabel = "Editar o eliminar ${h.name}", onClick = { onMenu(h) },
+                    onLongClickLabel = "Editar o eliminar ${h.name}", onLongClick = { onMenu(h) },
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(h.icon.vector(), contentDescription = null, tint = c.accentText, modifier = Modifier.size(22.dp))
+            Column(Modifier.weight(1f)) {
+                Text(h.name, color = c.text, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(row.summary, color = c.textMuted, fontSize = 12.sp, lineHeight = 16.sp)
+            }
+            Text(
+                "${row.count} de ${row.target}", color = c.textMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.semantics { contentDescription = "${row.count} de ${row.target} hoy" },
+            )
+        }
+        Box(
+            Modifier.size(48.dp).alpha(if (h.active) 1f else 0.4f).pressScale(addSource, reduced).clip(RoundedCornerShape(12.dp))
+                .background(c.surface2)
+                .combinedClickable(
+                    enabled = h.active, interactionSource = addSource, indication = null, role = Role.Button,
+                    onClickLabel = "Sumar una a ${h.name}", onClick = { onAdd(h.id) },
+                    onLongClickLabel = "Deshacer la última de ${h.name}", onLongClick = { onUndo(h.id) },
+                )
+                .semantics { contentDescription = "Sumar una a ${h.name}" },
+            contentAlignment = Alignment.Center,
+        ) { Text("+", color = c.text, fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+        Switch(
+            checked = h.active, onCheckedChange = { onActive(h.id, it) },
+            modifier = Modifier.semantics { contentDescription = "${h.name} activo" },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = c.onAccent, checkedTrackColor = c.accent,
+                uncheckedThumbColor = c.textMuted, uncheckedTrackColor = c.surface2, uncheckedBorderColor = c.line,
+            ),
+        )
     }
 }

@@ -44,6 +44,9 @@ interface HabitDao {
 
     @Upsert suspend fun upsert(e: HabitEntity): Long
 
+    @Query("UPDATE habits SET active = :active WHERE id = :id")
+    suspend fun setActive(id: Long, active: Boolean)
+
     @Query("DELETE FROM habits WHERE id = :id")
     suspend fun delete(id: Long)
 

@@ -6,6 +6,7 @@ import app.brujula.activities.Activity
 import app.brujula.activities.ActivityRepository
 import app.brujula.activities.ActivityType
 import app.brujula.core.time.Clock
+import app.brujula.core.time.formatTime
 import app.brujula.reminders.ReminderResync
 import app.brujula.routine.Routine
 import app.brujula.routine.RoutineRepository
@@ -35,8 +36,11 @@ data class HabitCard(
     val slots: List<Pair<LocalTime, Boolean>>,
 )
 
+data class WellnessRow(val habit: Habit, val count: Int, val target: Int, val summary: String)
+
 data class HabitsUiState(
     val cards: List<HabitCard>,
+    val wellness: List<WellnessRow>,
     val exerciseStreak: Int,
     /** Lunes a domingo de la semana del día lógico actual. */
     val weekDone: List<Boolean>,
@@ -79,7 +83,7 @@ class HabitsViewModel(
                 build(now, day, routine, habits, counts, activities, done)
             }
         }
-        .stateIn(scope, SharingStarted.Eagerly, HabitsUiState(emptyList(), 0, List(7) { false }, List(7) { false }))
+        .stateIn(scope, SharingStarted.Eagerly, HabitsUiState(emptyList(), emptyList(), 0, List(7) { false }, List(7) { false }))
 
     private fun build(
         now: LocalDateTime,
@@ -90,7 +94,7 @@ class HabitsViewModel(
         activities: List<Activity>,
         done: Set<Pair<Long, LocalDate>>,
     ): HabitsUiState {
-        val cards = habits.filter { it.active }.map { h ->
+        val cards = habits.filter { it.active && it.group == HabitGroup.ESSENTIAL }.map { h ->
             val count = counts[h.id] ?: 0
             val times = h.timesFor(day, routine)
             HabitCard(
@@ -109,6 +113,9 @@ class HabitsViewModel(
         val monday = day.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         return HabitsUiState(
             cards = cards,
+            wellness = habits.filter { it.group == HabitGroup.WELLNESS }.map {
+                WellnessRow(it, counts[it.id] ?: 0, it.dailyTarget.coerceAtLeast(1), it.summary())
+            },
             exerciseStreak = exerciseStreak(day, doneDays),
             weekDone = (0L..6L).map { monday.plusDays(it) in doneDays },
             weekRest = (0L..6L).map { dayTypeOf(monday.plusDays(it)).isRest },
@@ -123,10 +130,30 @@ class HabitsViewModel(
         scope.launch { habitRepository.undoLast(habitId, logicalDay(clock.now())) }
     }
 
+    fun setActive(habitId: Long, active: Boolean) {
+        scope.launch {
+            habitRepository.setActive(habitId, active)
+            runCatching { resync.resync() }
+        }
+    }
+
     fun delete(habitId: Long) {
         scope.launch {
             habitRepository.delete(habitId)
             runCatching { resync.resync() }
         }
+    }
+}
+
+/** Resumen en español de cuándo avisa un hábito de bienestar. */
+fun Habit.summary(): String {
+    val work = if (window == HabitWindow.WORK) " en horario de trabajo" else ""
+    return when (val s = schedule) {
+        is HabitSchedule.Every ->
+            "Cada ${if (s.intervalMin >= 120 && s.intervalMin % 60 == 0) "${s.intervalMin / 60} h" else "${s.intervalMin} min"}$work"
+        is HabitSchedule.AtTimes -> s.times.sorted().map { formatTime(it) }.let { t ->
+            (if (t.size > 1) t.dropLast(1).joinToString(", ") + " y " + t.last() else t.firstOrNull().orEmpty()) + work
+        }
+        is HabitSchedule.BeforeBed -> "${s.minutes} min antes de dormir"
     }
 }
