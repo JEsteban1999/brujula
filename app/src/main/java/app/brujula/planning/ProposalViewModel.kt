@@ -139,6 +139,14 @@ class ProposalViewModel(
             if (pending != null && !executor.isStale(pending)) return show(pending)
             if (pending == null && day >= logicalDay(clock.now())) proposals.acceptedFor(day)?.let { return showAccepted(it) }
             lastRequest = pending?.request ?: lastRequest
+        } else {
+            // El mismo pedido otra vez (otro toque en la tarjeta de Hoy): se reusa la pendiente vigente (también la ya
+            // ajustada, que conserva el pedido original) en vez de volver a llamar a Claude y reemplazarla.
+            val pending = proposals.pendingFor(day)
+            if (pending != null && pending.request == fresh && !executor.isStale(pending)) {
+                saved[KEY_CONSUMED] = true
+                return show(pending)
+            }
         }
         saved[KEY_CONSUMED] = true
         generate(fresh ?: lastRequest, previous = null, adjustment = null, back = null)

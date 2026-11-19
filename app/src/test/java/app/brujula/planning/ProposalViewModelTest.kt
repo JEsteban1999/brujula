@@ -183,6 +183,32 @@ class ProposalViewModelTest {
         assertEquals("arma mi día", planner.calls.single().request)
     }
 
+    @Test fun sameQueuedRequestReusesThePendingProposalInsteadOfCallingClaudeAgain() = runTest {
+        planner.queue += PlanOutcome.Ok(proposal(request = "arma mi día"))
+        val first = showing(vm(request = "arma mi día"))
+        // Otro toque en la tarjeta de Hoy: un ViewModel nuevo con el mismo pedido muestra la misma propuesta.
+        val handle = SavedStateHandle()
+        val second = showing(vm(request = "arma mi día", handle = handle))
+        assertEquals(first.proposal.id, second.proposal.id)
+        assertEquals(1, planner.calls.size)
+        assertEquals(true, handle.get<Boolean>("requestConsumed"))
+        assertEquals("PENDING", db.proposalDao().get(first.proposal.id)!!.status)
+    }
+
+    @Test fun sameQueuedRequestWithAStalePendingProposalAsksAgain() = runTest {
+        val id = activities.upsert(work.copy(title = "Llamar", type = ActivityType.PERSONAL, date = fri, start = LocalTime.of(15, 0)))
+        val move = PlanOp.Move(
+            "A$id", id, fri, "Llamar", TimeSpan(fri.atTime(15, 0), fri.atTime(16, 30)), TimeSpan(fri.atTime(17, 0), fri.atTime(18, 30)),
+            oneOff = true,
+        )
+        val old = proposals.savePending(proposal(ops = listOf(move), request = "arma mi día"))
+        activities.delete(id)
+        planner.queue += PlanOutcome.Ok(proposal(request = "arma mi día"))
+        val s = showing(vm(request = "arma mi día"))
+        assertNotEquals(old, s.proposal.id)
+        assertEquals(1, planner.calls.size)
+    }
+
     @Test fun offlineShowsErrorWithRetry() = runTest {
         planner.queue += PlanOutcome.Offline
         planner.queue += PlanOutcome.Failed(DayPlanner.OFFLINE, retryable = true)

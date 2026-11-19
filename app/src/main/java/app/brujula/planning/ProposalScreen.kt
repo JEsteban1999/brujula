@@ -2,6 +2,7 @@ package app.brujula.planning
 
 import android.Manifest
 import android.content.pm.PackageManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
@@ -97,7 +98,11 @@ fun ProposalScreen(
         when (val s = state) {
             ProposalUiState.Loading -> Loading(reduced, onCancel = viewModel::cancelWaiting)
             is ProposalUiState.Showing -> Showing(s, viewModel, reduced)
-            is ProposalUiState.Accepted -> AcceptedView(s, reduced, onUndo = viewModel::undo, onDone = onAcceptedDone)
+            is ProposalUiState.Accepted -> {
+                // Atrás tras aceptar se comporta como Listo: no vuelve al borrador que el plan ya resolvió.
+                BackHandler { onAcceptedDone() }
+                AcceptedView(s, reduced, onUndo = viewModel::undo, onDone = onAcceptedDone)
+            }
             is ProposalUiState.Error -> ErrorView(s, reduced, onRetry = viewModel::retry, onClose = onClose)
             ProposalUiState.Closed -> LaunchedEffect(Unit) { onClose() }
         }
