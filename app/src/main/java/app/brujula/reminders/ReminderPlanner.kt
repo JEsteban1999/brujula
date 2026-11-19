@@ -7,6 +7,8 @@ import app.brujula.core.time.formatTime
 import app.brujula.habits.Habit
 import app.brujula.habits.HabitGroup
 import app.brujula.habits.HabitIcon
+import app.brujula.habits.HabitSchedule
+import app.brujula.routine.logicalDay
 import app.brujula.habits.timesFor
 import app.brujula.routine.Routine
 import app.brujula.routine.awakeWindow
@@ -75,7 +77,10 @@ object ReminderPlanner {
         }
         for (day in days) {
             if (!dayTypeOf(day).isRest || day in exercisePromptAnswered) continue
-            if (occurrencesOn(day, activities, doneKeys).any { it.activity.type == ActivityType.EXERCISE }) continue
+            // Cuenta por dia logico: un ejercicio a las 00:30 del dia siguiente es de este dia; el de hoy a las 00:30 no.
+            val exerciseToday = (occurrencesOn(day, activities, doneKeys) + occurrencesOn(day.plusDays(1), activities, doneKeys))
+                .any { it.activity.type == ActivityType.EXERCISE && logicalDay(it.span.start) == day }
+            if (exerciseToday) continue
             val at = day.atTime(routine.wakeFor(day)).plusHours(2)
             if (at <= now || at > limit || at !in routine.awakeWindow(day)) continue
             out += Reminder(
@@ -106,7 +111,9 @@ object ReminderPlanner {
         HabitIcon.STRETCH -> "Estira cuello, espalda y mu\u00f1ecas."
         HabitIcon.POSTURE -> "Endereza la espalda y relaja los hombros."
         HabitIcon.FOOD -> "Hora de comer algo."
-        HabitIcon.SCREEN_OFF -> "Deja las pantallas: en 45 min te acuestas."
+        HabitIcon.SCREEN_OFF -> (h.schedule as? HabitSchedule.BeforeBed)
+            ?.let { "Deja las pantallas: en ${it.minutes} min te acuestas." }
+            ?: "Deja las pantallas y prepárate para dormir."
         HabitIcon.PILL -> "T\u00f3mate las vitaminas."
         HabitIcon.SUN -> "Ponte protector solar."
         HabitIcon.BOOK -> "Un rato de lectura sin pantalla."

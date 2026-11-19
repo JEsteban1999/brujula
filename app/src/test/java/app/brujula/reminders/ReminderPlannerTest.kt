@@ -122,4 +122,20 @@ class ReminderPlannerTest {
     @Test fun saturdayHasNoWorkWindowWellness() {
         val r = wellness(LocalDate.of(2026, 11, 21).atTime(8, 0)).filter { it.kind == ReminderKind.HABIT }; assertTrue(r.toString(), r.isEmpty())
     }
+
+    @Test fun screensOffBodyUsesHabitMinutes() {
+        val h = Habit(30, "Desconectar pantallas", HabitIcon.SCREEN_OFF, HabitSchedule.BeforeBed(60), 1,
+            group = app.brujula.habits.HabitGroup.WELLNESS)
+        val r = ReminderPlanner.plan(d.atTime(20, 0), Routine(), listOf(h), emptyMap(), emptySet(), emptyList(), emptySet())
+            .single { it.kind == ReminderKind.HABIT }
+        assertEquals("Deja las pantallas: en 60 min te acuestas.", r.body)
+    }
+
+    @Test fun exerciseAfterMidnightFromPreviousDayDoesNotSuppressPrompt() {
+        // Domingo 00:30 pertenece al sabado logico; no es ejercicio del domingo.
+        val sun = sat.plusDays(1)
+        val late = Activity(9, "Ejercicio", ActivityType.EXERCISE, sun, LocalTime.of(0, 30), 30, Repeat.NONE)
+        val r = prompts(sat.atTime(13, 0), acts = listOf(late))
+        assertEquals(listOf("exprompt:20261122"), r.map { it.key })
+    }
 }
