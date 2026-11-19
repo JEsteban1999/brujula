@@ -38,4 +38,10 @@ class ExternalEventsTest {
     @Test fun duplicatedInstancesCollapse() {
         assertEquals(1, eventsOnLogicalDay(wed, listOf(crossing, crossing.copy()), null).size)
     }
+
+    @Test fun classificationKeyCollapsesUnicodeSpaces() {
+        val a = crossing.copy(title = "Reunión  de equipo")
+        val b = crossing.copy(title = "reunion de equipo")
+        assertEquals(classificationKey(b), classificationKey(a))
+    }
 }

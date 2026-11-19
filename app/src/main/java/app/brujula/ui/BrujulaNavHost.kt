@@ -97,6 +97,8 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                                 activityRepository = container.activityRepository,
                                 habitRepository = container.habitRepository,
                                 readPermissions = { readPermissionStatus(appContext) },
+                                calendarSource = container.calendarSource,
+                                classifications = container.workClassificationRepository,
                             )
                         }
                     },
@@ -162,6 +164,8 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                                 clock = container.clock,
                                 activityRepository = container.activityRepository,
                                 resync = container.reminderSync,
+                                calendarSource = container.calendarSource,
+                                selectedCalendarIds = container.routineRepository.calendarPrefs.selectedCalendarIds,
                             )
                         }
                     },

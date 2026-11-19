@@ -419,9 +419,9 @@ private fun CustomDuration(current: Int, onChange: (Int) -> Unit) {
 @Composable
 private fun ConflictStatus(state: ActivityFormState) {
     val dark = BrujulaTheme.colors.bg.luminance() < 0.5f
-    val conflict = state.conflict
-    val bg = if (conflict != null) BrujulaTheme.colors.soft2 else if (dark) Color(0xFF13332A) else Color(0xFFDDF3E8)
-    val dot = if (conflict != null) BrujulaTheme.colors.accent2Text else okColor()
+    val message = state.conflictMessage
+    val bg = if (message != null) BrujulaTheme.colors.soft2 else if (dark) Color(0xFF13332A) else Color(0xFFDDF3E8)
+    val dot = if (message != null) BrujulaTheme.colors.accent2Text else okColor()
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(bg).padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -429,12 +429,12 @@ private fun ConflictStatus(state: ActivityFormState) {
     ) {
         Box(Modifier.size(22.dp).clip(CircleShape).background(dot), contentAlignment = Alignment.Center) {
             Text(
-                if (conflict != null) "!" else "✓", color = BrujulaTheme.colors.bg,
+                if (message != null) "!" else "✓", color = BrujulaTheme.colors.bg,
                 fontSize = 12.sp, fontWeight = FontWeight.ExtraBold,
             )
         }
         Text(
-            if (conflict != null) "Choca con ${conflict.activity.title}." else "Libre a esa hora. No choca con nada.",
+            message ?: "Libre a esa hora. No choca con nada.",
             color = BrujulaTheme.colors.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
         )
     }

@@ -33,6 +33,8 @@ data class ExternalEvent(
     val span: TimeSpan,
     val allDay: Boolean,
     val organizer: String?,
+    /** Color del calendario de origen (ARGB); 0 si no se conoce. */
+    val calendarColor: Int = 0,
 ) {
     val key: String get() = "$eventId:$instanceBegin"
 }
@@ -58,7 +60,7 @@ fun eventsOnLogicalDay(
     .sortedBy { it.span.start }
 
 private val DIACRITICS = Regex("""\p{Mn}+""")
-private val WHITESPACE = Regex("""\s+""")
+private val WHITESPACE = Regex("[\\s\\p{Z}]+")
 
 /** Clave para recordar si un evento cuenta como trabajo: titulo sin tildes, en minusculas, espacios colapsados. */
 fun classificationKey(e: ExternalEvent): String =

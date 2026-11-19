@@ -6,9 +6,13 @@ import androidx.test.core.app.ApplicationProvider
 import app.brujula.activities.Activity
 import app.brujula.activities.ActivityRepository
 import app.brujula.activities.ActivityType
+import app.brujula.calendar.ExternalEvent
+import app.brujula.calendar.FakeCalendarSource
 import app.brujula.core.time.FixedClock
+import app.brujula.core.time.TimeSpan
 import app.brujula.data.db.BrujulaDatabase
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
@@ -33,6 +37,7 @@ class ActivityFormViewModelTest {
     private val tomorrow = today.plusDays(1)
     private val clock = FixedClock(LocalDateTime.of(2026, 11, 18, 10, 40))
     private var resyncs = 0
+    private val calendar = FakeCalendarSource()
 
     @Before fun setUp() {
         db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), BrujulaDatabase::class.java)
@@ -57,6 +62,8 @@ class ActivityFormViewModelTest {
         clock = clock,
         activityRepository = repo,
         resync = { resyncs++ },
+        calendarSource = calendar,
+        selectedCalendarIds = flowOf(setOf(1L)),
         scopeOverride = backgroundScope,
     )
 
@@ -77,6 +84,21 @@ class ActivityFormViewModelTest {
     @Test fun liveConflict() = runTest {
         val vm = newVm(); vm.setDateChoice(DateChoice.TOMORROW); vm.shiftStart(495); vm.setDuration(60)
         assertEquals("Ejercicio en casa", vm.state.first { it.conflict != null }.conflict!!.activity.title)
+    }
+
+    @Test fun conflictsWithExternalEventNamingItsSource() = runTest {
+        calendar.eventList = listOf(
+            ExternalEvent(1, 0, 1, "Personal", "Google", "Dentista", TimeSpan(today.atTime(15, 0), today.atTime(16, 0)), false, null),
+            ExternalEvent(2, 0, 1, "Personal", "Google", "Festivo", TimeSpan(today.atStartOfDay(), tomorrow.atStartOfDay()), true, null),
+        )
+        val vm = newVm(prefill = today.atTime(15, 30))
+        val s = vm.state.first { it.externalConflict != null }
+        assertEquals("Choca con Dentista (Google).", s.conflictMessage)
+        vm.shiftStart(-60) // 14:30-15:30 aun solapa
+        assertEquals("Dentista", vm.state.value.externalConflict?.title)
+        vm.shiftStart(-60) // 13:30-14:30 libre; el de todo el dia no choca
+        assertNull(vm.state.value.externalConflict)
+        assertNull(vm.state.value.conflictMessage)
     }
 
     @Test fun noConflictWhenFree() = runTest {

@@ -14,7 +14,7 @@ import java.time.ZoneOffset
 val INSTANCE_PROJECTION = arrayOf(
     Instances.EVENT_ID, Instances.BEGIN, Instances.END, Instances.TITLE, Instances.ALL_DAY,
     Instances.CALENDAR_ID, Instances.CALENDAR_DISPLAY_NAME, Instances.ORGANIZER, Instances.STATUS,
-    Instances.SELF_ATTENDEE_STATUS, Events.CUSTOM_APP_PACKAGE,
+    Instances.SELF_ATTENDEE_STATUS, Events.CUSTOM_APP_PACKAGE, Instances.CALENDAR_COLOR,
 )
 
 val CALENDAR_PROJECTION = arrayOf(
@@ -85,6 +85,7 @@ fun mapInstances(
             span = span,
             allDay = allDay,
             organizer = cursor.str(Instances.ORGANIZER),
+            calendarColor = cursor.int(Instances.CALENDAR_COLOR) ?: 0,
         )
     }
     return out

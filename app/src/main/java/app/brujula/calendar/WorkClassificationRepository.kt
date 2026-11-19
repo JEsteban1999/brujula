@@ -11,6 +11,9 @@ class WorkClassificationRepository(private val dao: WorkClassificationDao) {
 
     suspend fun set(key: String, isWork: Boolean) = dao.upsert(WorkClassificationEntity(key, isWork))
 
-    /** Sin marca guardada, un evento no cuenta como trabajo. */
-    fun isWork(e: ExternalEvent, map: Map<String, Boolean>): Boolean = map[classificationKey(e)] ?: false
+    /** Sin marca guardada, o sin titulo (clave vacia), un evento no cuenta como trabajo. */
+    fun isWork(e: ExternalEvent, map: Map<String, Boolean>): Boolean {
+        val key = classificationKey(e)
+        return key.isNotEmpty() && (map[key] ?: false)
+    }
 }

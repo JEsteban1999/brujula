@@ -29,7 +29,7 @@ class CalendarCursorsTest {
     private fun row(
         id: Long, begin: Long, end: Long, title: String, allDay: Int = 0, status: Int? = null,
         self: Int? = null, pkg: String? = null,
-    ): Array<Any?> = arrayOf(id, begin, end, title, allDay, 7L, "Trabajo", "ana@x.com", status, self, pkg)
+    ): Array<Any?> = arrayOf(id, begin, end, title, allDay, 7L, "Trabajo", "ana@x.com", status, self, pkg, 0xFF336699.toInt())
 
     @Test fun mapsTimedAndAllDayInstances() {
         val timed = row(1, millis(LocalDateTime.of(2026, 11, 18, 14, 0), bogota), millis(LocalDateTime.of(2026, 11, 18, 15, 30), bogota), "Reunión")
@@ -41,6 +41,7 @@ class CalendarCursorsTest {
         assertFalse(r[0].allDay)
         assertEquals("Google", r[0].source)
         assertEquals("ana@x.com", r[0].organizer)
+        assertEquals(0xFF336699.toInt(), r[0].calendarColor)
         assertTrue(r[1].allDay)
         assertEquals(TimeSpan(d.atStartOfDay(), d.plusDays(1).atStartOfDay()), r[1].span)
         assertEquals("2:${r[1].instanceBegin}", r[1].key)

@@ -9,11 +9,19 @@ import app.brujula.activities.Occurrence
 import app.brujula.activities.Repeat
 import app.brujula.activities.findConflict
 import app.brujula.activities.occurrencesOn
+import app.brujula.calendar.CalendarSource
+import app.brujula.calendar.ExternalEvent
+import app.brujula.calendar.NoCalendarSource
 import app.brujula.core.time.Clock
 import app.brujula.core.time.TimeSpan
 import app.brujula.reminders.ReminderResync
 import app.brujula.routine.logicalDay
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,6 +45,8 @@ data class ActivityFormState(
     val copyToGoogle: Boolean = false,
     val copyToGoogleTouched: Boolean = false,
     val conflict: Occurrence? = null,
+    /** Evento importado (solo lectura) con el que choca; solo si no choca con una actividad propia. */
+    val externalConflict: ExternalEvent? = null,
     val titleError: String? = null,
     val isEdit: Boolean = false,
     val saved: Boolean = false,
@@ -46,6 +56,11 @@ data class ActivityFormState(
     val ready: Boolean = true,
 ) {
     val end: LocalTime get() = start.plusMinutes(durationMin.toLong())
+
+    /** Texto del choque, o null si la hora esta libre. */
+    val conflictMessage: String?
+        get() = conflict?.let { "Choca con ${it.activity.title}." }
+            ?: externalConflict?.let { "Choca con ${it.title.ifBlank { "un evento sin título" }} (${it.source})." }
 }
 
 const val REMIND_BEFORE_MIN = 15
@@ -59,6 +74,8 @@ class ActivityFormViewModel(
     private val clock: Clock,
     private val activityRepository: ActivityRepository,
     private val resync: ReminderResync = ReminderResync { },
+    private val calendarSource: CalendarSource = NoCalendarSource,
+    selectedCalendarIds: Flow<Set<Long>?> = flowOf(null),
     scopeOverride: CoroutineScope? = null,
 ) : ViewModel() {
     /** "Hoy" del usuario: el día lógico (cambia a las 04:00). */
@@ -67,6 +84,10 @@ class ActivityFormViewModel(
     private val scope = scopeOverride ?: viewModelScope
     private var editingId: Long? = null
     private var all: List<Activity> = emptyList()
+    private var external: List<ExternalEvent> = emptyList()
+    private var externalDate: LocalDate? = null
+    private var selectedIds: Set<Long>? = null
+    private var externalJob: Job? = null
 
     private val _state = MutableStateFlow(initialState(prefillStart).copy(ready = activityId == null))
     val state: StateFlow<ActivityFormState> = _state.asStateFlow()
@@ -76,6 +97,12 @@ class ActivityFormViewModel(
             activityRepository.observeAll().collect { list ->
                 all = list
                 _state.update(::withConflict)
+            }
+        }
+        scope.launch {
+            selectedCalendarIds.collect { ids ->
+                selectedIds = ids
+                reloadExternal(_state.value.date)
             }
         }
         if (activityId != null) {
@@ -96,6 +123,7 @@ class ActivityFormViewModel(
                         ),
                     )
                 }
+                if (a.date != externalDate) reloadExternal(a.date)
             }
         }
     }
@@ -134,11 +162,32 @@ class ActivityFormViewModel(
         val begin = s.date.atTime(s.start)
         val candidate = TimeSpan(begin, begin.plusMinutes(s.durationMin.toLong()))
         val busy = (-1L..1L).flatMap { occurrencesOn(s.date.plusDays(it), all, emptySet()) }
-        return s.copy(conflict = findConflict(candidate, busy, editingId))
+        val own = findConflict(candidate, busy, editingId)
+        val outside = if (own == null) external.firstOrNull { !it.allDay && it.span.overlaps(candidate) } else null
+        return s.copy(conflict = own, externalConflict = outside)
+    }
+
+    /** Eventos importados de día−1/día/día+1 de [date]; la consulta al proveedor va fuera del hilo principal. */
+    private fun reloadExternal(date: LocalDate) {
+        externalJob?.cancel()
+        externalJob = scope.launch {
+            val ids = selectedIds
+            val loaded = withContext(Dispatchers.IO) {
+                runCatching {
+                    if (ids.isNullOrEmpty() || !calendarSource.hasReadPermission()) emptyList()
+                    else calendarSource.events(ids, date.minusDays(1).atStartOfDay(), date.plusDays(2).atStartOfDay())
+                }.getOrDefault(emptyList())
+            }
+            external = loaded
+            externalDate = date
+            _state.update(::withConflict)
+        }
     }
 
     private fun edit(block: (ActivityFormState) -> ActivityFormState) {
         _state.update { withConflict(block(it).copy(saved = false)) }
+        val date = _state.value.date
+        if (date != externalDate) reloadExternal(date)
     }
 
     fun setTitle(s: String) = edit { it.copy(title = s, titleError = null) }

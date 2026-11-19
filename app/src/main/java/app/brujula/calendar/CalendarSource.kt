@@ -8,3 +8,10 @@ interface CalendarSource {
     suspend fun calendars(): List<DeviceCalendar>
     suspend fun events(calendarIds: Set<Long>, from: LocalDateTime, to: LocalDateTime): List<ExternalEvent>
 }
+
+/** Sin calendarios: valor por defecto cuando no hay origen de eventos. */
+object NoCalendarSource : CalendarSource {
+    override fun hasReadPermission() = false
+    override suspend fun calendars() = emptyList<DeviceCalendar>()
+    override suspend fun events(calendarIds: Set<Long>, from: LocalDateTime, to: LocalDateTime) = emptyList<ExternalEvent>()
+}
