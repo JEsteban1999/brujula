@@ -70,3 +70,13 @@ class EventClassifierTest {
         assertEquals("reunion de equipo", normalizeTitle("  Reunión   de EQUIPO "))
     }
 }
+
+class EventClassifierBulletTest {
+    @Test fun leadingBulletInReturnedTitleIsStripped() = kotlinx.coroutines.test.runTest {
+        val gateway = FakeClaudeGateway(
+            classification = GatewayResult.Ok(ClassificationResult(listOf(TitleMark("- Reunión", true), TitleMark("• Yoga", false), TitleMark("* Sync", true)))),
+        )
+        val out = EventClassifier(gateway).classify(listOf("Reunión", "Yoga", "Sync"))
+        assertEquals(mapOf("reunion" to true, "yoga" to false, "sync" to true), out)
+    }
+}

@@ -163,14 +163,20 @@ class TodayViewModel(
         }
         .stateIn(scope, SharingStarted.Eagerly, initial())
 
+    @Volatile private var lastMarkKeys: Set<String> = emptySet()
+
+    private fun titlesOf(s: TodayUiState): Map<String, String> =
+        (s.timeline.filterIsInstance<TimelineBlock.External>().map { it.event } + s.allDay)
+            .associate { classificationKey(it) to it.title }
+
     init {
         val auto = autoClassifier
         if (auto != null) {
             // Solo los títulos de los eventos del día lógico; el AutoClassifier decide qué falta y corre fuera del hilo principal.
             scope.launch {
                 combine(state, classificationMap) { s, marks ->
-                    val events = s.timeline.filterIsInstance<TimelineBlock.External>().map { it.event } + s.allDay
-                    events.associate { classificationKey(it) to it.title } to marks.keys
+                    lastMarkKeys = marks.keys
+                    titlesOf(s) to marks.keys
                 }.distinctUntilChanged().collect { (titles, known) -> auto.request(titles, known) }
             }
         }
@@ -260,6 +266,9 @@ class TodayViewModel(
     /** Vuelve a leer los calendarios del teléfono (al volver a la pantalla). */
     fun refreshExternal() {
         reloadExternal.value += 1
+        // Al volver a la pantalla (p. ej. tras poner la clave o recuperar la red) se reintentan las claves liberadas;
+        // el conjunto de intentadas del AutoClassifier acota las llamadas.
+        autoClassifier?.request(titlesOf(state.value), lastMarkKeys)
     }
 
     fun refreshPermissions() {

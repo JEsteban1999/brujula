@@ -12,6 +12,7 @@ import app.brujula.calendar.GoogleCalendarWriter
 import app.brujula.calendar.GoogleCopySync
 import app.brujula.claude.AnthropicClaudeGateway
 import app.brujula.claude.AutoClassifier
+import app.brujula.claude.DelegatingGateway
 import app.brujula.claude.EventClassifier
 import app.brujula.claude.ClaudeGateway
 import app.brujula.claude.ClaudeKeyStore
@@ -126,7 +127,7 @@ class AppContainer(val context: Context) {
 
     /** Clasificacion automatica de eventos importados; el conjunto de claves ya intentadas vive aqui (una vez por proceso). */
     val autoClassifier: AutoClassifier by lazy {
-        AutoClassifier(EventClassifier(claudeGateway), workClassificationRepository, syncScope) { isOnline(context) }
+        AutoClassifier(EventClassifier(DelegatingGateway { claudeGateway }), workClassificationRepository, syncScope) { isOnline(context) }
     }
 
     /** Ambito de la app para la copia a Google: sobrevive al formulario (SupervisorJob + IO). */

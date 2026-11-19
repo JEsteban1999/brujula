@@ -489,4 +489,23 @@ class TodayViewModelTest {
         testScheduler.advanceUntilIdle()
         assertEquals(1, gateway.classifyCalls)
     }
+
+    @Test fun resumeRetriesKeysReleasedByNoKey() = runTest {
+        val gateway = app.brujula.claude.FakeClaudeGateway(classification = app.brujula.claude.GatewayResult.NoKey)
+        val auto = app.brujula.claude.AutoClassifier(app.brujula.claude.EventClassifier(gateway), classifications, backgroundScope)
+        val vm = vmWithCalendar(listOf(ext(1, "Reunión de equipo", day.atTime(15, 0), day.atTime(16, 0))), auto)
+        vm.state.first { st -> st.timeline.any { it is TimelineBlock.External } }
+        repeat(100) { if (gateway.classifyCalls < 1) kotlinx.coroutines.delay(1) }
+        assertEquals(1, gateway.classifyCalls)
+        gateway.classification = app.brujula.claude.GatewayResult.Ok(
+            app.brujula.claude.ClassificationResult(listOf(app.brujula.claude.TitleMark("Reunión de equipo", true))),
+        )
+        vm.refreshExternal()
+        val s = vm.state.first { it.workMinutes == 60 }
+        assertEquals(60, s.workMinutes)
+        assertEquals(2, gateway.classifyCalls)
+        vm.refreshExternal()
+        testScheduler.advanceUntilIdle()
+        assertEquals(2, gateway.classifyCalls)
+    }
 }
