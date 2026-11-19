@@ -2,6 +2,10 @@ package app.brujula.settings
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import app.brujula.calendar.DeviceCalendar
+import app.brujula.claude.ClaudeKeyStore
+import app.brujula.claude.FakeClaudeGateway
+import app.brujula.claude.FakeSecretCipher
+import app.brujula.claude.KeyTestResult
 import app.brujula.calendar.FakeCalendarSource
 import app.brujula.core.theme.ThemeMode
 import app.brujula.reminders.ReminderResync
@@ -11,6 +15,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -89,7 +94,7 @@ class RoutineViewModelTest {
         DeviceCalendar(id, "Cal $id", account, type, 0, false)
 
     private fun TestScope.calEnv(src: FakeCalendarSource): Pair<Env, FakeCalendarSource> {
-        val repo = RoutineRepository(PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "c.preferences_pb") })
+        val repo = RoutineRepository(PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.newFolder(), "c.preferences_pb") })
         return Env(repo, FakeReminderSync(), RoutineViewModel(repo, FakeReminderSync(), backgroundScope, src)) to src
     }
 
@@ -225,5 +230,64 @@ class RoutineViewModelTest {
         assertEquals(0, counter.count)
         e.vm.onPermissionResult(true).join()
         assertEquals(1, counter.count)
+    }
+
+    // --- Clave de Claude ---
+
+    private class ClaudeEnv(val keys: ClaudeKeyStore, val gateway: FakeClaudeGateway, val vm: RoutineViewModel)
+
+    private fun TestScope.claudeEnv(result: KeyTestResult = KeyTestResult.OK): ClaudeEnv {
+        val repo = RoutineRepository(PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.newFolder(), "r.preferences_pb") })
+        val keys = ClaudeKeyStore(
+            PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.newFolder(), "c.preferences_pb") }, FakeSecretCipher(),
+        )
+        val gateway = FakeClaudeGateway(result)
+        return ClaudeEnv(keys, gateway, RoutineViewModel(repo, scopeOverride = backgroundScope, claudeKeyStore = keys, claudeGateway = gateway))
+    }
+
+    @Test fun claudeKeyTrimmedAndSaved() = runTest {
+        val e = claudeEnv()
+        e.vm.saveClaudeKey("  sk-ant-test-0000 \n").join()
+        assertEquals("sk-ant-test-0000", e.keys.read())
+        assertTrue(e.vm.claude.value.hasKey)
+        assertEquals("0000", e.vm.claude.value.lastFour)
+    }
+
+    @Test fun claudeBlankKeyClears() = runTest {
+        val e = claudeEnv()
+        e.vm.saveClaudeKey("sk-ant-test-0000").join()
+        e.vm.saveClaudeKey("   ").join()
+        assertNull(e.keys.read())
+        assertFalse(e.vm.claude.value.hasKey)
+        assertNull(e.vm.claude.value.lastFour)
+    }
+
+    @Test fun claudeTestMapsResults() = runTest {
+        for ((result, status) in listOf(
+            KeyTestResult.OK to ClaudeStatus.CONNECTED,
+            KeyTestResult.INVALID to ClaudeStatus.INVALID,
+            KeyTestResult.NETWORK to ClaudeStatus.NETWORK,
+            KeyTestResult.ERROR to ClaudeStatus.ERROR,
+        )) {
+            val e = claudeEnv(result)
+            e.vm.saveClaudeKey("sk-ant-test-0000").join()
+            e.vm.testClaudeKey().join()
+            assertEquals(status, e.vm.claude.value.status)
+        }
+    }
+
+    @Test fun claudeTestWithoutKeyDoesNotCallGateway() = runTest {
+        val e = claudeEnv()
+        e.vm.testClaudeKey().join()
+        assertEquals(0, e.gateway.calls)
+        assertEquals(ClaudeStatus.IDLE, e.vm.claude.value.status)
+    }
+
+    @Test fun savingNewKeyResetsStatus() = runTest {
+        val e = claudeEnv()
+        e.vm.saveClaudeKey("sk-ant-test-0000").join()
+        e.vm.testClaudeKey().join()
+        e.vm.saveClaudeKey("sk-ant-test-1111").join()
+        assertEquals(ClaudeStatus.IDLE, e.vm.claude.value.status)
     }
 }

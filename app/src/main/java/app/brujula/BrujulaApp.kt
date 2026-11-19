@@ -10,6 +10,10 @@ import app.brujula.calendar.DeviceCalendarSource
 import app.brujula.calendar.DeviceGoogleCalendarWriter
 import app.brujula.calendar.GoogleCalendarWriter
 import app.brujula.calendar.GoogleCopySync
+import app.brujula.claude.AnthropicClaudeGateway
+import app.brujula.claude.ClaudeGateway
+import app.brujula.claude.ClaudeKeyStore
+import app.brujula.claude.KeystoreSecretCipher
 import app.brujula.core.time.Clock
 import app.brujula.core.time.SystemClock
 import app.brujula.reminders.AlarmReminderScheduler
@@ -50,6 +54,17 @@ class AppContainer(val context: Context) {
 
     /** Escritura en el Google Calendar principal; las pruebas lo sustituyen por uno falso. */
     var googleCalendarWriter: GoogleCalendarWriter = DeviceGoogleCalendarWriter(context.applicationContext, DeviceCalendarSource(context.applicationContext))
+
+    /** Clave de Claude cifrada con el Keystore; las pruebas la sustituyen. */
+    var claudeKeyStore: ClaudeKeyStore = ClaudeKeyStore(context.applicationContext.routineDataStore, KeystoreSecretCipher())
+
+    private var claudeGatewayOverride: ClaudeGateway? = null
+    private val defaultClaudeGateway: ClaudeGateway by lazy { AnthropicClaudeGateway(claudeKeyStore) }
+
+    /** Acceso a Claude; sustituible en pruebas. */
+    var claudeGateway: ClaudeGateway
+        get() = claudeGatewayOverride ?: defaultClaudeGateway
+        set(value) { claudeGatewayOverride = value }
 
     /** Ambito de la app para la copia a Google: sobrevive al formulario (SupervisorJob + IO). */
     val syncScope = CoroutineScope(

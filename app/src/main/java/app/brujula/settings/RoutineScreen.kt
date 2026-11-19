@@ -33,6 +33,15 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -63,6 +72,7 @@ fun RoutineScreen(viewModel: RoutineViewModel, modifier: Modifier = Modifier) {
     val c = BrujulaTheme.colors
     val reduced = rememberReducedMotion()
     val calendars by viewModel.calendars.collectAsStateWithLifecycle()
+    val claude by viewModel.claude.collectAsStateWithLifecycle()
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         viewModel.onPermissionResult(result[Manifest.permission.READ_CALENDAR] == true)
     }
@@ -195,6 +205,9 @@ fun RoutineScreen(viewModel: RoutineViewModel, modifier: Modifier = Modifier) {
             }
         }
 
+        Text("CLAUDE", color = c.textMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        ClaudeCard(claude, onSave = viewModel::saveClaudeKey, onTest = viewModel::testClaudeKey)
+
         Text("TEMA DE BRÚJULA", color = c.textMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ThemeOption("Claro", ThemeMode.LIGHT, routine.themeMode, reduced, Modifier.weight(1f), viewModel::setThemeMode)
@@ -282,4 +295,79 @@ private fun ThemeOption(
 @Composable
 private fun Swatch(color: Color) {
     Box(Modifier.size(18.dp).clip(RoundedCornerShape(6.dp)).background(color).border(1.dp, Color(0x22000000), RoundedCornerShape(6.dp)))
+}
+
+@Composable
+private fun ClaudeCard(state: ClaudeSectionState, onSave: (String) -> Unit, onTest: () -> Unit) {
+    val c = BrujulaTheme.colors
+    val context = LocalContext.current
+    var input by remember { mutableStateOf("") }
+    Card {
+        Text("Clave de la API", color = c.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        if (state.hasKey) {
+            Text(
+                if (state.lastFour != null) "Clave guardada · …${state.lastFour}" else "Clave guardada",
+                color = c.textMuted, fontSize = 12.sp,
+            )
+        }
+        Box(
+            Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(RoundedCornerShape(14.dp)).background(c.surface2)
+                .padding(horizontal = 14.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            BasicTextField(
+                value = input, onValueChange = { input = it }, singleLine = true,
+                textStyle = TextStyle(color = c.text, fontSize = 14.sp),
+                cursorBrush = SolidColor(c.accent),
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Password, autoCorrectEnabled = false, imeAction = ImeAction.Done,
+                ),
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Clave de la API" },
+                decorationBox = { inner ->
+                    if (input.isEmpty()) Text("Pega tu clave aquí", color = c.textMuted, fontSize = 14.sp)
+                    inner()
+                },
+            )
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ClaudeButton("Guardar", Modifier.weight(1f), enabled = input.isNotBlank()) {
+                onSave(input)
+                input = ""
+            }
+            ClaudeButton("Probar", Modifier.weight(1f), enabled = state.hasKey && state.status != ClaudeStatus.TESTING, onClick = onTest)
+        }
+        if (state.hasKey) {
+            Box(
+                Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button) { onSave("") },
+                contentAlignment = Alignment.CenterStart,
+            ) { Text("Quitar clave", color = c.textMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+        }
+        when (state.status) {
+            ClaudeStatus.IDLE -> Unit
+            ClaudeStatus.TESTING -> Text("Probando…", color = c.textMuted, fontSize = 13.sp)
+            ClaudeStatus.CONNECTED -> Text("Conectado", color = c.text, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            ClaudeStatus.INVALID -> Text("La clave no funciona", color = c.text, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            ClaudeStatus.NETWORK -> Text("Sin conexión. Inténtalo de nuevo.", color = c.textMuted, fontSize = 13.sp)
+            ClaudeStatus.ERROR -> Text("No pude probar la clave. Inténtalo de nuevo.", color = c.textMuted, fontSize = 13.sp)
+        }
+        Box(
+            Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button) {
+                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://platform.claude.com"))) }
+            },
+            contentAlignment = Alignment.CenterStart,
+        ) { Text("Consigue tu clave en platform.claude.com", color = c.accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+    }
+}
+
+@Composable
+private fun ClaudeButton(label: String, modifier: Modifier, enabled: Boolean, onClick: () -> Unit) {
+    val c = BrujulaTheme.colors
+    Box(
+        modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(14.dp)).background(if (enabled) c.accent else c.surface2)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, color = if (enabled) c.onAccent else c.textMuted, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+    }
 }

@@ -62,6 +62,7 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.core.splashscreen)
+    implementation("com.anthropic:anthropic-java:3.9.0")
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)

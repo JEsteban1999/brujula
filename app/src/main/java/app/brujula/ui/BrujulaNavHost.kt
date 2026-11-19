@@ -141,6 +141,8 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                                 calendarSource = container.calendarSource,
                                 syncScope = container.syncScope,
                                 reconcileGoogle = { container.reconcileGoogleCopies() },
+                                claudeKeyStore = container.claudeKeyStore,
+                                claudeGateway = container.claudeGateway,
                             )
                         }
                     },
