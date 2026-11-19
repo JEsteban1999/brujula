@@ -119,4 +119,32 @@ class HabitFormViewModelTest {
         vm2.state.first { it.saved }
         assertTrue(habits.observeHabits().first().isEmpty())
     }
+
+    @Test fun missingHabitSignalsNotFoundAndSavesNothing() = runTest {
+        val vm = vm(999L)
+        val s = vm.state.first { it.notFound }
+        assertFalse(s.isEdit)
+        vm.setName("Fantasma")
+        vm.save()
+        testScheduler.advanceUntilIdle()
+        assertFalse(vm.state.value.saved)
+        assertTrue(habits.observeHabits().first().isEmpty())
+    }
+
+    @Test fun settersBeforeLoadAreIgnored() = runTest {
+        val id = habits.upsert(
+            Habit(name = "Agua", icon = HabitIcon.WATER, schedule = HabitSchedule.Every(90), dailyTarget = 8),
+        )
+        val vm = vm(id)
+        assertFalse(vm.state.value.ready)
+        vm.setName("Tecleado antes")
+        vm.setIntervalMin(30)
+        vm.save()
+        assertEquals("", vm.state.value.name)
+        val loaded = vm.state.first { it.ready }
+        assertEquals("Agua", loaded.name)
+        assertEquals(90, loaded.intervalMin)
+        assertEquals(8, loaded.dailyTarget)
+        assertEquals("Agua", habits.observeHabits().first().single().name)
+    }
 }

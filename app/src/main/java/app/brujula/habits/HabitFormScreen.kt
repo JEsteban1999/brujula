@@ -35,7 +35,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.Role
@@ -77,7 +79,7 @@ fun HabitFormScreen(viewModel: HabitFormViewModel, onClose: () -> Unit, modifier
     val reduced = rememberReducedMotion()
     var confirmDelete by remember { mutableStateOf(false) }
 
-    LaunchedEffect(state.saved) { if (state.saved) onClose() }
+    LaunchedEffect(state.saved, state.notFound) { if (state.saved || state.notFound) onClose() }
 
     Column(
         modifier.fillMaxSize().background(c.bg).statusBarsPadding().imePadding()
@@ -100,8 +102,9 @@ fun HabitFormScreen(viewModel: HabitFormViewModel, onClose: () -> Unit, modifier
             Spacer(Modifier.size(48.dp))
         }
 
+        Box(Modifier.weight(1f)) {
         Column(
-            Modifier.weight(1f).verticalScroll(rememberScrollState()),
+            Modifier.fillMaxSize().alpha(if (state.ready) 1f else 0.5f).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             NameField(state.name, state.nameError, viewModel::setName)
@@ -186,6 +189,12 @@ fun HabitFormScreen(viewModel: HabitFormViewModel, onClose: () -> Unit, modifier
                     }
                 }
             }
+        }
+
+        if (!state.ready) {
+            // Bloquea toques mientras carga el hábito a editar.
+            Box(Modifier.fillMaxSize().pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } })
+        }
         }
 
         val canSave = state.ready && !state.saving

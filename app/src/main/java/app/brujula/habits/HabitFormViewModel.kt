@@ -37,6 +37,8 @@ data class HabitFormState(
     val saving: Boolean = false,
     /** En edición, falso hasta que el hábito termina de cargar. */
     val ready: Boolean = true,
+    /** En edición, el hábito ya no existe: la pantalla se cierra sin guardar. */
+    val notFound: Boolean = false,
 )
 
 class HabitFormViewModel(
@@ -56,7 +58,7 @@ class HabitFormViewModel(
             scope.launch {
                 val h = habitRepository.observeHabits().first().firstOrNull { it.id == habitId }
                 if (h == null) {
-                    _state.update { it.copy(ready = true) }
+                    _state.update { it.copy(notFound = true) }
                     return@launch
                 }
                 editing = h
@@ -73,6 +75,7 @@ class HabitFormViewModel(
     }
 
     private fun edit(block: (HabitFormState) -> HabitFormState) {
+        if (!_state.value.ready || _state.value.notFound) return
         _state.update { block(it).copy(saved = false) }
     }
 
@@ -92,7 +95,7 @@ class HabitFormViewModel(
 
     fun save() {
         val s = _state.value
-        if (s.saving || !s.ready) return
+        if (s.saving || !s.ready || s.notFound) return
         val name = s.name.trim()
         val nameError = if (name.isEmpty()) "Ponle un nombre al hábito" else null
         val intervalError = if (s.mode == HabitMode.EVERY && s.intervalMin !in MIN_INTERVAL_MIN..MAX_INTERVAL_MIN) {
@@ -129,7 +132,7 @@ class HabitFormViewModel(
 
     fun delete() {
         val id = editing?.id ?: return
-        if (_state.value.saving) return
+        if (_state.value.saving || _state.value.notFound) return
         _state.update { it.copy(saving = true) }
         scope.launch {
             habitRepository.delete(id)
