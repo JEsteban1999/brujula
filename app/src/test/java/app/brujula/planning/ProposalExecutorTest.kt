@@ -11,6 +11,7 @@ import app.brujula.activities.ActivityType
 import app.brujula.activities.OccurrenceOverride
 import app.brujula.activities.Repeat
 import app.brujula.calendar.FakeGoogleCalendarWriter
+import app.brujula.calendar.GoogleCopyJournal
 import app.brujula.calendar.GoogleCopySync
 import app.brujula.calendar.GoogleEventDraft
 import app.brujula.claude.ClaudeNote
@@ -21,7 +22,12 @@ import app.brujula.data.db.BrujulaDatabase
 import app.brujula.reminders.Reminder
 import app.brujula.reminders.ReminderResync
 import app.brujula.reminders.ReminderScheduler
+import androidx.room.withTransaction
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -98,6 +104,8 @@ class ProposalExecutorTest {
         proposals = ProposalRepository(db.proposalDao())
         notes = ClaudeNotes(PreferenceDataStoreFactory.create(scope = storeScope) { File(tmp.root, "notes.preferences_pb") })
         googleSync = GoogleCopySync(writer, activities)
+        prefs = ctx.getSharedPreferences("journal-test", Context.MODE_PRIVATE).also { it.edit().clear().commit() }
+        journal = GoogleCopyJournal(prefs)
         executor = newExecutor()
     }
 
@@ -106,10 +114,13 @@ class ProposalExecutorTest {
         storeScope.cancel()
     }
 
-    private fun newExecutor() = ProposalExecutor(
-        db, activities, proposals, googleSync, ReminderResync { log += "resync" }, notes, clock, scope,
-        reminderScheduler = RecordingScheduler(log),
+    private fun newExecutor(syncScope: CoroutineScope = scope) = ProposalExecutor(
+        db, activities, proposals, googleSync, ReminderResync { log += "resync" }, notes, clock, syncScope,
+        reminderScheduler = RecordingScheduler(log), journal = journal,
     )
+
+    private lateinit var prefs: android.content.SharedPreferences
+    private lateinit var journal: GoogleCopyJournal
 
     private fun span(day: LocalDate, h: Int, m: Int, minutes: Long) = day.atTime(h, m).let { TimeSpan(it, it.plusMinutes(minutes)) }
 
@@ -214,6 +225,7 @@ class ProposalExecutorTest {
         assertNotNull(writer.events[900])
 
         assertEquals(ClaudeNote("Te armé el viernes.", fri, id), notes.note.first())
+        assertTrue(journal.pending().isEmpty())
     }
 
     @Test fun failureMidTransactionChangesNothing() = run {
@@ -520,5 +532,138 @@ class ProposalExecutorTest {
         assertEquals(Repeat.NONE, exercise.repeat)
         assertNull(all().single { it.type == ActivityType.WORK }.remindBeforeMin)
         assertEquals(0, writer.inserts)
+    }
+
+    @Test fun cancellingTheCallerDuringTheTransactionIsAllOrNothing() = runBlocking {
+        val real = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val ex = newExecutor(syncScope = real)
+        val s = seed()
+        val id = proposals.savePending(proposal(fri, allOps(s)))
+        val before = all()
+        val entered = CompletableDeferred<Unit>()
+        // El gancho no se cancela: la transacción termina y se confirma aunque quien llamó ya se fue (Room 2.6).
+        ex.afterApply = { entered.complete(Unit); withContext(NonCancellable) { delay(300) } }
+        val job = launch(Dispatchers.Default) { ex.accept(id) }
+        entered.await()
+        job.cancel()
+        job.join()
+        db.withTransaction { } // espera a que termine la transacción de aceptar (se serializan)
+        real.coroutineContext.job.children.toList().joinAll()
+        if (status(id) == "ACCEPTED") {
+            assertEquals(1, resyncs)
+            assertEquals(fri.atTime(16, 0), writer.events[500]!!.start)
+            assertNull(writer.events[501])
+            assertEquals(ClaudeNote("Te armé el viernes.", fri, id), notes.note.first())
+            assertTrue(journal.pending().isEmpty())
+        } else {
+            assertEquals(before, all())
+            assertEquals(0, resyncs)
+            assertTrue(writer.touched.isEmpty())
+        }
+        real.cancel()
+    }
+
+    @Test fun journalLeftBehindIsDrainedAtStartup() = run {
+        // El proceso muere justo después del commit: la tanda de Google nunca corre.
+        val dead = CoroutineScope(Job().apply { cancel() })
+        val s = seed()
+        val id = proposals.savePending(proposal(fri, allOps(s)))
+        assertTrue(newExecutor(syncScope = dead).accept(id) is AcceptResult.Accepted)
+        assertEquals(fri.atTime(15, 0), writer.events[500]!!.start)
+        assertNotNull(writer.events[501])
+        assertEquals(2, journal.pending().size)
+
+        // Al arrancar, un diario nuevo sobre las mismas preferencias completa lo pendiente.
+        GoogleCopyJournal(prefs).drain(googleSync, activities)
+        assertEquals(fri.atTime(16, 0), writer.events[500]!!.start)
+        assertNull(writer.events[501])
+        assertNotNull(writer.events[900])
+        assertTrue(writer.touched.all { it == 500L || it == 501L })
+        assertTrue(GoogleCopyJournal(prefs).pending().isEmpty())
+    }
+
+    @Test fun rolledBackTransactionLeavesAHarmlessJournal() = run {
+        val s = seed()
+        val id = proposals.savePending(proposal(fri, allOps(s)))
+        executor.afterApply = { throw IllegalStateException("boom") }
+        assertEquals(AcceptResult.Failed(AcceptResult.FAILED), executor.accept(id))
+        val before = all()
+        val keys = writer.events.keys.toSet()
+        assertEquals(2, journal.pending().size)
+
+        GoogleCopyJournal(prefs).drain(googleSync, activities)
+        assertEquals(before, all())
+        assertEquals(keys, writer.events.keys.toSet())
+        assertEquals(fri.atTime(15, 0), writer.events[500]!!.start)
+        assertTrue(journal.pending().isEmpty())
+    }
+
+    @Test fun undoKeepsPlanCreatedBlocksThatAlreadyEnded() = run {
+        clock.current = thu.atTime(8, 0)
+        val id = proposals.savePending(
+            proposal(
+                thu,
+                listOf(
+                    PlanOp.Create(deepWork.copy(date = thu, start = LocalTime.of(9, 0), durationMin = 60)),
+                    PlanOp.Create(deepWork.copy(title = "Correos", date = thu, start = LocalTime.of(15, 0), durationMin = 30)),
+                ),
+            ),
+        )
+        executor.accept(id)
+        clock.current = thu.atTime(10, 0)
+        // El bloque de 9 a 10 ya terminó: es historia de hoy ("Así te fue hoy") y se deja.
+        assertEquals(UndoResult.Undone(kept = 1), executor.undo(id))
+        assertEquals(1, titled("Trabajo profundo").size)
+        assertTrue(titled("Correos").isEmpty())
+        assertEquals("PENDING", status(id))
+    }
+
+    @Test fun acceptedProposalWithBadPayloadIsKeptAndUndoFails() = run {
+        val id = db.proposalDao().insert(
+            app.brujula.data.db.ProposalEntity(
+                day = fri, createdAt = clock.now(), status = "ACCEPTED", request = null, summary = "x", payload = "{dañado", undo = "{}",
+            ),
+        )
+        assertEquals(UndoResult.Failed(UndoResult.FAILED), executor.undo(id))
+        assertEquals("ACCEPTED", status(id))
+        assertEquals(AcceptResult.AlreadyAccepted, executor.accept(id))
+        assertEquals("ACCEPTED", status(id))
+    }
+
+    @Test fun unreadablePendingPayloadThroughAcceptFails() = run {
+        val id = db.proposalDao().insert(
+            app.brujula.data.db.ProposalEntity(day = fri, createdAt = clock.now(), status = "PENDING", request = null, summary = "x", payload = "[]"),
+        )
+        assertEquals(AcceptResult.Failed(AcceptResult.FAILED), executor.accept(id))
+        assertEquals("DISCARDED", status(id))
+        assertEquals(0, resyncs)
+    }
+
+    @Test fun appointmentCreateMakesAcceptFail() = run {
+        val s = seed()
+        val before = all()
+        val cita = deepWork.copy(title = "Médico", type = ActivityType.APPOINTMENT, start = LocalTime.of(7, 0))
+        val id = proposals.savePending(proposal(fri, allOps(s) + PlanOp.Create(cita)))
+        assertEquals(AcceptResult.Failed(AcceptResult.FAILED), executor.accept(id))
+        assertEquals(before, all())
+        assertEquals("PENDING", status(id))
+    }
+
+    @Test fun oneOffSkipThatWouldCascadeOtherDataIsStale() = run {
+        val s = seed()
+        // Una marca de hecho en otra fecha (la cita cambió de día después de marcarla): borrar la fila la perdería.
+        activities.setDone(s.hair, thu, true)
+        val id = proposals.savePending(proposal(fri, listOf(allOps(s)[4])))
+        assertEquals(AcceptResult.Stale(AcceptResult.STALE), executor.accept(id))
+        assertNotNull(activities.get(s.hair))
+        activities.setDone(s.hair, thu, false)
+
+        // Un override suelto, también.
+        activities.setOverride(OccurrenceOverride(s.hair, sat, null, null, skipped = true))
+        val again = proposals.savePending(proposal(fri, listOf(allOps(s)[4])))
+        assertEquals(AcceptResult.Stale(AcceptResult.STALE), executor.accept(again))
+        assertNotNull(activities.get(s.hair))
+        activities.clearOverride(s.hair, sat)
+        assertTrue(executor.accept(proposals.savePending(proposal(fri, listOf(allOps(s)[4])))) is AcceptResult.Accepted)
     }
 }

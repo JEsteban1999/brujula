@@ -9,6 +9,7 @@ import app.brujula.calendar.WorkClassificationRepository
 import app.brujula.calendar.DeviceCalendarSource
 import app.brujula.calendar.DeviceGoogleCalendarWriter
 import app.brujula.calendar.GoogleCalendarWriter
+import app.brujula.calendar.GoogleCopyJournal
 import app.brujula.calendar.GoogleCopySync
 import app.brujula.claude.AnthropicClaudeGateway
 import app.brujula.claude.AutoClassifier
@@ -133,7 +134,7 @@ class AppContainer(val context: Context) {
     var proposalExecutor: ProposalExecutor
         get() = proposalExecutorOverride ?: ProposalExecutor(
             database, activityRepository, proposalRepository, googleCopySync, reminderSync, claudeNotes, clock, syncScope,
-            reminderScheduler = reminderScheduler, lock = proposalLock,
+            reminderScheduler = reminderScheduler, journal = googleCopyJournal, lock = proposalLock,
         )
         set(value) { proposalExecutorOverride = value }
 
@@ -192,8 +193,19 @@ class AppContainer(val context: Context) {
         GoogleCopySync(googleCalendarWriter, activityRepository) { routineRepository.calendarPrefs.copyToGoogleEnabled.first() }
     }
 
-    /** Crea las copias a Google que falten (idempotente); se lanza en [syncScope]. */
-    suspend fun reconcileGoogleCopies() = googleCopySync.reconcile(logicalDay(clock.now()))
+    /** Copias a Google pendientes de aceptar/deshacer un plan o de borrar una actividad (sobreviven a la muerte del proceso). */
+    val googleCopyJournal: GoogleCopyJournal by lazy {
+        GoogleCopyJournal(context.applicationContext.getSharedPreferences(GoogleCopyJournal.PREFS_NAME, Context.MODE_PRIVATE))
+    }
+
+    /**
+     * Termina lo que quedó en el diario y luego crea las copias a Google que falten (idempotente); se lanza en
+     * [syncScope] al arrancar y al conceder el permiso.
+     */
+    suspend fun reconcileGoogleCopies() {
+        googleCopyJournal.drain(googleCopySync, activityRepository)
+        googleCopySync.reconcile(logicalDay(clock.now()))
+    }
 
     /** Un solo GoogleCopySync (su Mutex serializa); sustituible en pruebas. */
     var googleCopySync: GoogleCopySync

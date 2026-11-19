@@ -51,7 +51,7 @@ object ProposalCodec {
 
     fun decode(payload: String): ProposalBody? = parse {
         val j = JSONObject(payload)
-        require(j.getInt("v") == VERSION)
+        require(j.getInt("v") in 1..VERSION)
         ProposalBody(
             ops = j.getJSONArray("ops").objects().map { op(it) },
             rejected = j.getJSONArray("rejected").let { a -> (0 until a.length()).map { a.getString(it) } },
@@ -79,7 +79,7 @@ object ProposalCodec {
 
     fun decodeUndo(s: String): UndoData? = parse {
         val j = JSONObject(s)
-        require(j.getInt("v") == VERSION)
+        require(j.getInt("v") in 1..VERSION)
         val oneOffBefore = j.getJSONArray("oneOffBefore").objects().map { activity(it) }
         val oneOffAfter = j.getJSONArray("oneOffAfter").objects().map { activity(it) }
         val overrideBefore = j.getJSONArray("overrideBefore").objects().map {

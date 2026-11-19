@@ -16,7 +16,10 @@ import app.brujula.habits.HabitIcon
 import app.brujula.habits.HabitRepository
 import app.brujula.habits.HabitSchedule
 import app.brujula.reminders.ReminderResync
+import androidx.room.withTransaction
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.job
 import kotlinx.coroutines.joinAll
@@ -206,5 +209,27 @@ class ActionExecutorTest {
         executor.undo(r.undo!!)
         assertEquals(0, habits.count())
         assertEquals(0, db.query("SELECT COUNT(*) FROM habit_logs", null).use { it.moveToFirst(); it.getInt(0) })
+    }
+
+    @Test fun cancellingTheCallerDuringApplyIsAllOrNothing() = kotlinx.coroutines.runBlocking {
+        val real = CoroutineScope(SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+        val ex = ActionExecutor(db, activities, habits, GoogleCopySync(writer, activities), ReminderResync { resyncs++ }, real)
+        val entered = kotlinx.coroutines.CompletableDeferred<Unit>()
+        // El gancho no se cancela: Room confirma la transacción aunque quien llamó ya se fue.
+        ex.afterInsert = { entered.complete(Unit); kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { kotlinx.coroutines.delay(300) } }
+        val job = launch(kotlinx.coroutines.Dispatchers.Default) { ex.apply(listOf(Validated.Activity(dentist))) }
+        entered.await()
+        job.cancel()
+        job.join()
+        db.withTransaction { } // espera a que termine la transacción (se serializan)
+        real.coroutineContext.job.children.toList().joinAll()
+        if (activities.count() == 1) {
+            assertEquals(1, resyncs)
+            assertEquals(1, writer.events.size)
+        } else {
+            assertEquals(0, resyncs)
+            assertTrue(writer.events.isEmpty())
+        }
+        real.cancel()
     }
 }

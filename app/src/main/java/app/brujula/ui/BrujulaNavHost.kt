@@ -203,6 +203,7 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                                 selectedCalendarIds = container.routineRepository.calendarPrefs.selectedCalendarIds,
                                 googleCopy = container.googleCopySync,
                                 googleScope = container.syncScope,
+                                googleJournal = container.googleCopyJournal,
                             )
                         }
                     },

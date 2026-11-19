@@ -299,6 +299,33 @@ class ActivityFormViewModelTest {
         assertTrue(writer.events.isEmpty())
     }
 
+    @Test fun deleteJournalsTheGoogleCopyBeforeDeletingSoItSurvivesProcessDeath() = runTest {
+        val writer = app.brujula.calendar.FakeGoogleCalendarWriter()
+        val sync = app.brujula.calendar.GoogleCopySync(writer, repo)
+        val prefs = ApplicationProvider.getApplicationContext<Context>().getSharedPreferences("form-journal", Context.MODE_PRIVATE)
+        val journal = app.brujula.calendar.GoogleCopyJournal(prefs)
+        val id = repo.upsert(
+            Activity(title = "Dentista", type = ActivityType.APPOINTMENT, date = tomorrow, start = LocalTime.of(9, 0), durationMin = 30),
+        )
+        writer.events[300] = app.brujula.calendar.GoogleEventDraft("Dentista", tomorrow.atTime(9, 0), tomorrow.atTime(9, 30), null, id)
+        repo.setGoogleEventId(id, 300)
+        // El proceso muere antes de que corra la tanda de Google: su ámbito nunca ejecuta nada.
+        val dead = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Job().apply { cancel() })
+        val vm = ActivityFormViewModel(
+            activityId = id, prefillStart = null, clock = clock, activityRepository = repo,
+            resync = { resyncs++ }, calendarSource = calendar, selectedCalendarIds = flowOf(setOf(1L)),
+            googleCopy = sync, googleScope = dead, scopeOverride = backgroundScope, googleJournal = journal,
+        )
+        vm.state.first { it.ready }
+        vm.delete()
+        vm.state.first { it.saved }
+        assertNull(repo.get(id))
+        assertEquals(300L, writer.events.keys.single())
+        app.brujula.calendar.GoogleCopyJournal(prefs).drain(sync, repo)
+        assertTrue(writer.events.isEmpty())
+        assertTrue(journal.pending().isEmpty())
+    }
+
     @Test fun slowGoogleWriteClosesFormAndFinishesInBackground() = runTest {
         val writer = app.brujula.calendar.FakeGoogleCalendarWriter().apply { insertDelayMs = 1_500 }
         val vm = ActivityFormViewModel(

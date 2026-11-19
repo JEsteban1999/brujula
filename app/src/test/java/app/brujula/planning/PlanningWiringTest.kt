@@ -3,6 +3,10 @@ package app.brujula.planning
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import app.brujula.calendar.FakeCalendarSource
+import app.brujula.calendar.FakeGoogleCalendarWriter
+import app.brujula.calendar.GoogleCopyJournal
+import app.brujula.calendar.GoogleCopySync
+import app.brujula.calendar.GoogleEventDraft
 import app.brujula.claude.DayPlanner
 import app.brujula.claude.FakeClaudeGateway
 import app.brujula.claude.PlanOutcome
@@ -60,5 +64,18 @@ class PlanningWiringTest {
         val custom = c.proposalExecutor
         c.proposalExecutor = custom
         assertSame(custom, c.proposalExecutor)
+    }
+
+    @Test fun reconcileGoogleCopiesDrainsTheJournalFirst() = runBlocking {
+        val c = app.container
+        val writer = FakeGoogleCalendarWriter()
+        writer.events[600] = GoogleEventDraft("Huérfana", thu.atTime(9, 0), thu.atTime(10, 0), null, activityId = 77)
+        c.googleCopySync = GoogleCopySync(writer, c.activityRepository)
+        // Una actividad 77 que ya no existe dejó su copia: el diario la borra al reconciliar.
+        val entry = GoogleCopyJournal.Entry.Delete(77, 600)
+        c.googleCopyJournal.record(listOf(entry))
+        c.reconcileGoogleCopies()
+        assertTrue(writer.events.isEmpty())
+        assertTrue(c.googleCopyJournal.pending().isEmpty())
     }
 }

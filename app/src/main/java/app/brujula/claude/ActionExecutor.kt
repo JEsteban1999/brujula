@@ -65,6 +65,12 @@ class ActionExecutor(
         val toCreate = items.filter { it is Validated.Activity || it is Validated.Habit }
         if (toCreate.isEmpty()) return ApplyResult(emptyList(), messages, null)
 
+        // Sin cancelación a medias: con Room 2.6, cancelar a quien llama durante withTransaction no impide el commit;
+        // sin esto quedarían filas creadas sin resync ni copia a Google.
+        return withContext(NonCancellable) { applyCommitted(toCreate, messages) }
+    }
+
+    private suspend fun applyCommitted(toCreate: List<Validated>, messages: MutableList<String>): ApplyResult {
         val created = mutableListOf<CreatedItem>()
         val savedActivities = mutableListOf<Activity>()
         try {
@@ -91,8 +97,8 @@ class ActionExecutor(
             messages += "No pude guardar lo que pediste. No se agendó nada."
             return ApplyResult(emptyList(), messages, null)
         }
-        // Ya confirmado: el resync no se cancela a medias y la copia a Google no retrasa la respuesta.
-        withContext(NonCancellable) { resyncSafely() }
+        // Ya confirmado: la copia a Google no retrasa la respuesta.
+        resyncSafely()
         val toCopy = savedActivities.filter { it.copyToGoogle }
         if (toCopy.isNotEmpty()) syncScope.launch { toCopy.forEach { googleCopySync.afterSave(it) } }
         val token = UndoToken(created.mapNotNull { it.activityId }, created.mapNotNull { it.habitId })

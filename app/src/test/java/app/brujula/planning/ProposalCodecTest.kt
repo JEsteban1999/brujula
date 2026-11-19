@@ -78,6 +78,7 @@ class ProposalCodecTest {
             good.replace("\"NUEVO\"", "\"INVENTADO\""),
             good.replace("2026-11-20T09:00", "2026-13-20T09:00"),
             good.replace("\"ops\"", "\"opz\""),
+            good.replace("\"v\":1", "\"v\":2"),
         ).forEach { assertNull("payload: $it", ProposalCodec.decode(it)) }
 
         val undo = ProposalCodec.encodeUndo(

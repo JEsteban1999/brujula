@@ -115,21 +115,26 @@ class GoogleCopySync(
         }
     }
 
-    /** [a] es la actividad tal como estaba antes de borrarla (con su googleEventId). */
-    suspend fun afterDelete(a: Activity) = mutex.withLock {
+    /**
+     * [a] es la actividad tal como estaba antes de borrarla (con su googleEventId). Devuelve `false` si no se pudo
+     * intentar (sin permiso o con error), para que quien lo pidió pueda reintentar después.
+     */
+    suspend fun afterDelete(a: Activity): Boolean = mutex.withLock {
         try {
             if (!writer.hasWritePermission()) {
                 Log.w("GoogleCopySync", "Sin permiso de escritura: la copia de Google de la actividad ${a.id} no se pudo borrar")
-                return@withLock
+                return@withLock false
             }
             withContext(NonCancellable) {
                 val ids = (listOfNotNull(a.googleEventId) + writer.findCopies(a.id)).toSet()
                 ids.forEach { writer.delete(it) }
             }
+            true
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.w("GoogleCopySync", "No se pudo borrar la copia de Google", e)
+            false
         }
     }
 }

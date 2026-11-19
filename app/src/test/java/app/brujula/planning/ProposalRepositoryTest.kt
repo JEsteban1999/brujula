@@ -75,6 +75,15 @@ class ProposalRepositoryTest {
         assertEquals("DISCARDED", status(other))
     }
 
+    @Test fun unreadableAcceptedProposalIsNeverDiscarded() = runTest {
+        val id = db.proposalDao().insert(
+            ProposalEntity(day = fri, createdAt = fri.atTime(7, 0), status = "ACCEPTED", request = null, summary = "x", payload = "{basura", undo = "{}"),
+        )
+        assertNull(repo.get(id))
+        assertEquals("ACCEPTED", status(id))
+        assertEquals(setOf(fri), repo.acceptedDays())
+    }
+
     @Test fun daoSupersedePendingLeavesAcceptedAndOtherDaysAlone() = runTest {
         val dao = db.proposalDao()
         val accepted = repo.savePending(proposal(fri, "aceptada"))

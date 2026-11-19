@@ -11,6 +11,7 @@ import app.brujula.activities.OccurrenceOverride
 import app.brujula.activities.Repeat
 import app.brujula.activities.form.REMIND_BEFORE_MIN
 import app.brujula.activities.occurrencesOn
+import app.brujula.calendar.GoogleCopyJournal
 import app.brujula.calendar.GoogleCopySync
 import app.brujula.claude.ClaudeNote
 import app.brujula.claude.ClaudeNotes
@@ -99,29 +100,36 @@ class ProposalExecutor(
     private val syncScope: CoroutineScope,
     /** Para cancelar la espera "En 15 min" de una ocurrencia quitada o movida; `null` = no hay alarmas que cancelar. */
     private val reminderScheduler: ReminderScheduler? = null,
+    /** Copias a Google pendientes, persistidas antes del commit (producción: `container.googleCopyJournal`). */
+    private val journal: GoogleCopyJournal = GoogleCopyJournal(),
     internal val lock: ProposalLock = ProposalLock(),
 ) {
     /** Solo para pruebas: se invoca dentro de la transacción, después de aplicar los cambios y antes de marcarla aceptada. */
     internal var afterApply: (suspend () -> Unit)? = null
 
     /** Lo que se hace después del commit. */
-    private class Effects(val save: List<Activity>, val delete: List<Activity>, val snoozes: List<String>, val note: ClaudeNote)
+    private class Effects(val google: List<GoogleCopyJournal.Entry>, val snoozes: List<String>, val note: ClaudeNote)
 
     private class Outcome<R>(val result: R, val effects: Effects? = null)
 
+    /**
+     * Sin cancelación a medias: con Room 2.6, cancelar a quien llama durante `withTransaction` le devuelve la
+     * cancelación mientras el hilo de la transacción igual confirma; así nunca queda ACCEPTED sin resync, Google ni nota.
+     */
     suspend fun accept(id: Long): AcceptResult = lock.mutex.withLock {
-        val now = clock.now()
-        val outcome = try {
-            database.withTransaction { acceptInTransaction(id, now) }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.w(TAG, "No se pudo aplicar la propuesta: ${e.javaClass.simpleName}")
-            return@withLock AcceptResult.Failed(AcceptResult.FAILED)
+        withContext(NonCancellable) {
+            val now = clock.now()
+            val outcome = try {
+                database.withTransaction { acceptInTransaction(id, now) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "No se pudo aplicar la propuesta: ${e.javaClass.simpleName}")
+                return@withContext AcceptResult.Failed(AcceptResult.FAILED)
+            }
+            outcome.effects?.let { runEffects(it) }
+            outcome.result
         }
-        // Ya confirmado: los efectos terminan aunque se cierre la pantalla.
-        outcome.effects?.let { withContext(NonCancellable) { runEffects(it) } }
-        outcome.result
     }
 
     /** Sin cancelación a medias, como el deshacer de ActionExecutor. */
@@ -142,9 +150,10 @@ class ProposalExecutor(
     }
 
     private suspend fun acceptInTransaction(id: Long, now: LocalDateTime): Outcome<AcceptResult> {
-        // Un payload ilegible queda DISCARDED (eso sí se confirma) y no se aplica nada.
+        val status = proposals.statusOf(id) ?: return Outcome(AcceptResult.Failed(AcceptResult.FAILED))
+        if (status != ProposalStatus.PENDING) return Outcome(AcceptResult.AlreadyAccepted)
+        // Un payload ilegible de una pendiente queda DISCARDED (eso sí se confirma) y no se aplica nada.
         val p = proposals.get(id) ?: return Outcome(AcceptResult.Failed(AcceptResult.FAILED))
-        if (p.status != ProposalStatus.PENDING) return Outcome(AcceptResult.AlreadyAccepted)
         if (isExpired(p, now)) return Outcome(AcceptResult.Expired(AcceptResult.EXPIRED))
         if (!p.ops.all { isCurrent(it) }) return Outcome(AcceptResult.Stale(AcceptResult.STALE))
 
@@ -189,23 +198,23 @@ class ProposalExecutor(
                 }
             }
         }
+        // El diario se escribe (síncrono) antes del commit: si el proceso muere antes de la tanda, el arranque la completa.
+        val google = oneOffAfter.filter { it.copyToGoogle }.map { journal.save(it.id) } +
+            deleted.filter { it.copyToGoogle }.map { journal.delete(it) }
+        journal.record(google)
         afterApply?.invoke()
         val undo = UndoData(createdIds, oneOffBefore, oneOffAfter, deleted, overrideBefore, overrideAfter)
         proposals.markAccepted(id, ProposalCodec.encodeUndo(undo), now)
         return Outcome(
             AcceptResult.Accepted(p.copy(status = ProposalStatus.ACCEPTED)),
-            Effects(
-                save = oneOffAfter.filter { it.copyToGoogle },
-                delete = deleted.filter { it.copyToGoogle },
-                snoozes = snoozes,
-                note = ClaudeNote(p.summary, p.day, p.id),
-            ),
+            Effects(google = google, snoozes = snoozes, note = ClaudeNote(p.summary, p.day, p.id)),
         )
     }
 
     private suspend fun undoInTransaction(id: Long, now: LocalDateTime): Outcome<UndoResult> {
-        val p = proposals.get(id) ?: return Outcome(UndoResult.NotAccepted)
-        if (p.status != ProposalStatus.ACCEPTED) return Outcome(UndoResult.NotAccepted)
+        if (proposals.statusOf(id) != ProposalStatus.ACCEPTED) return Outcome(UndoResult.NotAccepted)
+        // Una aceptada con payload ilegible no se descarta (sus cambios siguen en la agenda): solo no se puede deshacer.
+        val p = proposals.get(id) ?: return Outcome(UndoResult.Failed(UndoResult.FAILED))
         if (p.day < logicalDay(now)) return Outcome(UndoResult.Failed(UndoResult.PAST))
         val u = proposals.undoOf(id)?.let { ProposalCodec.decodeUndo(it) } ?: return Outcome(UndoResult.Failed(UndoResult.FAILED))
 
@@ -218,7 +227,9 @@ class ProposalExecutor(
         u.createdIds.forEachIndexed { i, createdId ->
             val current = activityRepo.get(createdId) ?: return@forEachIndexed
             val planned = creates.getOrNull(i)?.let { planBlock(it.activity).copy(id = createdId) }
-            if (planned != null && sameRow(current, planned) && !activityRepo.isDone(createdId, current.date)) {
+            // Un bloque que ya terminó es historia del día ("Así te fue hoy"): se deja, como una edición posterior.
+            val ended = current.date.atTime(current.start).plusMinutes(current.durationMin.toLong()) <= now
+            if (planned != null && sameRow(current, planned) && !ended && !activityRepo.isDone(createdId, current.date)) {
                 activityRepo.delete(createdId)
             } else {
                 kept++
@@ -254,10 +265,12 @@ class ProposalExecutor(
             activityRepo.get(gone.id)?.let { restored += it }
         }
 
+        val google = restored.filter { it.copyToGoogle }.map { journal.save(it.id) }
+        journal.record(google)
         proposals.reopen(id, p.day)
         return Outcome(
             UndoResult.Undone(kept),
-            Effects(save = restored.filter { it.copyToGoogle }, delete = emptyList(), snoozes = emptyList(), note = ClaudeNote(UNDONE_NOTE, p.day, null)),
+            Effects(google = google, snoozes = emptyList(), note = ClaudeNote(UNDONE_NOTE, p.day, null)),
         )
     }
 
@@ -277,7 +290,9 @@ class ProposalExecutor(
     private suspend fun isCurrent(op: PlanOp): Boolean = when (op) {
         is PlanOp.Create -> true
         is PlanOp.Move -> isCurrent(op.activityId, op.occurrenceDay, op.from, op.oneOff)
-        is PlanOp.Skip -> isCurrent(op.activityId, op.occurrenceDay, op.from, op.oneOff)
+        // Borrar una de una sola vez arrastra en cascada sus marcas y overrides: si tiene alguno (otra fecha), no se toca.
+        is PlanOp.Skip -> isCurrent(op.activityId, op.occurrenceDay, op.from, op.oneOff) &&
+            !(op.oneOff && activityRepo.hasDependents(op.activityId))
     }
 
     private suspend fun isCurrent(activityId: Long, day: LocalDate, from: TimeSpan, oneOff: Boolean): Boolean {
@@ -293,12 +308,13 @@ class ProposalExecutor(
     }
 
     private suspend fun runEffects(e: Effects) {
+        // Google primero (en syncScope, no espera), así un resync lento no la retrasa.
+        launchGoogle(e.google)
         // Antes del resync: replaceAll ya no vuelve a armar esas esperas.
         e.snoozes.forEach { key ->
             runCatching { reminderScheduler?.cancelSnooze(key) }.onFailure { Log.w(TAG, "No se pudo cancelar la espera: ${it.javaClass.simpleName}") }
         }
         resyncSafely()
-        launchGoogle(e.save, e.delete)
         try {
             notes.set(e.note)
         } catch (ex: Exception) {
@@ -307,13 +323,13 @@ class ProposalExecutor(
     }
 
     /** Llamado con el Mutex tomado: las tandas quedan en orden (borrar la copia vieja antes de crear la nueva). */
-    private fun launchGoogle(save: List<Activity>, delete: List<Activity>) {
-        if (save.isEmpty() && delete.isEmpty()) return
+    private fun launchGoogle(entries: List<GoogleCopyJournal.Entry>) {
+        if (entries.isEmpty()) return
         val previous = lock.lastGoogle
         lock.lastGoogle = syncScope.launch {
             previous?.join()
-            delete.forEach { googleCopySync.afterDelete(it) }
-            save.forEach { googleCopySync.afterSave(it) }
+            // Cada entrada relee la fila por id (nunca la foto del commit) y sale del diario al terminar.
+            entries.forEach { journal.run(it, googleCopySync, activityRepo) }
         }
     }
 

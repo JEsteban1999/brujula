@@ -45,6 +45,8 @@ class ActivityRepository(private val dao: ActivityDao) {
 
     suspend fun isDone(id: Long, day: LocalDate): Boolean = dao.isDone(id, day)
 
+    suspend fun hasDependents(id: Long): Boolean = dao.hasDependents(id)
+
     suspend fun setDone(id: Long, day: LocalDate, done: Boolean) {
         if (done) dao.insertCompletion(ActivityCompletionEntity(id, day)) else dao.deleteCompletion(id, day)
     }

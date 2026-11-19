@@ -56,6 +56,13 @@ interface ActivityDao {
     @Query("SELECT EXISTS(SELECT 1 FROM activity_completions WHERE activityId = :id AND day = :day)")
     suspend fun isDone(id: Long, day: LocalDate): Boolean
 
+    /** Tiene marcas de hecho u overrides (que un borrado arrastraría en cascada). */
+    @Query(
+        "SELECT EXISTS(SELECT 1 FROM activity_completions WHERE activityId = :id) " +
+            "OR EXISTS(SELECT 1 FROM activity_overrides WHERE activityId = :id)",
+    )
+    suspend fun hasDependents(id: Long): Boolean
+
     @Query("SELECT * FROM activity_overrides")
     fun observeOverrides(): Flow<List<ActivityOverrideEntity>>
 

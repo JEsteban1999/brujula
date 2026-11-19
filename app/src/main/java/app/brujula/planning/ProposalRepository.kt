@@ -17,7 +17,10 @@ class ProposalRepository(private val dao: ProposalDao) {
         ),
     )
 
-    /** Un payload ilegible no se puede mostrar ni aplicar: se marca DISCARDED y se devuelve `null`. */
+    /**
+     * Un payload ilegible no se puede mostrar ni aplicar: se devuelve `null`. Si estaba PENDING se marca DISCARDED; una
+     * ACCEPTED nunca se descarta (sus cambios siguen en la agenda y su día cuenta como armado).
+     */
     suspend fun get(id: Long): Proposal? = dao.get(id)?.let { toModel(it) }
 
     suspend fun pendingFor(day: LocalDate): Proposal? = dao.latestByStatus(day, ProposalStatus.PENDING.name)?.let { toModel(it) }
@@ -29,6 +32,9 @@ class ProposalRepository(private val dao: ProposalDao) {
     suspend fun acceptedDays(): Set<LocalDate> = dao.acceptedDays().toSet()
 
     fun observeAcceptedIds(): Flow<Set<Long>> = dao.observeAcceptedIds().map { it.toSet() }
+
+    internal suspend fun statusOf(id: Long): ProposalStatus? =
+        dao.get(id)?.let { e -> runCatching { ProposalStatus.valueOf(e.status) }.getOrNull() }
 
     /** Datos para deshacer de una propuesta aceptada (JSON de [ProposalCodec.encodeUndo]). */
     internal suspend fun undoOf(id: Long): String? = dao.get(id)?.undo
@@ -42,7 +48,7 @@ class ProposalRepository(private val dao: ProposalDao) {
         val body = ProposalCodec.decode(e.payload)
         val status = runCatching { ProposalStatus.valueOf(e.status) }.getOrNull()
         if (body == null || status == null) {
-            dao.setStatus(e.id, ProposalStatus.DISCARDED.name)
+            if (status == ProposalStatus.PENDING) dao.setStatus(e.id, ProposalStatus.DISCARDED.name)
             return null
         }
         return Proposal(

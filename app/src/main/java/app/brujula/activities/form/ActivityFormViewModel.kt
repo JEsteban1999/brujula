@@ -13,6 +13,7 @@ import app.brujula.activities.Overrides
 import app.brujula.activities.occurrencesOn
 import app.brujula.calendar.CalendarSource
 import app.brujula.calendar.ExternalEvent
+import app.brujula.calendar.GoogleCopyJournal
 import app.brujula.calendar.GoogleCopyStatus
 import app.brujula.calendar.GoogleCopySync
 import app.brujula.calendar.NoCalendarSource
@@ -103,6 +104,8 @@ class ActivityFormViewModel(
     private val googleScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val googleTimeoutMillis: Long = 4_000,
     scopeOverride: CoroutineScope? = null,
+    /** Borrados pendientes en Google, persistidos antes de borrar la fila (producción: `container.googleCopyJournal`). */
+    private val googleJournal: GoogleCopyJournal = GoogleCopyJournal(),
 ) : ViewModel() {
     /** "Hoy" del usuario: el día lógico (cambia a las 04:00). */
     val today: LocalDate get() = logicalDay(clock.now())
@@ -313,10 +316,12 @@ class ActivityFormViewModel(
         val id = editingId ?: return
         scope.launch {
             val before = activityRepository.get(id)
+            // Antes de borrar: si el proceso muere antes de la tanda de Google, el arranque borra la copia.
+            val entry = if (before != null && googleCopy != null) googleJournal.delete(before).also { googleJournal.record(listOf(it)) } else null
             activityRepository.delete(id)
             runCatching { resync.resync() }
-            if (before != null) {
-                googleCopy?.let { sync -> googleScope.launch { sync.afterDelete(before) } }
+            if (entry != null) {
+                googleCopy?.let { sync -> googleScope.launch { googleJournal.run(entry, sync, activityRepository) } }
             }
             _state.update { it.copy(saved = true) }
         }
