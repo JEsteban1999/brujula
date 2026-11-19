@@ -50,8 +50,8 @@ private val Amber = Color(0xFFFFB020)
 private val TextPrimary = Color(0xFFF1F0FF)
 private val TextSecondary = Color(0xFFA9A5C9)
 
-// Mismo tamaño que la baldosa del splash del sistema (60/108 de 240 dp), para continuar sin salto.
-private val TileSize = 133.dp
+// Mismo tamaño que la baldosa del splash del sistema (ver SplashGeometry: 288 dp * 60/108 = 160 dp).
+private val TileSize = SplashGeometry.TILE_DP.dp
 private val RippleEase = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
 private val SlideEase = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
 

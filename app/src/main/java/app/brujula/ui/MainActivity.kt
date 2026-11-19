@@ -16,7 +16,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
+import app.brujula.splash.shouldPlayIntro
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.Box
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
 
         // La intro solo en arranque en frío: ni al recrear la actividad (rotación) ni al reabrirla
         // con el proceso vivo.
-        val playIntro = savedInstanceState == null && !introShownInProcess
+        val playIntro = shouldPlayIntro(introShownInProcess, savedInstanceState != null)
         if (playIntro) {
             introShownInProcess = true
             // Mantiene el splash del sistema (ícono animado) hasta completar SYSTEM_MS.
@@ -52,7 +52,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             val container = LocalContext.current.container
             val reduceMotion = rememberReducedMotion()
-            var showIntro by rememberSaveable { mutableStateOf(playIntro) }
+            // Sin rememberSaveable: tras recrear la actividad playIntro ya es false y la intro no se repite.
+            var showIntro by remember { mutableStateOf(playIntro) }
             val darkState = remember(container) { darkFlow(container.routineRepository.routine, container.clock) }
             // null hasta que la rutina guardada se carga: así no hay destello del tema por defecto.
             // Se recoge en paralelo a la intro; la intro no espera.
