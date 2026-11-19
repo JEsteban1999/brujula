@@ -84,6 +84,8 @@ data class TodayUiState(
     /** Día lógico mostrado (para prellenar formularios). */
     val day: LocalDate,
     val dayType: DayType = DayType(DayKind.WORKDAY),
+    /** Madrugada (00:00-03:59): el reloj ya cambió de fecha pero se sigue mostrando el día lógico anterior. */
+    val isLateNight: Boolean = false,
 )
 
 private const val MAX_VISIBLE_HABITS = 2
@@ -175,6 +177,7 @@ class TodayViewModel(
             dayLabel = formatDayEs(day), workMinutes = 0, workGoal = goal,
             workStatus = goal?.let { workStatus(0, it) }, habits = emptyList(), timeline = emptyList(),
             freeSlots = emptyList(), permissions = permissions.value, day = day, dayType = type,
+            isLateNight = isLateNight(clock.now(), day),
         )
     }
 
@@ -223,8 +226,12 @@ class TodayViewModel(
             permissions = perms,
             day = day,
             dayType = type,
+            isLateNight = isLateNight(now, day),
         )
     }
+
+    /** El reloj ya está en una fecha posterior al día lógico mostrado (00:00-03:59). */
+    private fun isLateNight(now: LocalDateTime, day: LocalDate): Boolean = now.toLocalDate().isAfter(day)
 
     fun addHabit(habitId: Long) {
         scope.launch { habitRepository.logDone(habitId, clock.now()) }

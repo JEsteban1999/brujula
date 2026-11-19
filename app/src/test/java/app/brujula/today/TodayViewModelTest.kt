@@ -240,6 +240,61 @@ class TodayViewModelTest {
         assertEquals(setOf(id to yesterday), activities.observeDoneKeys().first())
     }
 
+    private fun lateNightAt(at: LocalDateTime) = runTest {
+        clock.current = at
+        // se espera al estado cargado (no al inicial): una actividad sembrada debe aparecer en la línea de tiempo
+        activities.upsert(act("Trabajo", ActivityType.WORK, "09:00", 60, date = logicalDayOf(at)))
+        val s = vm().state.first { it.own.isNotEmpty() }
+        lateNightResult = s
+    }
+
+    private var lateNightResult: TodayUiState? = null
+    private fun logicalDayOf(at: LocalDateTime) = app.brujula.routine.logicalDay(at)
+
+    @Test fun thursday0030IsLateNightOfWednesday() {
+        lateNightAt(LocalDateTime.of(2026, 11, 19, 0, 30))
+        assertEquals(LocalDate.of(2026, 11, 18), lateNightResult!!.day)
+        assertTrue(lateNightResult!!.isLateNight)
+    }
+
+    @Test fun thursday0359IsStillLateNight() {
+        lateNightAt(LocalDateTime.of(2026, 11, 19, 3, 59))
+        assertEquals(LocalDate.of(2026, 11, 18), lateNightResult!!.day)
+        assertTrue(lateNightResult!!.isLateNight)
+    }
+
+    @Test fun thursday0400IsNotLateNight() {
+        lateNightAt(LocalDateTime.of(2026, 11, 19, 4, 0))
+        assertEquals(LocalDate.of(2026, 11, 19), lateNightResult!!.day)
+        assertFalse(lateNightResult!!.isLateNight)
+    }
+
+    @Test fun wednesday2330IsNotLateNight() {
+        lateNightAt(LocalDateTime.of(2026, 11, 18, 23, 30))
+        assertEquals(LocalDate.of(2026, 11, 18), lateNightResult!!.day)
+        assertFalse(lateNightResult!!.isLateNight)
+    }
+
+    @Test fun lateNightFlagFollowsTheTicker() = runTest {
+        clock.current = LocalDateTime.of(2026, 11, 18, 23, 59)
+        val vm = vmFor("r4.preferences_pb", tick = 1000)
+        fun TestScope.await(cond: (TodayUiState) -> Boolean): TodayUiState {
+            testScheduler.advanceTimeBy(1000)
+            repeat(500) {
+                testScheduler.runCurrent()
+                if (cond(vm.state.value)) return vm.state.value
+                Thread.sleep(10)
+            }
+            error("estado esperado no alcanzado: ${vm.state.value}")
+        }
+        activities.upsert(act("Trabajo", ActivityType.WORK, "09:00", 60))
+        assertFalse(await { it.own.isNotEmpty() }.isLateNight)
+        clock.current = LocalDateTime.of(2026, 11, 19, 0, 0)
+        assertTrue(await { it.isLateNight }.isLateNight)
+        clock.current = LocalDateTime.of(2026, 11, 19, 4, 0)
+        assertFalse(await { !it.isLateNight && it.day == LocalDate.of(2026, 11, 19) }.isLateNight)
+    }
+
     @Test fun missingPermissionsAreExposed() = runTest {
         perms = PermissionStatus(notifications = false, exactAlarms = true)
         val vm = vm()
