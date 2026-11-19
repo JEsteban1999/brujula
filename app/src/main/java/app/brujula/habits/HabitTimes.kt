@@ -17,6 +17,8 @@ fun Habit.timesFor(day: LocalDate, routine: Routine): List<LocalDateTime> {
             }.takeWhile { it < window.end }.toList()
         }
         is HabitSchedule.AtTimes ->
-            s.times.map { day.atTime(it) }.filter { it in window }.sorted()
+            // Con acostarse pasada la medianoche, una hora anterior a levantarse cae en la madrugada del dia siguiente.
+            s.times.map { if (window.end.toLocalDate() > day && it < routine.wake) day.plusDays(1).atTime(it) else day.atTime(it) }
+                .filter { it in window }.sorted()
     }
 }

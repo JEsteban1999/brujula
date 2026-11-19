@@ -150,11 +150,24 @@ fun HabitFormScreen(viewModel: HabitFormViewModel, onClose: () -> Unit, modifier
             }
 
             Card {
-                StepperRow(
-                    "Meta del día", "${state.dailyTarget}", "Una menos", "Una más", reduced,
-                    onMinus = { viewModel.setDailyTarget(state.dailyTarget - 1) },
-                    onPlus = { viewModel.setDailyTarget(state.dailyTarget + 1) },
-                )
+                if (state.mode == HabitMode.EVERY) {
+                    StepperRow(
+                        "Meta del día", "${state.dailyTarget}", "Una menos", "Una más", reduced,
+                        onMinus = { viewModel.setDailyTarget(state.dailyTarget - 1) },
+                        onPlus = { viewModel.setDailyTarget(state.dailyTarget + 1) },
+                    )
+                    Text(
+                        "Al llegar a la meta, se pausan los avisos del día.",
+                        color = c.textMuted, fontSize = 12.sp,
+                    )
+                } else {
+                    // A horas fijas la meta es una por cada hora: no se edita.
+                    Text(
+                        "Meta del día: ${state.times.size}",
+                        color = c.text, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                    )
+                    Text("Una por cada hora que agregues.", color = c.textMuted, fontSize = 12.sp)
+                }
             }
 
             Field("Días") {

@@ -31,6 +31,7 @@ import app.brujula.settings.RoutineScreen
 import app.brujula.settings.RoutineViewModel
 import app.brujula.today.TodayScreen
 import app.brujula.today.TodayViewModel
+import kotlinx.coroutines.flow.first
 import java.time.LocalDateTime
 
 object Routes {
@@ -172,6 +173,7 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                                 habitId = id,
                                 habitRepository = container.habitRepository,
                                 resync = container.reminderSync,
+                                routineProvider = { container.routineRepository.routine.first() },
                             )
                         }
                     },

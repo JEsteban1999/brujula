@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import app.brujula.data.db.BrujulaDatabase
+import app.brujula.routine.Routine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
@@ -82,6 +83,35 @@ class HabitFormViewModelTest {
         assertEquals(8, h.dailyTarget)
         assertEquals(DayOfWeek.entries.toSet(), h.days)
         assertEquals(1, resyncs)
+    }
+
+    @Test fun everyDefaultTargetIsNumberOfSlotsInAwakeWindow() = runTest {
+        val vm = vm()
+        assertEquals(10, vm.state.value.dailyTarget) // 08:15 a 00:30 cada 90 min
+        vm.setIntervalMin(60)
+        assertEquals(16, vm.state.value.dailyTarget)
+        vm.setDailyTarget(5) // lo toca el usuario: ya no se recalcula
+        vm.setIntervalMin(120)
+        assertEquals(5, vm.state.value.dailyTarget)
+    }
+
+    @Test fun everyDefaultTargetUsesTheSavedRoutine() = runTest {
+        val vm = HabitFormViewModel(
+            habitId = null, habitRepository = habits, resync = { },
+            routineProvider = { Routine(wake = LocalTime.of(8, 0), bed = LocalTime.of(22, 0)) },
+            scopeOverride = backgroundScope,
+        )
+        vm.state.first { it.dailyTarget == 9 } // 8:00-22:00 = 840 min cada 90 -> 9
+    }
+
+    @Test fun atTimesTargetEqualsNumberOfTimes() = runTest {
+        val vm = vm()
+        vm.setName("Bálsamo")
+        vm.setMode(HabitMode.AT_TIMES)
+        vm.setTimes(listOf(LocalTime.of(9, 0), LocalTime.of(13, 0), LocalTime.of(9, 0), LocalTime.of(17, 0)))
+        vm.save()
+        vm.state.first { it.saved }
+        assertEquals(3, habits.observeHabits().first().single().dailyTarget)
     }
 
     @Test fun validAtTimesSavesSortedAndOnlyOnce() = runTest {

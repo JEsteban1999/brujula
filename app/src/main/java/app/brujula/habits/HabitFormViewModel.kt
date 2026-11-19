@@ -10,7 +10,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import app.brujula.routine.Routine
 import java.time.DayOfWeek
+import java.time.LocalDate
 import java.time.LocalTime
 
 enum class HabitMode { EVERY, AT_TIMES }
@@ -18,6 +20,7 @@ enum class HabitMode { EVERY, AT_TIMES }
 const val MIN_INTERVAL_MIN = 15
 const val MAX_INTERVAL_MIN = 480
 const val MAX_DAILY_TARGET = 99
+private val REFERENCE_DAY: LocalDate = LocalDate.of(2000, 1, 3)
 
 data class HabitFormState(
     val name: String = "",
@@ -25,7 +28,9 @@ data class HabitFormState(
     val mode: HabitMode = HabitMode.EVERY,
     val intervalMin: Int = 90,
     val times: List<LocalTime> = emptyList(),
-    val dailyTarget: Int = 1,
+    val dailyTarget: Int = 10,
+    /** Falso mientras la meta sea la calculada; al tocarla el usuario deja de recalcularse. */
+    val targetTouched: Boolean = false,
     val days: Set<DayOfWeek> = DayOfWeek.entries.toSet(),
     val nameError: String? = null,
     val intervalError: String? = null,
@@ -45,15 +50,24 @@ class HabitFormViewModel(
     habitId: Long?,
     private val habitRepository: HabitRepository,
     private val resync: ReminderResync = ReminderResync { },
+    /** Rutina para calcular la meta por defecto de los habitos "cada cierto tiempo". */
+    private val routineProvider: suspend () -> Routine = { Routine() },
     scopeOverride: CoroutineScope? = null,
 ) : ViewModel() {
     private val scope = scopeOverride ?: viewModelScope
     private var editing: Habit? = null
+    private var routine = Routine()
 
-    private val _state = MutableStateFlow(HabitFormState(ready = habitId == null))
+    private val _state = MutableStateFlow(autoTarget(HabitFormState(ready = habitId == null)))
     val state: StateFlow<HabitFormState> = _state.asStateFlow()
 
     init {
+        if (habitId == null) {
+            scope.launch {
+                routine = runCatching { routineProvider() }.getOrDefault(routine)
+                _state.update { autoTarget(it) }
+            }
+        }
         if (habitId != null) {
             scope.launch {
                 val h = habitRepository.observeHabits().first().firstOrNull { it.id == habitId }
@@ -64,7 +78,7 @@ class HabitFormViewModel(
                 editing = h
                 _state.update {
                     it.copy(
-                        name = h.name, icon = h.icon, dailyTarget = h.dailyTarget, days = h.days, isEdit = true, ready = true,
+                        name = h.name, icon = h.icon, dailyTarget = h.dailyTarget, targetTouched = true, days = h.days, isEdit = true, ready = true,
                         mode = if (h.schedule is HabitSchedule.AtTimes) HabitMode.AT_TIMES else HabitMode.EVERY,
                         intervalMin = (h.schedule as? HabitSchedule.Every)?.intervalMin ?: it.intervalMin,
                         times = (h.schedule as? HabitSchedule.AtTimes)?.times ?: it.times,
@@ -81,12 +95,20 @@ class HabitFormViewModel(
 
     fun setName(v: String) = edit { it.copy(name = v, nameError = null) }
     fun setIcon(v: HabitIcon) = edit { it.copy(icon = v) }
-    fun setMode(v: HabitMode) = edit { it.copy(mode = v, intervalError = null, timesError = null) }
-    fun setIntervalMin(v: Int) = edit { it.copy(intervalMin = v, intervalError = null) }
+    fun setMode(v: HabitMode) = edit { autoTarget(it.copy(mode = v, intervalError = null, timesError = null)) }
+    fun setIntervalMin(v: Int) = edit { autoTarget(it.copy(intervalMin = v, intervalError = null)) }
     fun setTimes(v: List<LocalTime>) = edit { it.copy(times = v, timesError = null) }
     fun addTime(t: LocalTime) = edit { it.copy(times = (it.times + t).distinct().sorted(), timesError = null) }
     fun removeTime(t: LocalTime) = edit { it.copy(times = it.times - t) }
-    fun setDailyTarget(v: Int) = edit { it.copy(dailyTarget = v.coerceIn(1, MAX_DAILY_TARGET)) }
+    fun setDailyTarget(v: Int) = edit { it.copy(dailyTarget = v.coerceIn(1, MAX_DAILY_TARGET), targetTouched = true) }
+
+    /** Meta calculada: tantos avisos como caben en la vigilia mientras el usuario no la toque. */
+    private fun autoTarget(s: HabitFormState): HabitFormState {
+        if (s.targetTouched || s.mode != HabitMode.EVERY || s.intervalMin !in MIN_INTERVAL_MIN..MAX_INTERVAL_MIN) return s
+        val slots = Habit(name = "", icon = HabitIcon.GENERIC, schedule = HabitSchedule.Every(s.intervalMin), dailyTarget = 1)
+            .timesFor(REFERENCE_DAY, routine).size
+        return s.copy(dailyTarget = slots.coerceIn(1, MAX_DAILY_TARGET))
+    }
     fun setDays(v: Set<DayOfWeek>) = edit { it.copy(days = v, daysError = null) }
 
     fun toggleDay(d: DayOfWeek) = edit {
@@ -118,11 +140,13 @@ class HabitFormViewModel(
             HabitMode.EVERY -> HabitSchedule.Every(s.intervalMin)
             HabitMode.AT_TIMES -> HabitSchedule.AtTimes(s.times.distinct().sorted())
         }
+        // A horas fijas: la meta es una por cada hora, asi nunca se pausan los avisos restantes.
+        val target = if (s.mode == HabitMode.AT_TIMES) s.times.distinct().size else s.dailyTarget
         scope.launch {
             habitRepository.upsert(
                 Habit(
                     id = editing?.id ?: 0L, name = name, icon = s.icon, schedule = schedule,
-                    dailyTarget = s.dailyTarget, days = s.days, active = editing?.active ?: true,
+                    dailyTarget = target, days = s.days, active = editing?.active ?: true,
                 ),
             )
             runCatching { resync.resync() }

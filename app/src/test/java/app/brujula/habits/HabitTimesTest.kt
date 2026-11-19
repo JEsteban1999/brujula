@@ -30,6 +30,13 @@ class HabitTimesTest {
         assertEquals(listOf(13, 17, 21), balm.timesFor(d, Routine(wake = LocalTime.of(10, 0))).map { it.hour })
     }
 
+    @Test fun atTimeAfterMidnightBeforeBedFallsOnNextCalendarDay() {
+        val r = Routine(bed = LocalTime.of(0, 30))
+        val h = Habit(3, "Tarde", HabitIcon.GENERIC, HabitSchedule.AtTimes(listOf(LocalTime.of(0, 15), LocalTime.of(9, 0), LocalTime.of(2, 0))), 3)
+        // 00:15 cae dentro de la vigilia (bed 00:30) del dia siguiente natural; 02:00 esta dormido
+        assertEquals(listOf(d.atTime(9, 0), d.plusDays(1).atTime(0, 15)), h.timesFor(d, r))
+    }
+
     @Test fun respectsDaysAndActive() {
         val mondayOnly = water.copy(days = setOf(DayOfWeek.MONDAY))
         assertEquals(DayOfWeek.WEDNESDAY, d.dayOfWeek)
