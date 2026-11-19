@@ -71,7 +71,7 @@ data class ActivityFormState(
     /** Aviso si la copia a Google no se pudo hacer; null si no hay nada que avisar. */
     val googleNotice: String?
         get() = when (googleStatus) {
-            GoogleCopyStatus.NO_PERMISSION -> "No se pudo copiar: falta el permiso de calendario"
+            GoogleCopyStatus.NO_PERMISSION -> "No se pudo copiar: falta el permiso de calendario. Actívalo en Tu rutina."
             GoogleCopyStatus.NO_GOOGLE_ACCOUNT -> "No hay una cuenta de Google en el teléfono"
             GoogleCopyStatus.FAILED -> "No se pudo copiar a Google Calendar"
             else -> null
@@ -289,11 +289,15 @@ class ActivityFormViewModel(
                     GoogleCopyStatus.FAILED
                 }
             } ?: GoogleCopyStatus.NOT_REQUESTED
-            if (status != GoogleCopyStatus.NOT_REQUESTED && status != GoogleCopyStatus.COPIED) {
+            // El aviso (y la espera para leerlo) solo aplica si el usuario ya conecto calendarios alguna vez;
+            // si no, el formulario se cierra enseguida y sin aviso, como antes de la Fase 2A.
+            val needsNotice = status != GoogleCopyStatus.NOT_REQUESTED && status != GoogleCopyStatus.COPIED
+            val showNotice = needsNotice && selectedIds != null
+            if (showNotice) {
                 _state.update { it.copy(googleStatus = status) }
                 delay(noticeMillis)
             }
-            _state.update { it.copy(googleStatus = status, saved = true) }
+            _state.update { it.copy(googleStatus = if (needsNotice && !showNotice) GoogleCopyStatus.NOT_REQUESTED else status, saved = true) }
         }
     }
 

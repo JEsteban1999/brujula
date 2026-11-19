@@ -328,4 +328,33 @@ class ActivityFormViewModelTest {
         val vm = newVm(prefill = tomorrow.atTime(14, 0))
         assertEquals("Ajena", vm.state.first { it.externalConflict?.title == "Ajena" }.externalConflict?.title)
     }
+
+    private fun TestScope.vmNoPermission(selected: kotlinx.coroutines.flow.Flow<Set<Long>?>, writer: app.brujula.calendar.FakeGoogleCalendarWriter, sync: app.brujula.calendar.GoogleCopySync) =
+        ActivityFormViewModel(
+            activityId = null, prefillStart = null, clock = clock, activityRepository = repo,
+            resync = { resyncs++ }, calendarSource = calendar, selectedCalendarIds = selected,
+            googleCopy = sync, noticeMillis = 5_000, googleScope = realScope, scopeOverride = backgroundScope,
+        )
+
+    @Test fun noticeIsShownAndHeldOnlyWhenCalendarsWereConnected() = runTest {
+        val writer = app.brujula.calendar.FakeGoogleCalendarWriter(permission = false)
+        val vm = vmNoPermission(flowOf(setOf(1L)), writer, app.brujula.calendar.GoogleCopySync(writer, repo))
+        vm.setTitle("Dentista"); vm.setType(ActivityType.APPOINTMENT)
+        vm.save()
+        val s = vm.state.first { it.googleStatus == app.brujula.calendar.GoogleCopyStatus.NO_PERMISSION }
+        assertEquals("No se pudo copiar: falta el permiso de calendario. Actívalo en Tu rutina.", s.googleNotice)
+        vm.state.first { it.saved }
+        assertTrue(testScheduler.currentTime >= 5_000)
+    }
+
+    @Test fun noNoticeAndNoHoldWhenCalendarsWereNeverConnected() = runTest {
+        val writer = app.brujula.calendar.FakeGoogleCalendarWriter(permission = false)
+        val vm = vmNoPermission(flowOf(null), writer, app.brujula.calendar.GoogleCopySync(writer, repo))
+        vm.setTitle("Dentista"); vm.setType(ActivityType.APPOINTMENT)
+        vm.save()
+        val s = vm.state.first { it.saved }
+        assertNull(s.googleNotice)
+        assertTrue(testScheduler.currentTime < 5_000)
+        assertTrue(repo.observeAll().first().any { it.title == "Dentista" })
+    }
 }

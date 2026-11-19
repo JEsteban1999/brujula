@@ -2,6 +2,7 @@ package app.brujula.calendar
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
@@ -15,6 +16,15 @@ class CalendarPrefs(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setSelectedCalendarIds(ids: Set<Long>) {
         dataStore.edit { it[key] = ids.sorted().joinToString(",") }
+    }
+
+    private val copyKey = booleanPreferencesKey("copy_to_google_enabled")
+
+    /** Interruptor global de la copia a Google Calendar (spec 8); activo por defecto. */
+    val copyToGoogleEnabled: Flow<Boolean> = dataStore.data.map { p -> p[copyKey] ?: true }
+
+    suspend fun setCopyToGoogleEnabled(on: Boolean) {
+        dataStore.edit { it[copyKey] = on }
     }
 
     private fun decode(text: String): Set<Long> =

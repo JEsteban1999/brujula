@@ -44,4 +44,22 @@ class ExternalEventsTest {
         val b = crossing.copy(title = "reunion de equipo")
         assertEquals(classificationKey(b), classificationKey(a))
     }
+
+    @Test fun threeDayAllDayEventShowsOnEachDayExceptTheExclusiveEnd() {
+        val trip = ev(5, wed.atStartOfDay(), wed.plusDays(3).atStartOfDay(), allDay = true)
+        for (d in 0L..2L) assertEquals(listOf(5L), eventsOnLogicalDay(wed.plusDays(d), listOf(trip), null).map { it.eventId })
+        assertEquals(emptyList<Long>(), eventsOnLogicalDay(wed.plusDays(3), listOf(trip), null).map { it.eventId })
+        assertEquals(emptyList<Long>(), eventsOnLogicalDay(wed.minusDays(1), listOf(trip), null).map { it.eventId })
+    }
+
+    @Test fun multiDayTimedEventShowsOnEveryDayItCrossesTheAwakeWindow() {
+        val mon = wed.minusDays(2)
+        val tue = wed.minusDays(1)
+        val trip = ev(6, mon.atTime(9, 0), wed.atTime(18, 0))
+        fun awake(d: LocalDate) = TimeSpan(d.atTime(8, 0), d.atTime(23, 0))
+        assertEquals(listOf(6L), eventsOnLogicalDay(mon, listOf(trip), awake(mon)).map { it.eventId })
+        assertEquals(listOf(6L), eventsOnLogicalDay(tue, listOf(trip), awake(tue)).map { it.eventId })
+        assertEquals(listOf(6L), eventsOnLogicalDay(wed, listOf(trip), awake(wed)).map { it.eventId })
+        assertEquals(emptyList<Long>(), eventsOnLogicalDay(wed.plusDays(1), listOf(trip), awake(wed.plusDays(1))).map { it.eventId })
+    }
 }

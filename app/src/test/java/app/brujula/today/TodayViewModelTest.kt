@@ -325,6 +325,17 @@ class TodayViewModelTest {
         assertEquals(60, s.workMinutes)
     }
 
+    @Test fun multiDayWorkEventIsClippedToTheLogicalDay() = runTest {
+        // Dia mostrado: miercoles 18; el evento va de lunes 09:00 a viernes 18:00 y cuenta como trabajo.
+        val ev = ext(7, "Congreso", day.minusDays(2).atTime(9, 0), day.plusDays(2).atTime(18, 0))
+        classifications.set(classificationKey(ev), true)
+        val vm = vmWithCalendar(listOf(ev))
+        val s = vm.state.first { st -> st.timeline.any { it is TimelineBlock.External } }
+        assertEquals(1, s.timeline.size)
+        assertEquals(24 * 60, s.workMinutes)
+        assertTrue(s.freeSlots.isEmpty())
+    }
+
     @Test fun allDayEventGoesToAllDayAndKeepsSlots() = runTest {
         val vm = vmWithCalendar(listOf(ext(2, "Festivo", day.atStartOfDay(), day.plusDays(1).atStartOfDay(), allDay = true)))
         val s = vm.state.first { it.allDay.isNotEmpty() }

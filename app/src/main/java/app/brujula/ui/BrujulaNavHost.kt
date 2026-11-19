@@ -139,6 +139,8 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                             RoutineViewModel(
                                 container.routineRepository, container.reminderSync,
                                 calendarSource = container.calendarSource,
+                                syncScope = container.syncScope,
+                                reconcileGoogle = { container.reconcileGoogleCopies() },
                             )
                         }
                     },

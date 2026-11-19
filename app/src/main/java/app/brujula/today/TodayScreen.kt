@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -105,6 +106,9 @@ fun TodayScreen(
                 onCountsAsWork = { viewModel.setCountsAsWork(event, it) },
                 onDismiss = { openEventKey = null },
             )
+        } else {
+            // El evento ya no existe: se olvida la clave para que la hoja no reaparezca sola si vuelve a aparecer.
+            LaunchedEffect(openKey) { openEventKey = null }
         }
     }
 }

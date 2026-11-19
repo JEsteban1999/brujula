@@ -28,7 +28,9 @@ import app.brujula.routine.RoutineRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import app.brujula.routine.logicalDay
 import java.time.LocalDate
 
 private val Context.routineDataStore by preferencesDataStore(name = "routine")
@@ -55,7 +57,12 @@ class AppContainer(val context: Context) {
     )
 
     private var googleSyncOverride: GoogleCopySync? = null
-    private val defaultGoogleSync: GoogleCopySync by lazy { GoogleCopySync(googleCalendarWriter, activityRepository) }
+    private val defaultGoogleSync: GoogleCopySync by lazy {
+        GoogleCopySync(googleCalendarWriter, activityRepository) { routineRepository.calendarPrefs.copyToGoogleEnabled.first() }
+    }
+
+    /** Crea las copias a Google que falten (idempotente); se lanza en [syncScope]. */
+    suspend fun reconcileGoogleCopies() = googleCopySync.reconcile(logicalDay(clock.now()))
 
     /** Un solo GoogleCopySync (su Mutex serializa); sustituible en pruebas. */
     var googleCopySync: GoogleCopySync
@@ -104,6 +111,8 @@ open class BrujulaApp : Application() {
             runCatching { Migrations.exerciseToWorkdays(container.database, container.routineRepository) }
                 .onFailure { Log.e("BrujulaApp", "Fallo al migrar el ejercicio", it) }
         }
+        // Copias a Google pendientes (citas guardadas sin permiso, o con la copia apagada); idempotente.
+        container.syncScope.launch { container.reconcileGoogleCopies() }
         launchReminderResync()
     }
 

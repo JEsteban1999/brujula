@@ -34,4 +34,14 @@ class CalendarPrefsTest {
         ds.edit { it[stringPreferencesKey("selected_calendar_ids")] = "4,x,,7" }
         assertEquals(setOf(4L, 7L), CalendarPrefs(ds).selectedCalendarIds.first())
     }
+
+    @Test fun copyToGoogleSwitchDefaultsToTrueAndPersists() = runTest {
+        val ds = PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "p.preferences_pb") }
+        val prefs = CalendarPrefs(ds)
+        assertEquals(true, prefs.copyToGoogleEnabled.first())
+        prefs.setCopyToGoogleEnabled(false)
+        assertEquals(false, prefs.copyToGoogleEnabled.first())
+        prefs.setCopyToGoogleEnabled(true)
+        assertEquals(true, prefs.copyToGoogleEnabled.first())
+    }
 }

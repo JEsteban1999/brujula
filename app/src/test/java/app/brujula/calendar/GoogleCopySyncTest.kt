@@ -28,12 +28,13 @@ class GoogleCopySyncTest {
     private lateinit var repo: ActivityRepository
     private val writer = FakeGoogleCalendarWriter()
     private lateinit var sync: GoogleCopySync
+    private var switchOn = true
 
     @Before fun setUp() {
         db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), BrujulaDatabase::class.java)
             .allowMainThreadQueries().build()
         repo = ActivityRepository(db.activityDao())
-        sync = GoogleCopySync(writer, repo)
+        sync = GoogleCopySync(writer, repo) { switchOn }
     }
 
     @After fun tearDown() { db.close() }
@@ -164,5 +165,84 @@ class GoogleCopySyncTest {
             "_id = ? AND customAppPackage = ? AND deleted = 0", t.selection,
         )
         assertEquals(listOf("42", "app.brujula"), t.args.toList())
+    }
+
+    // --- reconcile (I3) ---
+    private val today = LocalDate.of(2026, 11, 18)
+
+    @Test fun reconcileCopiesFutureAppointmentWithoutLink() = runTest {
+        val a = save(base)
+        sync.reconcile(today)
+        assertEquals(1, writer.inserts)
+        assertEquals(100L, repo.get(a.id)!!.googleEventId)
+    }
+
+    @Test fun reconcileSkipsPastOneOffButKeepsRecurring() = runTest {
+        val past = save(base.copy(date = today.minusDays(1)))
+        val recurring = save(base.copy(title = "Gym", date = today.minusDays(30), repeat = app.brujula.activities.Repeat.WEEKLY))
+        sync.reconcile(today)
+        assertNull(repo.get(past.id)!!.googleEventId)
+        assertEquals(100L, repo.get(recurring.id)!!.googleEventId)
+        assertEquals(1, writer.inserts)
+    }
+
+    @Test fun reconcileSkipsActivitiesWithCopyOff() = runTest {
+        save(base.copy(copyToGoogle = false))
+        sync.reconcile(today)
+        assertEquals(0, writer.inserts + writer.updates + writer.deletes)
+    }
+
+    @Test fun reconcileTwiceInsertsOnce() = runTest {
+        save(base)
+        sync.reconcile(today)
+        sync.reconcile(today)
+        assertEquals(1, writer.inserts)
+        assertEquals(1, writer.events.size)
+    }
+
+    @Test fun reconcileDoesNothingWithSwitchOffNoPermissionOrNoAccount() = runTest {
+        val a = save(base)
+        switchOn = false
+        sync.reconcile(today)
+        switchOn = true
+        writer.permission = false
+        sync.reconcile(today)
+        writer.permission = true
+        writer.calendarId = null
+        sync.reconcile(today)
+        assertEquals(0, writer.inserts)
+        assertNull(repo.get(a.id)!!.googleEventId)
+    }
+
+    // --- interruptor global (M5) ---
+    @Test fun saveWithSwitchOffDoesNotCallWriterAndShowsNoNotice() = runTest {
+        switchOn = false
+        val a = save(base)
+        assertEquals(GoogleCopyStatus.NOT_REQUESTED, sync.afterSave(a))
+        assertEquals(0, writer.inserts + writer.updates + writer.deletes)
+        assertNull(repo.get(a.id)!!.googleEventId)
+    }
+
+    @Test fun switchOffKeepsExistingCopyOnSaveButDeleteStillRemovesIt() = runTest {
+        val a = save(base)
+        sync.afterSave(a)
+        switchOn = false
+        val edited = save(a.copy(title = "Otro", googleEventId = null))
+        assertEquals(GoogleCopyStatus.NOT_REQUESTED, sync.afterSave(edited))
+        assertEquals(1, writer.events.size)
+        assertEquals("Dentista", writer.events[100L]!!.title)
+        assertEquals(0, writer.updates)
+        val withId = repo.get(a.id)!!
+        repo.delete(a.id)
+        sync.afterDelete(withId)
+        assertEquals(emptyMap<Long, GoogleEventDraft>(), writer.events)
+    }
+
+    // --- M2 ---
+    @Test fun copyTurnedOffWithLostIdStillRemovesExistingCopy() = runTest {
+        val a = save(base.copy(copyToGoogle = false))
+        writer.events[500L] = draftFor(a)
+        assertEquals(GoogleCopyStatus.NOT_REQUESTED, sync.afterSave(a))
+        assertEquals(emptyMap<Long, GoogleEventDraft>(), writer.events)
     }
 }

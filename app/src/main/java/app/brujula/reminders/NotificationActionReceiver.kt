@@ -73,7 +73,8 @@ class NotificationActionReceiver : BroadcastReceiver() {
         }
         val window = c.routineRepository.routine.first().awakeWindow(day)
         val from = maxOf(ceilToQuarter(now), window.start)
-        val busy = (-1L..1L).flatMap { occurrencesOn(day.plusDays(it), activities, doneKeys) }.map { it.span }
+        val busy = (-1L..1L).flatMap { occurrencesOn(day.plusDays(it), activities, doneKeys) }.map { it.span } +
+            externalBusy(c, window)
         val slot = freeSlots(TimeSpan(from, window.end), busy, EXERCISE_MIN.toLong()).firstOrNull()
         if (slot == null) {
             Notifications.showInfo(context, "exnoslot:$day", "No encontré un hueco libre hoy para ejercicio.")
@@ -86,6 +87,24 @@ class NotificationActionReceiver : BroadcastReceiver() {
             )
         }
         c.routineRepository.markExercisePromptAnswered(day)
+    }
+
+    /** Reuniones de los calendarios elegidos (no de todo el dia, ni copias de Brujula); vacio si algo falla. */
+    private suspend fun externalBusy(c: app.brujula.AppContainer, window: TimeSpan): List<TimeSpan> = try {
+        val ids = c.routineRepository.calendarPrefs.selectedCalendarIds.first()
+        if (ids.isNullOrEmpty() || !c.calendarSource.hasReadPermission()) {
+            emptyList()
+        } else {
+            val linked = c.activityRepository.observeGoogleEventIds().first()
+            c.calendarSource.events(ids, window.start.minusDays(1), window.end.plusDays(1))
+                .filter { !it.allDay && it.eventId !in linked }
+                .map { it.span }
+        }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        android.util.Log.w("NotificationAction", "No se pudieron leer los calendarios", e)
+        emptyList()
     }
 
     private fun ceilToQuarter(t: LocalDateTime): LocalDateTime {

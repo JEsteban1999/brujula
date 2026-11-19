@@ -43,8 +43,9 @@ data class ExternalEvent(
 }
 
 /**
- * Eventos del dia logico [day]: los de horas que empiezan en el (04:00 a 03:59), los de todo el dia de esa fecha y,
- * si [awake] (la vigilia de [day]) no es null, los que empezaron el dia logico anterior y aun la cruzan.
+ * Eventos del dia logico [day]: los de horas que empiezan en el (04:00 a 03:59), los de todo el dia cuyo rango de fechas
+ * [inicio, fin) lo incluye (el fin es exclusivo, como lo guarda CalendarContract) y, si [awake] (la vigilia de [day]) no es
+ * null, los de horas que empezaron un dia logico anterior y aun cruzan esa vigilia.
  */
 fun eventsOnLogicalDay(
     day: LocalDate,
@@ -53,10 +54,12 @@ fun eventsOnLogicalDay(
 ): List<ExternalEvent> = events
     .filter { e ->
         if (e.allDay) {
-            e.span.start.toLocalDate() == day
+            val first = e.span.start.toLocalDate()
+            val endExclusive = e.span.end.toLocalDate()
+            day == first || (day > first && day < endExclusive)
         } else {
             val startDay = logicalDay(e.span.start)
-            startDay == day || (awake != null && startDay == day.minusDays(1) && e.span.overlaps(awake))
+            startDay == day || (awake != null && startDay < day && e.span.overlaps(awake))
         }
     }
     .distinctBy { it.key }

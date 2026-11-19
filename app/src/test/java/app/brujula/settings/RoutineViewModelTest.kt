@@ -128,7 +128,7 @@ class RoutineViewModelTest {
         e.vm.refreshCalendars().join()
         assertEquals(listOf(1L), e.vm.calendars.value.groups.single().items.filter { it.selected }.map { it.calendar.id })
         e.vm.toggleCalendar(1).join()
-        assertEquals(emptySet<Long>(), e.repo.calendarPrefs.selectedCalendarIds.first())
+        assertEquals(setOf(99L), e.repo.calendarPrefs.selectedCalendarIds.first()) // el id de la cuenta ausente se conserva
     }
 
     @Test fun revokedPermissionFallsBackToNoPermission() = runTest {
@@ -175,5 +175,55 @@ class RoutineViewModelTest {
         e.vm.onPermissionResult(true).join()
         assertFalse(e.vm.calendars.value.showSettingsHint)
         assertTrue(e.vm.calendars.value.hasPermission)
+    }
+
+    @Test fun toggleKeepsStoredIdsOfTemporarilyMissingAccounts() = runTest {
+        val repo = RoutineRepository(PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "k.preferences_pb") })
+        repo.calendarPrefs.setSelectedCalendarIds(setOf(1L, 99L))
+        val vm = RoutineViewModel(repo, FakeReminderSync(), backgroundScope, FakeCalendarSource(calendarList = listOf(cal(1), cal(2))))
+        vm.refreshCalendars().join()
+        vm.toggleCalendar(2).join()
+        assertEquals(setOf(1L, 2L, 99L), repo.calendarPrefs.selectedCalendarIds.first())
+        vm.toggleCalendar(1).join()
+        assertEquals(setOf(2L, 99L), repo.calendarPrefs.selectedCalendarIds.first())
+    }
+
+    // --- interruptor global de la copia (M5) y reconciliacion (I3) ---
+    private class Reconciles { var count = 0 }
+
+    private fun TestScope.copyEnv(name: String, counter: Reconciles, granted: Boolean = true): Pair<Env, FakeCalendarSource> {
+        val repo = RoutineRepository(PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, name) })
+        val src = FakeCalendarSource(permission = granted, calendarList = listOf(cal(1)))
+        val vm = RoutineViewModel(
+            repo, FakeReminderSync(), backgroundScope, src,
+            syncScope = backgroundScope, reconcileGoogle = { counter.count++ },
+        )
+        return Env(repo, FakeReminderSync(), vm) to src
+    }
+
+    @Test fun copySwitchDefaultsOnAndPersists() = runTest {
+        val (e, _) = copyEnv("s.preferences_pb", Reconciles())
+        assertTrue(e.vm.copyToGoogleEnabled.first())
+        e.vm.setCopyToGoogleEnabled(false).join()
+        assertFalse(e.repo.calendarPrefs.copyToGoogleEnabled.first())
+        assertFalse(e.vm.copyToGoogleEnabled.first { !it })
+    }
+
+    @Test fun turningCopySwitchOnReconcilesButOffDoesNot() = runTest {
+        val counter = Reconciles()
+        val (e, _) = copyEnv("s2.preferences_pb", counter)
+        e.vm.setCopyToGoogleEnabled(false).join()
+        assertEquals(0, counter.count)
+        e.vm.setCopyToGoogleEnabled(true).join()
+        assertEquals(1, counter.count)
+    }
+
+    @Test fun grantingPermissionReconcilesDenyingDoesNot() = runTest {
+        val counter = Reconciles()
+        val (e, _) = copyEnv("s3.preferences_pb", counter)
+        e.vm.onPermissionResult(false).join()
+        assertEquals(0, counter.count)
+        e.vm.onPermissionResult(true).join()
+        assertEquals(1, counter.count)
     }
 }

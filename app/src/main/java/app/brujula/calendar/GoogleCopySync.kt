@@ -8,6 +8,9 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.time.LocalDate
+import app.brujula.activities.Repeat
+import kotlinx.coroutines.flow.first
 
 enum class GoogleCopyStatus { NOT_REQUESTED, COPIED, NO_PERMISSION, NO_GOOGLE_ACCOUNT, FAILED }
 
@@ -19,6 +22,8 @@ enum class GoogleCopyStatus { NOT_REQUESTED, COPIED, NO_PERMISSION, NO_GOOGLE_AC
 class GoogleCopySync(
     private val writer: GoogleCalendarWriter,
     private val activityRepository: ActivityRepository,
+    /** Interruptor global "Copiar citas a Google Calendar"; activo por defecto. */
+    private val copyEnabled: suspend () -> Boolean = { true },
 ) {
     private val mutex = Mutex()
 
@@ -29,6 +34,7 @@ class GoogleCopySync(
             val eventId = stored.googleEventId
             when {
                 !a.copyToGoogle -> removeCopy(a.id, eventId)
+                !copyEnabled() -> GoogleCopyStatus.NOT_REQUESTED
                 !writer.hasWritePermission() -> GoogleCopyStatus.NO_PERMISSION
                 else -> {
                     val calendarId = writer.primaryGoogleCalendarId()
@@ -60,17 +66,40 @@ class GoogleCopySync(
     }
 
     private suspend fun removeCopy(activityId: Long, eventId: Long?): GoogleCopyStatus = withContext(NonCancellable) {
-        if (eventId == null) return@withContext GoogleCopyStatus.NOT_REQUESTED
-        if (!writer.hasWritePermission()) return@withContext GoogleCopyStatus.NO_PERMISSION
-        writer.delete(eventId)
-        activityRepository.setGoogleEventId(activityId, null)
+        if (!writer.hasWritePermission()) {
+            return@withContext if (eventId != null) GoogleCopyStatus.NO_PERMISSION else GoogleCopyStatus.NOT_REQUESTED
+        }
+        // Si se perdio el vinculo, tambien se borran las copias que aun existan en Google.
+        val ids = (listOfNotNull(eventId) + writer.findCopies(activityId)).toSet()
+        ids.forEach { writer.delete(it) }
+        if (eventId != null) activityRepository.setGoogleEventId(activityId, null)
         GoogleCopyStatus.NOT_REQUESTED
+    }
+
+    /**
+     * Crea las copias que faltan: actividades con "Copiar a Google" y sin vinculo, recurrentes o de hoy en adelante.
+     * Idempotente (reutiliza [afterSave]); no hace nada sin permiso de escritura, sin cuenta Google o con el interruptor apagado.
+     */
+    suspend fun reconcile(today: LocalDate) {
+        try {
+            if (!copyEnabled() || !writer.hasWritePermission() || writer.primaryGoogleCalendarId() == null) return
+            activityRepository.observeAll().first()
+                .filter { it.copyToGoogle && it.googleEventId == null && (it.repeat != Repeat.NONE || it.date >= today) }
+                .forEach { afterSave(it) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("GoogleCopySync", "No se pudo completar la sincronizacion pendiente", e)
+        }
     }
 
     /** [a] es la actividad tal como estaba antes de borrarla (con su googleEventId). */
     suspend fun afterDelete(a: Activity) = mutex.withLock {
         try {
-            if (!writer.hasWritePermission()) return@withLock
+            if (!writer.hasWritePermission()) {
+                Log.w("GoogleCopySync", "Sin permiso de escritura: la copia de Google de la actividad ${a.id} no se pudo borrar")
+                return@withLock
+            }
             withContext(NonCancellable) {
                 val ids = (listOfNotNull(a.googleEventId) + writer.findCopies(a.id)).toSet()
                 ids.forEach { writer.delete(it) }

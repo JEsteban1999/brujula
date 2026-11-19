@@ -19,11 +19,9 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LifecycleEventEffect
 import android.Manifest
 import android.content.Intent
 import android.net.Uri
@@ -69,12 +67,7 @@ fun RoutineScreen(viewModel: RoutineViewModel, modifier: Modifier = Modifier) {
         viewModel.onPermissionResult(result[Manifest.permission.READ_CALENDAR] == true)
     }
     // El permiso puede darse o quitarse desde los ajustes del sistema.
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshCalendars() }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshCalendars() }
 
     Column(
         modifier.fillMaxSize().background(c.bg).verticalScroll(rememberScrollState())
@@ -189,6 +182,12 @@ fun RoutineScreen(viewModel: RoutineViewModel, modifier: Modifier = Modifier) {
                         CalendarRow(item, onToggle = { viewModel.toggleCalendar(item.calendar.id) })
                     }
                 }
+                val copyOn by viewModel.copyToGoogleEnabled.collectAsStateWithLifecycle()
+                SwitchRow(
+                    label = "Copiar citas a Google Calendar", checked = copyOn,
+                    description = "Copiar citas a Google Calendar", dot = null,
+                    onToggle = { viewModel.setCopyToGoogleEnabled(!copyOn) },
+                )
                 Text(
                     "Para ver Outlook aquí, activa en la app de Outlook la opción de sincronizar calendarios con el teléfono.",
                     color = c.textMuted, fontSize = 12.sp,
@@ -208,20 +207,29 @@ fun RoutineScreen(viewModel: RoutineViewModel, modifier: Modifier = Modifier) {
 
 @Composable
 private fun CalendarRow(item: CalendarItem, onToggle: () -> Unit) {
+    SwitchRow(
+        label = item.calendar.name, checked = item.selected, description = "Importar ${item.calendar.name}",
+        dot = Color(item.calendar.color or 0xFF000000.toInt()), onToggle = onToggle,
+    )
+}
+
+/** Fila accesible de 48 dp: toda la fila es el interruptor. */
+@Composable
+private fun SwitchRow(label: String, checked: Boolean, description: String, dot: Color?, onToggle: () -> Unit) {
     val c = BrujulaTheme.colors
     Row(
         Modifier.fillMaxWidth().heightIn(min = 48.dp)
-            .toggleable(value = item.selected, role = Role.Switch, onValueChange = { onToggle() })
-            .semantics { contentDescription = "Importar ${item.calendar.name}" },
+            .toggleable(value = checked, role = Role.Switch, onValueChange = { onToggle() })
+            .semantics { contentDescription = description },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Box(Modifier.size(12.dp).clip(RoundedCornerShape(4.dp)).background(Color(item.calendar.color or 0xFF000000.toInt())))
+        if (dot != null) Box(Modifier.size(12.dp).clip(RoundedCornerShape(4.dp)).background(dot))
         Text(
-            item.calendar.name, Modifier.weight(1f), color = c.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+            label, Modifier.weight(1f), color = c.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
             maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
         Switch(
-            checked = item.selected, onCheckedChange = null,
+            checked = checked, onCheckedChange = null,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color.White, checkedTrackColor = c.accent, checkedBorderColor = Color.Transparent,
                 uncheckedThumbColor = Color.White, uncheckedTrackColor = c.surface2, uncheckedBorderColor = Color.Transparent,

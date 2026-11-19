@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.sync.Mutex
@@ -43,6 +44,9 @@ class RoutineViewModel(
     private val resync: ReminderResync = ReminderResync { },
     scopeOverride: CoroutineScope? = null,
     private val calendarSource: CalendarSource = NoCalendars,
+    /** Ambito de la app: la reconciliacion de copias a Google sigue aunque se cierre la pantalla. */
+    private val syncScope: CoroutineScope? = null,
+    private val reconcileGoogle: suspend () -> Unit = { },
 ) : ViewModel() {
     private val scope: CoroutineScope = scopeOverride ?: viewModelScope
 
@@ -103,16 +107,33 @@ class RoutineViewModel(
         calendarLock.withLock {
             val current = calendarState.value
             if (!current.hasPermission) return@withLock
-            val selected = current.groups.flatMap { g -> g.items }.filter { it.selected }.map { it.calendar.id }.toSet()
-            val next = if (id in selected) selected - id else selected + id
+            // Se parte de lo guardado (no de lo visible) para no perder ids de cuentas ausentes por un momento.
+            val visible = current.groups.flatMap { g -> g.items }.filter { it.selected }.map { it.calendar.id }.toSet()
+            val stored = runCatching { repository.calendarPrefs.selectedCalendarIds.first() }.getOrNull() ?: visible
+            val next = if (id in stored) stored - id else stored + id
             runCatching { repository.calendarPrefs.setSelectedCalendarIds(next) }
             calendarState.value = loadCalendars()
         }
     }
 
+    /** Interruptor global "Copiar citas a Google Calendar" (por defecto activo). */
+    val copyToGoogleEnabled: StateFlow<Boolean> =
+        repository.calendarPrefs.copyToGoogleEnabled.catch { emit(true) }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), true)
+
+    /** Al encenderlo se crean las copias pendientes; al apagarlo no se borra nada. */
+    fun setCopyToGoogleEnabled(on: Boolean): Job = scope.launch {
+        repository.calendarPrefs.setCopyToGoogleEnabled(on)
+        if (on) launchReconcile().join()
+    }
+
+    private fun launchReconcile(): Job = (syncScope ?: scope).launch { reconcileGoogle() }
+
     fun onPermissionResult(granted: Boolean): Job {
         permissionDenied = !granted
-        return refreshCalendars()
+        return scope.launch {
+            refreshCalendars().join()
+            if (granted) launchReconcile().join()
+        }
     }
 
     private fun change(resyncAfter: Boolean = false, transform: (Routine) -> Routine): Job =
