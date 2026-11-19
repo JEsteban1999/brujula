@@ -91,6 +91,32 @@ class ReceiversTest {
         assertTrue(shadowOf(nm).allNotifications.isEmpty())
     }
 
+    @Test fun activityDoneMarksThatDayCancelsNotificationAndResyncs() {
+        val id = runBlocking {
+            ctx.container.activityRepository.upsert(
+                app.brujula.activities.Activity(
+                    title = "Ejercicio", type = app.brujula.activities.ActivityType.EXERCISE, date = LocalDate.of(2026, 11, 18),
+                    start = java.time.LocalTime.of(13, 0), durationMin = 30, repeat = app.brujula.activities.Repeat.DAILY,
+                ),
+            )
+        }
+        val key = "act:$id:20261118"
+        Notifications.show(ctx, Reminder(key, now, ReminderKind.ACTIVITY, "Ejercicio a las 13:00", "Empieza en 15 min.", activityId = id, day = LocalDate.of(2026, 11, 18)))
+        assertEquals(1, shadowOf(nm).allNotifications.size)
+        val intent = Intent(ctx, NotificationActionReceiver::class.java).setAction(NotificationActionReceiver.ACTION_DONE)
+            .putExtra(NotificationActionReceiver.EXTRA_KEY, key)
+            .putExtra(NotificationActionReceiver.EXTRA_ACTIVITY_ID, id)
+            .putExtra(NotificationActionReceiver.EXTRA_DAY, "2026-11-18")
+            .putExtra(NotificationActionReceiver.EXTRA_TITLE, "Ejercicio a las 13:00")
+            .putExtra(NotificationActionReceiver.EXTRA_BODY, "Empieza en 15 min.")
+            .putExtra(NotificationActionReceiver.EXTRA_KIND, ReminderKind.ACTIVITY.name)
+        NotificationActionReceiver().onReceive(ctx, intent)
+        awaitCalls(1)
+        val keys = runBlocking { ctx.container.activityRepository.observeDoneKeys().first() }
+        assertEquals(setOf(id to LocalDate.of(2026, 11, 18)), keys)
+        assertTrue(shadowOf(nm).allNotifications.isEmpty())
+    }
+
     @Test fun snoozeSchedulesOneIn15Minutes() {
         val id = newHabit()
         val key = "habit:$id:202611181245"

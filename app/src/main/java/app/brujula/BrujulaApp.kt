@@ -10,11 +10,10 @@ import app.brujula.reminders.AlarmReminderScheduler
 import app.brujula.reminders.ReminderResync
 import app.brujula.reminders.ReminderScheduler
 import app.brujula.reminders.ReminderSync
-import app.brujula.routine.logicalDay
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.debounce
+import android.util.Log
+import app.brujula.reminders.reminderChanges
+import app.brujula.reminders.startReminderResync
+import kotlinx.coroutines.CoroutineExceptionHandler
 import app.brujula.data.db.BrujulaDatabase
 import app.brujula.data.db.Seed
 import app.brujula.habits.HabitRepository
@@ -55,7 +54,11 @@ class AppContainer(val context: Context) {
 
 open class BrujulaApp : Application() {
     val container: AppContainer by lazy { AppContainer(this) }
-    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    /** Un fallo no atrapado en segundo plano se registra en vez de tumbar el proceso. */
+    val appScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Default +
+            CoroutineExceptionHandler { _, e -> Log.e("BrujulaApp", "Fallo en segundo plano", e) },
+    )
 
     override fun onCreate() {
         super.onCreate()
@@ -67,25 +70,17 @@ open class BrujulaApp : Application() {
         appScope.launch {
             Seed.ensureDefaults(container.database, container.routineRepository, LocalDate.now())
         }
-        startReminderResync()
+        launchReminderResync()
     }
 
     /** Reprograma al abrir la app y cada vez que cambian rutina, actividades, habitos o registros. */
-    @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
-    private fun startReminderResync() {
+    private fun launchReminderResync() {
         val c = container
-        appScope.launch {
-            combine(
-                c.routineRepository.routine,
-                c.activityRepository.observeAll(),
-                c.activityRepository.observeDoneKeys(),
-                c.habitRepository.observeHabits(),
-                c.habitRepository.observeHandledKeys(),
-                c.habitRepository.observeCountsFor(logicalDay(java.time.LocalDateTime.now())),
-            ) { _ -> }
-                .debounce(500)
-                .collect { runCatching { c.reminderSync.resync() } }
-        }
+        startReminderResync(
+            appScope,
+            reminderChanges(c.routineRepository, c.activityRepository, c.habitRepository, c.clock),
+            ReminderResync { c.reminderSync.resync() },
+        )
     }
 }
 
