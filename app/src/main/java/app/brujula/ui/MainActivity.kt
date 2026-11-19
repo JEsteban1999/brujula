@@ -9,11 +9,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.brujula.container
 import app.brujula.core.theme.BrujulaTheme
 import app.brujula.core.theme.darkFlow
@@ -26,7 +26,7 @@ class MainActivity : ComponentActivity() {
             val container = LocalContext.current.container
             val darkState = remember(container) { darkFlow(container.routineRepository.routine, container.clock) }
             // null hasta que la rutina guardada se carga: así no hay destello del tema por defecto.
-            val dark by darkState.collectAsState(initial = null)
+            val dark by darkState.collectAsStateWithLifecycle(initialValue = null)
             dark?.let { isDark ->
                 BrujulaTheme(dark = isDark) {
                     AskNotificationsOnFirstOpen()

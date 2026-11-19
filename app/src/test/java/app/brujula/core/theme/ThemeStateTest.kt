@@ -3,6 +3,7 @@ package app.brujula.core.theme
 import app.brujula.core.time.FixedClock
 import app.brujula.routine.Routine
 import app.cash.turbine.test
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.advanceTimeBy
@@ -30,7 +31,7 @@ class ThemeStateTest {
         }
     }
 
-    @Test fun routineChangeAppliesImmediatelyAndNothingBeforeLoad() = runTest {
+    @Test fun routineChangeAppliesImmediately() = runTest {
         val clock = FixedClock(LocalDateTime.of(2026, 11, 18, 12, 0))
         val routine = MutableStateFlow(Routine(wake = wake, themeMode = ThemeMode.LIGHT))
         darkFlow(routine, clock, tickMs = 60_000).test {
@@ -39,7 +40,40 @@ class ThemeStateTest {
             assertEquals(true, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
-        // Sin rutina cargada no se emite nada (la pantalla no aplica tema todavía).
-        darkFlow(flow<Routine> { }, clock, tickMs = 60_000).test { awaitComplete() }
+        // Sin rutina cargada no se emite nada hasta que vence el plazo.
+        val never = MutableSharedFlow<Routine>()
+        darkFlow(never, clock, tickMs = 60_000).test { expectNoEvents(); cancelAndIgnoreRemainingEvents() }
+    }
+
+    @Test fun failingRoutineFallsBackToDefaults() = runTest {
+        // Por defecto: AUTO, levantarse 08:15 -> a las 22:00 es oscuro.
+        val clock = FixedClock(LocalDateTime.of(2026, 11, 18, 22, 0))
+        val broken = flow<Routine> { throw java.io.IOException("datastore") }
+        darkFlow(broken, clock, tickMs = 60_000).test {
+            assertEquals(true, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun neverEmittingRoutineFallsBackAfterTimeoutThenFollowsRealOne() = runTest {
+        val clock = FixedClock(LocalDateTime.of(2026, 11, 18, 22, 0))
+        val routine = MutableSharedFlow<Routine>()
+        darkFlow(routine, clock, tickMs = 60_000, fallbackAfterMs = 1_500).test {
+            expectNoEvents()
+            advanceTimeBy(1_501)
+            assertEquals(true, awaitItem())
+            routine.emit(Routine(themeMode = ThemeMode.LIGHT))
+            assertEquals(false, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun resubscribingUsesCurrentClock() = runTest {
+        val clock = FixedClock(LocalDateTime.of(2026, 11, 18, 20, 0))
+        val routine = MutableStateFlow(Routine(wake = wake, themeMode = ThemeMode.AUTO))
+        val flow = darkFlow(routine, clock, tickMs = 60_000)
+        flow.test { assertEquals(false, awaitItem()); cancelAndIgnoreRemainingEvents() }
+        clock.current = LocalDateTime.of(2026, 11, 18, 21, 30)
+        flow.test { assertEquals(true, awaitItem()); cancelAndIgnoreRemainingEvents() }
     }
 }
