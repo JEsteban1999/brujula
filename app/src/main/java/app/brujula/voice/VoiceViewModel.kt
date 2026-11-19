@@ -246,7 +246,7 @@ class VoiceViewModel(
         // Desde aqui el dictado es de apply (termina su transaccion, resync y copia a Google): no se encola de nuevo.
         handedOff = true
         val result = try {
-            withContext(NonCancellable) { executor.apply(outcome.items) }
+            withContext(NonCancellable) { executor.apply(outcome.items, outcome.reply) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

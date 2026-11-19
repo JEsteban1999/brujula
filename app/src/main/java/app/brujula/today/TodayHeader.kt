@@ -49,6 +49,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -256,5 +257,57 @@ private fun HabitCard(chip: HabitChip, warm: Boolean, reduced: Boolean, modifier
             (chip.count.toFloat() / chip.target.coerceAtLeast(1)).coerceIn(0f, 1f),
             track = c.surface, fill = accent, reduced = reduced, modifier = Modifier.fillMaxWidth(),
         )
+    }
+}
+
+/**
+ * Tarjeta de Claude (D15): la última nota con `Deshacer` mientras el plan siga aceptado; si no hay nota del día,
+ * `¿Te armo el día?` con `Que Claude arme mi día`. Un toque abre Propuesta del día [ClaudeCardState.targetDay].
+ */
+@Composable
+fun ClaudeCard(
+    card: ClaudeCardState,
+    message: String?,
+    reduced: Boolean,
+    onAsk: () -> Unit,
+    onUndo: () -> Unit,
+    onDismissMessage: () -> Unit,
+) {
+    val c = BrujulaTheme.colors
+    Column(
+        Modifier.fillMaxWidth().clip(CardShape).background(c.soft).padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            card.text ?: "¿Te armo el día?", color = c.text, fontSize = 15.sp, lineHeight = 21.sp,
+            fontWeight = if (card.text == null) FontWeight.Bold else FontWeight.Medium,
+            modifier = Modifier.semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
+        )
+        message?.let {
+            Text(
+                it, color = c.accentText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clickable(role = Role.Button, onClick = onDismissMessage)
+                    .semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (card.canUndo) CardAction("Deshacer", primary = false, reduced = reduced, onClick = onUndo)
+            else CardAction("Que Claude arme mi día", primary = card.text == null, reduced = reduced, onClick = onAsk)
+        }
+    }
+}
+
+@Composable
+private fun CardAction(label: String, primary: Boolean, reduced: Boolean, onClick: () -> Unit) {
+    val c = BrujulaTheme.colors
+    val source = remember { MutableInteractionSource() }
+    Box(
+        Modifier.height(48.dp).pressScale(source, reduced).clip(RoundedCornerShape(14.dp))
+            .background(if (primary) c.accent else c.surface)
+            .clickable(interactionSource = source, indication = null, role = Role.Button, onClick = onClick)
+            .padding(horizontal = 18.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, color = if (primary) c.onAccent else c.text, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
     }
 }

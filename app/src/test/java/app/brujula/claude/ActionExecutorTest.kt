@@ -232,4 +232,32 @@ class ActionExecutorTest {
         }
         real.cancel()
     }
+
+    private val noteTmp = org.junit.rules.TemporaryFolder().also { it.create() }
+    private fun noteStore(): Pair<ClaudeNotes, CoroutineScope> {
+        val storeScope = CoroutineScope(SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+        val n = ClaudeNotes(androidx.datastore.preferences.core.PreferenceDataStoreFactory.create(scope = storeScope) {
+            java.io.File(noteTmp.root, "notes-${System.nanoTime()}.preferences_pb")
+        })
+        return n to storeScope
+    }
+
+    @Test fun applyWritesNoteWithReply() = run {
+        val (n, storeScope) = noteStore()
+        val ex = ActionExecutor(db, activities, habits, GoogleCopySync(writer, activities), ReminderResync { }, scope, n, { LocalDate.of(2026, 11, 19) })
+        ex.apply(listOf(Validated.Activity(exercise)), "Listo, agendé tu ejercicio.")
+        assertEquals(ClaudeNote("Listo, agendé tu ejercicio.", LocalDate.of(2026, 11, 19), null), n.note.first { it != null })
+        storeScope.cancel()
+    }
+
+    @Test fun applyNoteFallsBackToLabels() = run {
+        val (n, storeScope) = noteStore()
+        val ex = ActionExecutor(db, activities, habits, GoogleCopySync(writer, activities), ReminderResync { }, scope, n, { LocalDate.of(2026, 11, 19) })
+        ex.apply(listOf(Validated.Activity(exercise), Validated.Habit(stretch)))
+        assertEquals(
+            "Agendé Ejercicio · jue 19 nov · 19:00–20:00; Hábito · Estirarse · cada 2 h",
+            n.note.first { it != null }!!.text,
+        )
+        storeScope.cancel()
+    }
 }

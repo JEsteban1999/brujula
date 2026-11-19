@@ -178,7 +178,7 @@ class PendingDictations(
             drop(item, reasons.joinToString(" ").ifBlank { outcome.reply.ifBlank { NOTHING_SCHEDULED } })
             return true
         }
-        val result = executor.apply(outcome.items)
+        val result = executor.apply(outcome.items, outcome.reply)
         if (result.created.isEmpty()) return failedAttempt(item, result.messages.lastOrNull() ?: NOTHING_SCHEDULED)
         labels += result.created.map { it.label }
         problems += result.messages

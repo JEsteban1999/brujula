@@ -89,7 +89,7 @@ class ProposalLock {
  * marcas de hecho y referencias siguen valiendo. Se reinserta sin vínculo de Google (esa copia se borró al aceptar) y
  * `afterSave` crea la copia nueva, o adopta la vieja si el borrado no llegó a correr.
  */
-class ProposalExecutor(
+open class ProposalExecutor(
     private val database: RoomDatabase,
     private val activityRepo: ActivityRepository,
     private val proposals: ProposalRepository,
@@ -116,7 +116,7 @@ class ProposalExecutor(
      * Sin cancelación a medias: con Room 2.6, cancelar a quien llama durante `withTransaction` le devuelve la
      * cancelación mientras el hilo de la transacción igual confirma; así nunca queda ACCEPTED sin resync, Google ni nota.
      */
-    suspend fun accept(id: Long): AcceptResult = lock.mutex.withLock {
+    open suspend fun accept(id: Long): AcceptResult = lock.mutex.withLock {
         withContext(NonCancellable) {
             val now = clock.now()
             val outcome = try {
@@ -133,7 +133,7 @@ class ProposalExecutor(
     }
 
     /** Sin cancelación a medias, como el deshacer de ActionExecutor. */
-    suspend fun undo(id: Long): UndoResult = lock.mutex.withLock {
+    open suspend fun undo(id: Long): UndoResult = lock.mutex.withLock {
         withContext(NonCancellable) {
             val now = clock.now()
             val outcome = try {
@@ -148,6 +148,12 @@ class ProposalExecutor(
             outcome.result
         }
     }
+
+    /**
+     * Lo mismo que revisa `accept` antes de aplicar, sin aplicar nada: el día ya pasó, algo de hoy ya empezó, o lo que la
+     * propuesta toca cambió. La pantalla lo usa para no mostrar como vigente una propuesta guardada que ya no sirve.
+     */
+    open suspend fun isStale(p: Proposal): Boolean = isExpired(p, clock.now()) || !p.ops.all { isCurrent(it) }
 
     private suspend fun acceptInTransaction(id: Long, now: LocalDateTime): Outcome<AcceptResult> {
         val status = proposals.statusOf(id) ?: return Outcome(AcceptResult.Failed(AcceptResult.FAILED))

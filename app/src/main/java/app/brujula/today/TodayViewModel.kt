@@ -21,6 +21,7 @@ import app.brujula.core.time.TimeSpan
 import app.brujula.core.time.formatDayEs
 import app.brujula.habits.HabitIcon
 import app.brujula.habits.HabitRepository
+import app.brujula.planning.UndoResult
 import app.brujula.reminders.PermissionStatus
 import app.brujula.routine.DayKind
 import app.brujula.routine.DayType
@@ -35,6 +36,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
@@ -68,6 +70,12 @@ sealed interface TimelineBlock {
     }
 }
 
+/**
+ * Tarjeta de Claude (D15). [text] nulo = estado vacío (`¿Te armo el día?`). [canUndo]: el plan sigue aceptado y su día no
+ * ha pasado. [targetDay]: el día que abre `Que Claude arme mi día` (hoy, o mañana si ya es tarde).
+ */
+data class ClaudeCardState(val text: String?, val proposalId: Long?, val canUndo: Boolean, val targetDay: LocalDate? = null)
+
 data class TodayUiState(
     val dayLabel: String,
     val workMinutes: Int,
@@ -85,6 +93,10 @@ data class TodayUiState(
     val dayType: DayType = DayType(DayKind.WORKDAY),
     /** Madrugada (00:00-03:59): el reloj ya cambió de fecha pero se sigue mostrando el día lógico anterior. */
     val isLateNight: Boolean = false,
+    /** `null` hasta que la nota carga: la tarjeta no retrasa Hoy. */
+    val claude: ClaudeCardState? = null,
+    /** Resultado de `Deshacer` en la tarjeta (p. ej. `Dejé 1 cambio que hiciste después.`). */
+    val claudeMessage: String? = null,
 )
 
 private data class DayData(
@@ -96,6 +108,12 @@ private data class DayData(
 
 private const val MAX_VISIBLE_HABITS = 2
 private const val TICK_MS = 30_000L
+/** Desde esta hora, `Que Claude arme mi día` abre el día de mañana. */
+private const val LATE_HOUR = 21
+private const val UNDONE = "Deshice el plan."
+private const val NOT_UNDOABLE = "Ese plan ya no se puede deshacer."
+
+private data class ClaudeInputs(val loaded: Boolean, val note: app.brujula.claude.ClaudeNote?, val accepted: Set<Long>)
 
 class TodayViewModel(
     private val clock: Clock,
@@ -107,6 +125,11 @@ class TodayViewModel(
     private val classifications: WorkClassificationRepository? = null,
     /** Clasifica con Claude los títulos desconocidos de hoy (una vez por clave); nulo en pruebas que no lo usan. */
     private val autoClassifier: app.brujula.claude.AutoClassifier? = null,
+    /** La última nota de Claude (D15); el valor inicial nulo evita esperar al DataStore. */
+    claudeNotes: Flow<app.brujula.claude.ClaudeNote?> = flowOf(null),
+    /** Ids de propuestas ACCEPTED, para saber si `Deshacer` aún aplica. */
+    acceptedProposalIds: Flow<Set<Long>> = flowOf(emptySet()),
+    private val undoPlan: suspend (Long) -> UndoResult = { UndoResult.NotAccepted },
     scopeOverride: CoroutineScope? = null,
     private val tickMs: Long = TICK_MS,
 ) : ViewModel() {
@@ -156,6 +179,16 @@ class TodayViewModel(
         activityRepository.observeOverrides(),
     ) { routine, activities, done, overrides -> DayData(routine, activities, done, overrides) }
 
+    private val claudeMessage = MutableStateFlow<String?>(null)
+    private var undoing = false
+
+    /** Nota y planes aceptados; un fallo del DataStore o de la base deja la tarjeta vacía, nunca rompe Hoy. */
+    private val claudeInputs: Flow<ClaudeInputs> = combine(
+        claudeNotes.catch { emit(null) },
+        acceptedProposalIds.catch { emit(emptySet()) },
+    ) { note, accepted -> ClaudeInputs(true, note, accepted) }
+        .onStart { emit(ClaudeInputs(false, null, emptySet())) }
+
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val state: StateFlow<TodayUiState> = ticker
         .flatMapLatest { now ->
@@ -170,6 +203,9 @@ class TodayViewModel(
                 build(now, day, routine, activities, done, overrides, habits, counts, perms, rawExternal, marks)
             }
         }
+        // Fuera del flatMapLatest: el tictac no reinicia la lectura de la nota (la tarjeta no parpadea).
+        .combine(claudeInputs) { ui, claude -> ui.copy(claude = cardFor(claude, clock.now(), ui.day)) }
+        .combine(claudeMessage) { ui, message -> ui.copy(claudeMessage = message) }
         .stateIn(scope, SharingStarted.Eagerly, initial())
 
     @Volatile private var lastMarkKeys: Set<String> = emptySet()
@@ -250,6 +286,42 @@ class TodayViewModel(
             isLateNight = isLateNight(now, day),
         )
     }
+
+    /** Primera lectura aún no llegó → sin tarjeta; si llegó sin nota del día, estado vacío. */
+    private fun cardFor(inputs: ClaudeInputs, now: LocalDateTime, day: LocalDate): ClaudeCardState? {
+        if (!inputs.loaded) return null
+        val target = if (isLateNight(now, day) || now.hour >= LATE_HOUR) day.plusDays(1) else day
+        val note = inputs.note
+        // Una nota de un día pasado ya no es "de hoy"; la de un plan de mañana sí se ve hoy (se puede deshacer).
+        if (note == null || note.day < day) return ClaudeCardState(null, null, false, target)
+        val id = note.proposalId
+        return ClaudeCardState(note.text, id, canUndo = id != null && id in inputs.accepted, targetDay = target)
+    }
+
+    /** `Deshacer` de la tarjeta: el resultado queda en [TodayUiState.claudeMessage]. De un solo vuelo; el ejecutor no se cancela. */
+    fun undoPlan() {
+        val card = state.value.claude ?: return
+        val id = card.proposalId ?: return
+        if (!card.canUndo || undoing) return
+        undoing = true
+        scope.launch {
+            try {
+                claudeMessage.value = when (val r = this@TodayViewModel.undoPlan.invoke(id)) {
+                    is UndoResult.Undone -> UndoResult.keptMessage(r.kept) ?: UNDONE
+                    UndoResult.NotAccepted -> NOT_UNDOABLE
+                    is UndoResult.Failed -> r.message
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                claudeMessage.value = UndoResult.FAILED
+            } finally {
+                undoing = false
+            }
+        }
+    }
+
+    fun dismissClaudeMessage() { claudeMessage.value = null }
 
     /** El reloj ya está en una fecha posterior al día lógico mostrado (00:00-03:59). */
     private fun isLateNight(now: LocalDateTime, day: LocalDate): Boolean = now.toLocalDate().isAfter(day)

@@ -37,6 +37,7 @@ fun TodayScreen(
     viewModel: TodayViewModel,
     onEditActivity: (Long) -> Unit,
     onAddAt: (java.time.LocalDateTime) -> Unit,
+    onAskClaude: (java.time.LocalDate) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -59,6 +60,16 @@ fun TodayScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item(key = "header") { TodayHeader(state, reduced) }
+        state.claude?.let { card ->
+            item(key = "claude") {
+                ClaudeCard(
+                    card = card, message = state.claudeMessage, reduced = reduced,
+                    onAsk = { onAskClaude(card.targetDay ?: state.day) },
+                    onUndo = viewModel::undoPlan,
+                    onDismissMessage = viewModel::dismissClaudeMessage,
+                )
+            }
+        }
         if (!state.permissions.ok) {
             item(key = "banner") { PermissionBanner(state.permissions, context) }
         }

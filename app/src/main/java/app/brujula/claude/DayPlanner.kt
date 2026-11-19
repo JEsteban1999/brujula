@@ -28,13 +28,13 @@ sealed interface PlanOutcome {
  * La llamada puede tardar hasta 90 s: la respuesta se valida con la hora de [clock] al recibirla (nada en el pasado si el día
  * es hoy, y la hora de dormir nunca antes de ahora), no con la del contexto.
  */
-class DayPlanner(
+open class DayPlanner(
     private val gateway: ClaudeGateway,
     private val contextProvider: suspend (LocalDate) -> PlanContext,
     private val isOnline: suspend () -> Boolean = { true },
     private val clock: Clock = SystemClock,
 ) {
-    suspend fun propose(day: LocalDate, request: String?, previous: Proposal? = null, adjustment: String? = null): PlanOutcome {
+    open suspend fun propose(day: LocalDate, request: String?, previous: Proposal? = null, adjustment: String? = null): PlanOutcome {
         // D10 antes de leer nada: fuera de la ventana no se arma el contexto ni se llama a Claude.
         PlanValidator.dayProblem(day, logicalDay(clock.now()))?.let { return PlanOutcome.Failed(it, retryable = false) }
         val ctx = try {

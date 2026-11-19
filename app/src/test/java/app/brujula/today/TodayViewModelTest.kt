@@ -72,6 +72,9 @@ class TodayViewModelTest {
     private fun TestScope.vm(
         routine: RoutineRepository = routineRepo(),
         auto: app.brujula.claude.AutoClassifier? = null,
+        notes: kotlinx.coroutines.flow.Flow<app.brujula.claude.ClaudeNote?> = kotlinx.coroutines.flow.flowOf(null),
+        accepted: kotlinx.coroutines.flow.Flow<Set<Long>> = kotlinx.coroutines.flow.flowOf(emptySet()),
+        undo: suspend (Long) -> app.brujula.planning.UndoResult = { app.brujula.planning.UndoResult.NotAccepted },
     ) = TodayViewModel(
         clock = clock,
         routineRepository = routine,
@@ -81,6 +84,9 @@ class TodayViewModelTest {
         calendarSource = calendar,
         classifications = classifications,
         autoClassifier = auto,
+        claudeNotes = notes,
+        acceptedProposalIds = accepted,
+        undoPlan = undo,
         scopeOverride = backgroundScope,
         tickMs = 0,
     )
@@ -524,5 +530,55 @@ class TodayViewModelTest {
         // Pasar de 2 a 1 bloque (Trabajo) prueba que el salto se aplico.
         val after = vm.state.first { st -> st.own.size == 1 }
         assertEquals(listOf("Trabajo"), after.own.map { it.occurrence.activity.title })
+    }
+
+    private fun note(text: String, d: LocalDate, id: Long? = null) = app.brujula.claude.ClaudeNote(text, d, id)
+
+    @Test fun cardShowsTodaysNote() = runTest {
+        val s = vm(notes = kotlinx.coroutines.flow.flowOf(note("Agendé tu gym.", day))).state.first { it.claude != null }
+        assertEquals(ClaudeCardState("Agendé tu gym.", null, false, day), s.claude)
+    }
+
+    @Test fun cardEmptyStateWhenNoteIsFromAnotherDay() = runTest {
+        val r = routineRepo()
+        val s = vm(routine = r, notes = kotlinx.coroutines.flow.flowOf(note("Viejo.", day.minusDays(1), 3))).state.first { it.claude != null }
+        assertEquals(ClaudeCardState(null, null, false, day), s.claude)
+        val none = vm(routine = r, notes = kotlinx.coroutines.flow.flowOf(null)).state.first { it.claude != null }
+        assertEquals(null, none.claude!!.text)
+    }
+
+    @Test fun canUndoOnlyWhenAccepted() = runTest {
+        val n = note("Tu plan está listo.", day.plusDays(1), 7)
+        val r = routineRepo()
+        val notAccepted = vm(routine = r, notes = kotlinx.coroutines.flow.flowOf(n)).state.first { it.claude != null }
+        assertFalse(notAccepted.claude!!.canUndo)
+        assertEquals(7L, notAccepted.claude!!.proposalId)
+        val accepted = vm(routine = r, notes = kotlinx.coroutines.flow.flowOf(n), accepted = kotlinx.coroutines.flow.flowOf(setOf(7L)))
+            .state.first { it.claude != null }
+        assertTrue(accepted.claude!!.canUndo)
+        // Un plan para el día de mañana se ve hoy; uno de ayer no.
+        assertEquals("Tu plan está listo.", accepted.claude!!.text)
+    }
+
+    @Test fun undoPlanCallsExecutor() = runTest {
+        val calls = mutableListOf<Long>()
+        val v = vm(
+            notes = kotlinx.coroutines.flow.flowOf(note("Tu plan está listo.", day, 7)),
+            accepted = kotlinx.coroutines.flow.flowOf(setOf(7L)),
+            undo = { calls += it; app.brujula.planning.UndoResult.Undone(kept = 1) },
+        )
+        v.state.first { it.claude?.canUndo == true }
+        v.undoPlan()
+        val s = v.state.first { it.claudeMessage != null }
+        assertEquals(listOf(7L), calls)
+        assertEquals("Dejé 1 cambio que hiciste después.", s.claudeMessage)
+    }
+
+    @Test fun cardDoesNotBlockTodayWhenNotesNeverLoad() = runTest {
+        seedDay()
+        val v = vm(notes = kotlinx.coroutines.flow.flow { kotlinx.coroutines.awaitCancellation() })
+        // Hoy carga completo aunque la nota nunca llegue; la tarjeta simplemente no aparece.
+        val s = v.state.first { it.timeline.isNotEmpty() }
+        assertEquals(null, s.claude)
     }
 }

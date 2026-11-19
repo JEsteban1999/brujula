@@ -4,6 +4,11 @@ import android.net.Uri
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -23,6 +28,10 @@ import app.brujula.activities.form.ActivityFormViewModel
 import app.brujula.container
 import app.brujula.core.theme.BrujulaTheme
 import app.brujula.habits.HabitFormScreen
+import app.brujula.planning.ProposalScreen
+import app.brujula.planning.ProposalViewModel
+import app.brujula.routine.logicalDay
+import app.brujula.routine.wakeFor
 import app.brujula.habits.HabitGroup
 import app.brujula.habits.HabitFormViewModel
 import app.brujula.habits.HabitsScreen
@@ -38,6 +47,8 @@ import app.brujula.today.TodayScreen
 import app.brujula.today.TodayViewModel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.net.URLEncoder
+import java.time.LocalDate
 import java.time.LocalDateTime
 
 object Routes {
@@ -47,6 +58,13 @@ object Routes {
     const val VOICE = "voice"
     const val ACTIVITY_FORM = "activity?id={id}&start={start}"
     const val HABIT_FORM = "habit?id={id}&group={group}"
+    const val PROPOSAL = "proposal?day={day}&request={request}"
+
+    /** `day` es ISO; `request` (opcional) se codifica como URL y se decodifica al abrir la pantalla. */
+    fun proposal(day: LocalDate, request: String? = null): String {
+        val q = request?.takeIf { it.isNotBlank() }?.let { "&request=" + URLEncoder.encode(it, "UTF-8").replace("+", "%20") }.orEmpty()
+        return "proposal?day=$day$q"
+    }
 
     /** `start` es un LocalDateTime ISO; ambos son opcionales. */
     fun activityForm(id: Long? = null, start: LocalDateTime? = null): String {
@@ -68,11 +86,35 @@ object Routes {
 
 private val TopLevel = setOf(Routes.TODAY, Routes.HABITS, Routes.ROUTINE)
 
+/**
+ * [pendingRoute]: ruta de un enlace de notificación (ya filtrada por la lista blanca de [DeepLinks]); se navega a ella al
+ * componer y se avisa con [onRouteConsumed] para no repetirla al rotar.
+ */
 @Composable
-fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
+fun BrujulaNavHost(
+    navController: NavHostController = rememberNavController(),
+    pendingRoute: StateFlow<String?> = remember { MutableStateFlow<String?>(null) },
+    onRouteConsumed: () -> Unit = {},
+) {
     val backStack by navController.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
     val showBar = route in TopLevel
+    val linkContainer = LocalContext.current.container
+    val pending by pendingRoute.collectAsStateWithLifecycle()
+    LaunchedEffect(pending) {
+        val raw = pending ?: return@LaunchedEffect
+        val nav = DeepLinks.toNavRoute(raw, logicalDay(linkContainer.clock.now()).plusDays(1))
+        onRouteConsumed()
+        when (nav) {
+            null -> Unit
+            Routes.TODAY -> navController.navigateTop(Routes.TODAY)
+            else -> navController.navigate(nav) {
+                launchSingleTop = true
+                // Una Propuesta abierta de otro día no se reutiliza: sus argumentos no cambiarían.
+                if (nav.startsWith("proposal")) popUpTo(Routes.PROPOSAL) { inclusive = true }
+            }
+        }
+    }
 
     Scaffold(
         containerColor = BrujulaTheme.colors.bg,
@@ -106,6 +148,9 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                                 calendarSource = container.calendarSource,
                                 classifications = container.workClassificationRepository,
                                 autoClassifier = container.autoClassifier,
+                                claudeNotes = container.claudeNotes.note,
+                                acceptedProposalIds = container.proposalRepository.observeAcceptedIds(),
+                                undoPlan = { container.proposalExecutor.undo(it) },
                             )
                         }
                     },
@@ -114,6 +159,40 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                     viewModel = vm,
                     onEditActivity = { navController.navigate(Routes.activityForm(id = it)) },
                     onAddAt = { navController.navigate(Routes.activityForm(start = it)) },
+                    onAskClaude = { navController.navigate(Routes.proposal(it)) },
+                )
+            }
+            composable(
+                Routes.PROPOSAL,
+                arguments = listOf(
+                    navArgument("day") { type = NavType.StringType; nullable = true; defaultValue = null },
+                    navArgument("request") { type = NavType.StringType; nullable = true; defaultValue = null },
+                ),
+            ) { entry ->
+                val context = LocalContext.current
+                val container = context.container
+                val day = entry.arguments?.getString("day")?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+                    ?: logicalDay(container.clock.now())
+                val request = entry.arguments?.getString("request")?.takeIf { it.isNotBlank() && it.length <= DeepLinks.MAX_REQUEST }
+                val vm: ProposalViewModel = viewModel(
+                    factory = viewModelFactory {
+                        initializer {
+                            ProposalViewModel(
+                                day = day,
+                                request = request,
+                                planner = container.dayPlanner,
+                                proposals = container.proposalRepository,
+                                executor = container.proposalExecutor,
+                                speech = AndroidSpeechInput(context.applicationContext),
+                                clock = container.clock,
+                                wakeFor = { d -> container.routineRepository.routine.first().wakeFor(d) },
+                            )
+                        }
+                    },
+                )
+                ProposalScreen(
+                    viewModel = vm,
+                    onClose = { if (navController.currentDestination?.route == Routes.PROPOSAL) navController.popBackStack() },
                 )
             }
             composable(Routes.HABITS) {

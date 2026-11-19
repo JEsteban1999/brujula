@@ -57,11 +57,13 @@ class FakeInterpreter(vararg outcomes: InterpretOutcome) : TextInterpreter {
 class FakeExecutor(var failApply: Boolean = false, var failUndo: Boolean = false) : ActionApplier {
     var applyGate: CompletableDeferred<Unit>? = null
     val applied = mutableListOf<List<Validated>>()
+    val replies = mutableListOf<String>()
     val undone = mutableListOf<UndoToken>()
     private var nextId = 1L
-    override suspend fun apply(items: List<Validated>): ApplyResult {
+    override suspend fun apply(items: List<Validated>, reply: String): ApplyResult {
         applyGate?.await()
         applied += items
+        replies += reply
         val messages = items.mapNotNull {
             when (it) {
                 is Validated.Question -> it.text

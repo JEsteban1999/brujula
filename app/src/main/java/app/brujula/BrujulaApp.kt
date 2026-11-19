@@ -148,7 +148,7 @@ class AppContainer(val context: Context) {
 
     /** Aplica y deshace lo dictado, con las dependencias vigentes; sustituible en pruebas. */
     var executor: ActionApplier
-        get() = executorOverride ?: ActionExecutor(database, activityRepository, habitRepository, googleCopySync, reminderSync, syncScope = syncScope)
+        get() = executorOverride ?: ActionExecutor(database, activityRepository, habitRepository, googleCopySync, reminderSync, syncScope = syncScope, notes = claudeNotes, today = { logicalDay(clock.now()) })
         set(value) { executorOverride = value }
 
     /** Dictados guardados sin conexión; al terminar una pasada avisa con una notificación en `actividades`. */
