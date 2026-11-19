@@ -25,6 +25,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import android.Manifest
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -145,6 +149,23 @@ fun RoutineScreen(viewModel: RoutineViewModel, modifier: Modifier = Modifier) {
                     "Brújula lee tus calendarios de Google y Outlook para saber qué huecos tienes libres. Nunca los modifica.",
                     color = c.textMuted, fontSize = 13.sp,
                 )
+                if (calendars.showSettingsHint) {
+                    Text("Activa el permiso de Calendario en los ajustes de la app.", color = c.text, fontSize = 13.sp)
+                    val context = LocalContext.current
+                    Box(
+                        Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(RoundedCornerShape(14.dp)).background(c.accent)
+                            .clickable(role = Role.Button) {
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
+                                    )
+                                }
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("Abrir ajustes", color = c.onAccent, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+                    }
+                }
                 Box(
                     Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(RoundedCornerShape(14.dp)).background(c.accent)
                         .clickable(role = Role.Button) {

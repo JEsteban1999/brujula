@@ -25,7 +25,11 @@ data class CalendarItem(val calendar: DeviceCalendar, val selected: Boolean)
 
 data class CalendarGroup(val source: String, val accountName: String, val items: List<CalendarItem>)
 
-data class CalendarSectionState(val hasPermission: Boolean, val groups: List<CalendarGroup>)
+data class CalendarSectionState(
+    val hasPermission: Boolean,
+    val groups: List<CalendarGroup>,
+    val showSettingsHint: Boolean = false,
+)
 
 private object NoCalendars : CalendarSource {
     override fun hasReadPermission() = false
@@ -71,18 +75,26 @@ class RoutineViewModel(
         calendarLock.withLock { calendarState.value = loadCalendars() }
     }
 
+    private var permissionDenied = false
+
     private suspend fun loadCalendars(): CalendarSectionState {
         val prefs = repository.calendarPrefs
         val granted = runCatching { calendarSource.hasReadPermission() }.getOrDefault(false)
-        if (!granted) return CalendarSectionState(false, emptyList())
-        val all = runCatching { calendarSource.calendars() }.getOrDefault(emptyList())
-        var stored = runCatching { prefs.selectedCalendarIds.first() }.getOrNull()
-        if (stored == null) {
-            stored = all.map { it.id }.toSet()
-            runCatching { prefs.setSelectedCalendarIds(stored) }
+        if (!granted) return CalendarSectionState(false, emptyList(), showSettingsHint = permissionDenied)
+        permissionDenied = false
+        val query = runCatching { calendarSource.calendars() }
+        val all = query.getOrDefault(emptyList())
+        val read = runCatching { prefs.selectedCalendarIds.first() }
+        var stored = read.getOrNull()
+        // Solo se guarda el valor inicial si la lectura de preferencias y la consulta salieron bien y hay calendarios.
+        if (read.isSuccess && stored == null && query.isSuccess && all.isNotEmpty()) {
+            val firstRun = all.map { it.id }.toSet()
+            runCatching { prefs.setSelectedCalendarIds(firstRun) }
+            stored = firstRun
         }
+        val chosen = stored ?: if (read.isSuccess && query.isSuccess) emptySet() else all.map { it.id }.toSet()
         val groups = all.groupBy { it.sourceLabel to it.accountName }.map { (k, list) ->
-            CalendarGroup(k.first, k.second, list.sortedBy { it.name.lowercase() }.map { CalendarItem(it, it.id in stored) })
+            CalendarGroup(k.first, k.second, list.sortedBy { it.name.lowercase() }.map { CalendarItem(it, it.id in chosen) })
         }.sortedWith(compareBy({ it.source }, { it.accountName }))
         return CalendarSectionState(true, groups)
     }
@@ -98,7 +110,10 @@ class RoutineViewModel(
         }
     }
 
-    fun onPermissionResult(granted: Boolean): Job = refreshCalendars()
+    fun onPermissionResult(granted: Boolean): Job {
+        permissionDenied = !granted
+        return refreshCalendars()
+    }
 
     private fun change(resyncAfter: Boolean = false, transform: (Routine) -> Routine): Job =
         scope.launch {

@@ -122,8 +122,9 @@ class RoutineViewModelTest {
     }
 
     @Test fun missingSavedIdIsIgnored() = runTest {
-        val (e, _) = calEnv(FakeCalendarSource(calendarList = listOf(cal(1))))
-        e.repo.calendarPrefs.setSelectedCalendarIds(setOf(1L, 99L))
+        val repo = RoutineRepository(PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "m.preferences_pb") })
+        repo.calendarPrefs.setSelectedCalendarIds(setOf(1L, 99L))
+        val e = Env(repo, FakeReminderSync(), RoutineViewModel(repo, FakeReminderSync(), backgroundScope, FakeCalendarSource(calendarList = listOf(cal(1)))))
         e.vm.refreshCalendars().join()
         assertEquals(listOf(1L), e.vm.calendars.value.groups.single().items.filter { it.selected }.map { it.calendar.id })
         e.vm.toggleCalendar(1).join()
@@ -138,5 +139,41 @@ class RoutineViewModelTest {
         e.vm.refreshCalendars().join()
         assertFalse(e.vm.calendars.value.hasPermission)
         assertTrue(e.vm.calendars.value.groups.isEmpty())
+    }
+
+    @Test fun zeroCalendarsDoesNotPersistAndLaterSelectsAll() = runTest {
+        val (e, src) = calEnv(FakeCalendarSource(calendarList = emptyList()))
+        e.vm.refreshCalendars().join()
+        assertTrue(e.vm.calendars.value.hasPermission)
+        assertEquals(null, e.repo.calendarPrefs.selectedCalendarIds.first())
+        src.calendarList = listOf(cal(1), cal(2))
+        e.vm.refreshCalendars().join()
+        assertEquals(setOf(1L, 2L), e.repo.calendarPrefs.selectedCalendarIds.first())
+        assertTrue(e.vm.calendars.value.groups.flatMap { it.items }.all { it.selected })
+    }
+
+    @Test fun failedPrefsReadWritesNothing() = runTest {
+        val store = object : androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences> {
+            var writes = 0
+            override val data = kotlinx.coroutines.flow.flow<androidx.datastore.preferences.core.Preferences> { throw java.io.IOException("boom") }
+            override suspend fun updateData(
+                transform: suspend (androidx.datastore.preferences.core.Preferences) -> androidx.datastore.preferences.core.Preferences,
+            ): androidx.datastore.preferences.core.Preferences { writes++; return transform(androidx.datastore.preferences.core.emptyPreferences()) }
+        }
+        val repo = RoutineRepository(store)
+        val vm = RoutineViewModel(repo, FakeReminderSync(), backgroundScope, FakeCalendarSource(calendarList = listOf(cal(1))))
+        vm.refreshCalendars().join()
+        assertEquals(0, store.writes)
+        assertTrue(vm.calendars.value.hasPermission)
+    }
+
+    @Test fun deniedShowsSettingsHintGrantedClearsIt() = runTest {
+        val (e, src) = calEnv(FakeCalendarSource(permission = false, calendarList = listOf(cal(1))))
+        e.vm.onPermissionResult(false).join()
+        assertTrue(e.vm.calendars.value.showSettingsHint)
+        src.permission = true
+        e.vm.onPermissionResult(true).join()
+        assertFalse(e.vm.calendars.value.showSettingsHint)
+        assertTrue(e.vm.calendars.value.hasPermission)
     }
 }
