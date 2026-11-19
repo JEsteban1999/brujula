@@ -1,6 +1,7 @@
 package app.brujula.claude
 
 import app.brujula.activities.Activity
+import app.brujula.activities.ActivityOrigin
 import app.brujula.activities.ActivityType
 import app.brujula.activities.Repeat
 import app.brujula.activities.form.MAX_DURATION
@@ -39,13 +40,28 @@ object ActionValidator {
     private val TIME = Regex("""^([01]?\d|2[0-3]):([0-5]\d)$""")
     private val DATE = Regex("""^\d{4}-\d{2}-\d{2}$""")
 
-    fun validate(a: DictationAction, ctx: DictationContext): Validated = when (a.type.trim()) {
+    /** Hasta cuántos días adelante se puede pedir armar o cambiar un día (D10: hoy..hoy+6). */
+    const val MAX_PLAN_DAYS_AHEAD = 6L
+    const val PLAN_TOO_FAR = "Por ahora puedo reorganizar hasta 6 días adelante."
+
+    /** [dictated]: el texto limpio que dijo el usuario; viaja en [Validated.PlanRequest] para pedirle el plan a Claude. */
+    fun validate(a: DictationAction, ctx: DictationContext, dictated: String = ""): Validated = when (a.type.trim()) {
         "create_activity" -> activity(a, ctx)
+        "plan_request" -> planRequest(a, ctx, dictated)
         "create_habit" -> habit(a, ctx)
         "need_more_info" -> a.question?.trim()?.takeIf { it.isNotEmpty() }?.let { Validated.Question(it) }
             ?: Validated.Invalid("Claude pidió más datos pero no dijo cuáles.")
         "unsupported" -> Validated.Unsupported(a.question?.trim()?.takeIf { it.isNotEmpty() } ?: UNSUPPORTED_DEFAULT)
         else -> Validated.Invalid("Acción desconocida: «${a.type}».")
+    }
+
+    private fun planRequest(a: DictationAction, ctx: DictationContext, dictated: String): Validated {
+        // El rango se mide contra el presente (como "ya pasó"): un dictado de la cola de ayer no arma un día que ya terminó.
+        val today = logicalDay(ctx.now)
+        val day = if (a.date.isNullOrBlank()) today else parseDate(a.date) ?: return Validated.Invalid("La fecha del cambio no es válida (${a.date}).")
+        if (day < today) return Validated.Unsupported(app.brujula.planning.PlanValidator.PAST_DAY)
+        if (day > today.plusDays(MAX_PLAN_DAYS_AHEAD)) return Validated.Unsupported(PLAN_TOO_FAR)
+        return Validated.PlanRequest(day, dictated)
     }
 
     private fun activity(a: DictationAction, ctx: DictationContext): Validated {
@@ -77,6 +93,7 @@ object ActionValidator {
             Activity(
                 title = title, type = type, date = date, start = start, durationMin = duration, repeat = repeat,
                 remindBeforeMin = REMIND_BEFORE_MIN, copyToGoogle = a.copyToGoogle ?: (type == ActivityType.APPOINTMENT),
+                origin = ActivityOrigin.DICTATION,
             ),
         )
     }

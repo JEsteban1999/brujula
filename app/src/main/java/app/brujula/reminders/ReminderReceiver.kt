@@ -4,20 +4,47 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import app.brujula.container
+import app.brujula.planning.MORNING_FALLBACK_BODY
+import app.brujula.planning.morningBody
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
+
+/** Tope para armar el resumen de la mañana dentro de goAsync(); las pruebas lo acortan. */
+internal var morningSnapshotTimeoutMs = 5_000L
 
 class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         // Sin extras (alarma silenciosa "wake" de reprogramacion): no muestra nada y solo resincroniza.
         val reminder = ReminderExtras.read(intent)
-        // Mostrar primero y de forma sincrona: lo critico es que suene a su hora.
-        if (reminder != null) {
-            try {
-                Notifications.show(context, reminder)
-            } catch (e: Exception) {
-                android.util.Log.w("ReminderReceiver", "No se pudo mostrar el aviso", e)
-            }
-        }
         val app = context.applicationContext
+        if (reminder?.kind == ReminderKind.PLAN_MORNING) {
+            // El resumen se arma al entregarlo con el dia real (D14); si falla, sale con el texto de respaldo.
+            launchAsync("ReminderReceiver") {
+                val body = try {
+                    // goAsync() da unos segundos: sin tope, un calendario lento dejaría el aviso sin salir.
+                    withTimeoutOrNull(morningSnapshotTimeoutMs) { morningBody(app.container.daySnapshots.snapshot(reminder.day)) }
+                        ?: MORNING_FALLBACK_BODY
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    android.util.Log.w("ReminderReceiver", "No se pudo armar el resumen; va el texto de respaldo", e)
+                    MORNING_FALLBACK_BODY
+                }
+                show(app, reminder.copy(body = body))
+                app.container.reminderSync.resync()
+            }
+            return
+        }
+        // Mostrar primero y de forma sincrona: lo critico es que suene a su hora.
+        if (reminder != null) show(app, reminder)
         launchAsync("ReminderReceiver") { app.container.reminderSync.resync() }
+    }
+
+    private fun show(context: Context, reminder: Reminder) {
+        try {
+            Notifications.show(context, reminder)
+        } catch (e: Exception) {
+            android.util.Log.w("ReminderReceiver", "No se pudo mostrar el aviso", e)
+        }
     }
 }

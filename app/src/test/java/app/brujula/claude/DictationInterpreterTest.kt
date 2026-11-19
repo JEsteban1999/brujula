@@ -34,6 +34,14 @@ class DictationInterpreterTest {
         assertEquals(PromptBuilder.user(ctx, "mañana a las 3 dentista y recuérdame tomar agua cada hora"), gateway.lastUser)
     }
 
+    @Test fun planRequestCarriesDictatedText() = runTest {
+        gateway.dictation = GatewayResult.Ok(
+            DictationResult(listOf(DictationAction(type = "plan_request", date = "2026-11-19")), "Te armo una propuesta."),
+        )
+        val out = interpreter.interpret("  hoy no voy a entrenar  ") as InterpretOutcome.Ok
+        assertEquals(Validated.PlanRequest(LocalDate.of(2026, 11, 19), "hoy no voy a entrenar"), out.items.single())
+    }
+
     @Test fun invalidActionIsKeptAsInvalidNotDropped() = runTest {
         gateway.dictation = GatewayResult.Ok(
             DictationResult(listOf(DictationAction(type = "create_activity", title = "X", activityType = "PERSONAL", date = "2026-11-17", start = "10:00", durationMin = 30)), "Listo."),

@@ -49,11 +49,13 @@ class NotificationActionReceiver : BroadcastReceiver() {
                         reminder.habitId?.let { c.habitRepository.logDone(it, now, originalKey) }
                     }
                 ReminderKind.ACTIVITY -> reminder.activityId?.let { c.activityRepository.setDone(it, reminder.day, true) }
-                ReminderKind.EXERCISE_PROMPT, null -> Unit
+                ReminderKind.EXERCISE_PROMPT, ReminderKind.PLAN_NIGHT, ReminderKind.PLAN_MORNING, ReminderKind.BEDTIME, null -> Unit
             }
             ACTION_SKIP -> reminder?.habitId?.let { c.habitRepository.logSkip(it, now, originalKey) }
             ACTION_EXERCISE_YES -> reminder?.let { exerciseYes(context, it.day, now) }
             ACTION_EXERCISE_NO -> reminder?.let { c.routineRepository.markExercisePromptAnswered(it.day) }
+            // `Mañana lo veo`: solo cierra el aviso (ya cancelado en onReceive); sin efectos.
+            ACTION_LATER -> Unit
             ACTION_SNOOZE_15 -> if (reminder != null) {
                 val snoozeKey = if (key.endsWith(SNOOZE_SUFFIX)) key else key + SNOOZE_SUFFIX
                 c.reminderScheduler.scheduleOne(reminder.copy(key = snoozeKey, at = now.plusMinutes(15)))
@@ -67,13 +69,14 @@ class NotificationActionReceiver : BroadcastReceiver() {
         if (day in c.routineRepository.exercisePromptAnswered.first()) return@withLock
         val activities = c.activityRepository.observeAll().first()
         val doneKeys = c.activityRepository.observeDoneKeys().first()
-        if (occurrencesOn(day, activities, doneKeys).any { it.activity.type == ActivityType.EXERCISE }) {
+        val overrides = c.activityRepository.observeOverrides().first()
+        if (occurrencesOn(day, activities, doneKeys, overrides).any { it.activity.type == ActivityType.EXERCISE }) {
             c.routineRepository.markExercisePromptAnswered(day)
             return@withLock
         }
         val window = c.routineRepository.routine.first().awakeWindow(day)
         val from = maxOf(ceilToQuarter(now), window.start)
-        val busy = (-1L..1L).flatMap { occurrencesOn(day.plusDays(it), activities, doneKeys) }.map { it.span } +
+        val busy = (-1L..1L).flatMap { occurrencesOn(day.plusDays(it), activities, doneKeys, overrides) }.map { it.span } +
             externalBusy(c, window)
         val slot = freeSlots(TimeSpan(from, window.end), busy, EXERCISE_MIN.toLong()).firstOrNull()
         if (slot == null) {
@@ -121,6 +124,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
         const val ACTION_DONE = "app.brujula.action.DONE"
         const val ACTION_SNOOZE_15 = "app.brujula.action.SNOOZE_15"
         const val ACTION_SKIP = "app.brujula.action.SKIP"
+        const val ACTION_LATER = "app.brujula.action.LATER"
         const val EXTRA_KEY = "key"
         const val EXTRA_HABIT_ID = "habitId"
         const val EXTRA_HABIT_IDS = "habitIds"
@@ -131,6 +135,6 @@ class NotificationActionReceiver : BroadcastReceiver() {
         const val EXTRA_TITLE = "title"
         const val EXTRA_BODY = "body"
         const val SNOOZE_SUFFIX = ":s"
-        private val ACTIONS = setOf(ACTION_DONE, ACTION_SNOOZE_15, ACTION_SKIP, ACTION_EXERCISE_YES, ACTION_EXERCISE_NO)
+        private val ACTIONS = setOf(ACTION_DONE, ACTION_SNOOZE_15, ACTION_SKIP, ACTION_EXERCISE_YES, ACTION_EXERCISE_NO, ACTION_LATER)
     }
 }

@@ -118,4 +118,24 @@ class PromptBuilderTest {
         listOf("create_activity", "create_habit", "need_more_info", "unsupported", "APPOINTMENT", "04:00", "<dictado>", "español")
             .forEach { s.has(it) }
     }
+
+    @Test fun systemRoutesChangesToPlanRequest() {
+        val s = PromptBuilder.system()
+        s.has("- plan_request:")
+        listOf("mover, cambiar, cancelar o saltar algo que ya existe", "\"arma mi día de mañana\"", "\"hoy no voy a entrenar\"",
+            "\"pasa el gym a la tarde\"", "date = el día afectado").forEach { s.has(it) }
+        // Mover, cambiar, cancelar y reorganizar ya no son unsupported; consultar la agenda sigue siéndolo.
+        val unsupported = s.lines().first { it.startsWith("- unsupported:") }
+        assertFalse(unsupported.contains("mover"))
+        assertFalse(unsupported.contains("cancelar"))
+        assertFalse(unsupported.contains("reorganizar"))
+        assertTrue(unsupported.contains("consultar la agenda"))
+        assertTrue(unsupported.contains("no son de agenda"))
+        // Hábitos y series completas siguen siendo unsupported; plan_request cubre solo un día concreto.
+        assertTrue(unsupported.contains("cambiar o borrar hábitos"))
+        assertTrue(unsupported.contains("\"para siempre\""))
+        assertTrue(unsupported.contains("toda la serie"))
+        assertTrue(s.lines().first { it.startsWith("- plan_request:") }.contains("en un día concreto"))
+        assertFalse(s.contains("eso es siempre un plan_request"))
+    }
 }

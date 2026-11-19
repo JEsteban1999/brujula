@@ -18,13 +18,13 @@ data class DictationResult(
 
 @JsonClassDescription("Una acción. Solo se llenan los campos que aplican a su tipo; los demás van en null.")
 data class DictationAction(
-    @field:JsonPropertyDescription("create_activity | create_habit | need_more_info | unsupported")
+    @field:JsonPropertyDescription("create_activity | create_habit | need_more_info | plan_request | unsupported")
     val type: String = "",
     @field:JsonPropertyDescription("Nombre corto de la actividad o del hábito, sin fecha ni hora. Ej.: \"Dentista\", \"Tomar agua\".")
     val title: String? = null,
     @field:JsonPropertyDescription("Solo create_activity: WORK | EXERCISE | APPOINTMENT | PERSONAL")
     val activityType: String? = null,
-    @field:JsonPropertyDescription("Solo create_activity: fecha de calendario del inicio, yyyy-MM-dd.")
+    @field:JsonPropertyDescription("create_activity: fecha de calendario del inicio, yyyy-MM-dd. plan_request: el día lógico afectado, yyyy-MM-dd.")
     val date: String? = null,
     @field:JsonPropertyDescription("Solo create_activity: hora de inicio en 24 h, HH:mm.")
     val start: String? = null,
@@ -48,10 +48,12 @@ data class DictationAction(
     val question: String? = null,
 )
 
-/** Una acción ya validada localmente; solo [Activity] y [Habit] se aplican. */
+/** Una acción ya validada localmente; solo [Activity] y [Habit] se aplican ([PlanRequest] abre la Propuesta, nunca cambia nada). */
 sealed interface Validated {
     data class Activity(val activity: app.brujula.activities.Activity) : Validated
     data class Habit(val habit: app.brujula.habits.Habit) : Validated
+    /** Un cambio o un armado de día pedido por voz: [day] es el día lógico afectado y [text] lo dictado. */
+    data class PlanRequest(val day: java.time.LocalDate, val text: String) : Validated
     data class Question(val text: String) : Validated
     data class Unsupported(val text: String) : Validated
     data class Invalid(val reason: String) : Validated

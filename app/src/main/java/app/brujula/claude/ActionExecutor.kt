@@ -6,8 +6,11 @@ import androidx.room.withTransaction
 import app.brujula.activities.Activity
 import app.brujula.activities.ActivityRepository
 import app.brujula.activities.Repeat
+import app.brujula.calendar.GoogleCopyJournal
 import app.brujula.calendar.GoogleCopySync
+import app.brujula.core.time.SystemClock
 import app.brujula.core.time.formatMinutes
+import app.brujula.routine.logicalDay
 import app.brujula.core.time.formatTime
 import app.brujula.habits.Habit
 import app.brujula.habits.HabitRepository
@@ -16,6 +19,7 @@ import app.brujula.reminders.ReminderResync
 import app.brujula.activities.ActivityType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -33,7 +37,8 @@ data class ApplyResult(val created: List<CreatedItem>, val messages: List<String
 
 /** Costura para la pantalla de dictado y la cola sin conexión; las pruebas la sustituyen. */
 interface ActionApplier {
-    suspend fun apply(items: List<Validated>): ApplyResult
+    /** [reply] es la frase de Claude para la tarjeta de Hoy; vacía → se arma con las etiquetas de lo creado. */
+    suspend fun apply(items: List<Validated>, reply: String = ""): ApplyResult
     suspend fun undo(token: UndoToken)
 }
 
@@ -49,11 +54,17 @@ class ActionExecutor(
     private val reminderSync: ReminderResync,
     /** Las copias a Google corren aquí (producción: `container.syncScope`), fuera de la cancelación de quien llama. */
     private val syncScope: CoroutineScope,
+    /** La nota de la tarjeta de Claude en Hoy (D15); `null` = no se escribe (pruebas que no la usan). */
+    private val notes: ClaudeNotes? = null,
+    /** Día lógico de hoy, para la nota. */
+    private val today: () -> LocalDate = { logicalDay(SystemClock.now()) },
+    /** Borrados de copias pendientes, persistidos antes de borrar la fila (producción: `container.googleCopyJournal`). */
+    private val journal: GoogleCopyJournal = GoogleCopyJournal(),
 ) : ActionApplier {
     /** Solo para pruebas: se invoca tras cada fila insertada, dentro de la transacción. */
     internal var afterInsert: (suspend () -> Unit)? = null
 
-    override suspend fun apply(items: List<Validated>): ApplyResult {
+    override suspend fun apply(items: List<Validated>, reply: String): ApplyResult {
         val messages = items.mapNotNull {
             when (it) {
                 is Validated.Question -> it.text
@@ -65,6 +76,12 @@ class ActionExecutor(
         val toCreate = items.filter { it is Validated.Activity || it is Validated.Habit }
         if (toCreate.isEmpty()) return ApplyResult(emptyList(), messages, null)
 
+        // Sin cancelación a medias: con Room 2.6, cancelar a quien llama durante withTransaction no impide el commit;
+        // sin esto quedarían filas creadas sin resync ni copia a Google.
+        return withContext(NonCancellable) { applyCommitted(toCreate, messages, reply) }
+    }
+
+    private suspend fun applyCommitted(toCreate: List<Validated>, messages: MutableList<String>, reply: String): ApplyResult {
         val created = mutableListOf<CreatedItem>()
         val savedActivities = mutableListOf<Activity>()
         try {
@@ -91,26 +108,43 @@ class ActionExecutor(
             messages += "No pude guardar lo que pediste. No se agendó nada."
             return ApplyResult(emptyList(), messages, null)
         }
-        // Ya confirmado: el resync no se cancela a medias y la copia a Google no retrasa la respuesta.
-        withContext(NonCancellable) { resyncSafely() }
+        // Ya confirmado: la copia a Google no retrasa la respuesta.
+        resyncSafely()
         val toCopy = savedActivities.filter { it.copyToGoogle }
         if (toCopy.isNotEmpty()) syncScope.launch { toCopy.forEach { googleCopySync.afterSave(it) } }
+        writeNote(reply, created.map { it.label })
         val token = UndoToken(created.mapNotNull { it.activityId }, created.mapNotNull { it.habitId })
         return ApplyResult(created.toList(), messages, token)
     }
 
     /**
      * Idempotente y sin cancelación a medias. Por cada actividad creada se barre la copia de Google aunque la fila ya no
-     * exista (un reintento, o una copia que terminó después de [apply]): `afterDelete` busca por id de actividad.
+     * exista (un reintento, o una copia que terminó después de [apply]): el barrido busca por id de actividad. El borrado
+     * de la copia se anota en el diario antes de borrar la fila: si no se puede hacer ahora (sin permiso) o el proceso
+     * muere, el arranque lo termina.
      */
     override suspend fun undo(token: UndoToken) = withContext(NonCancellable) {
         for (id in token.activityIds) {
             val stored = activityRepo.get(id)
+            val entry = journal.delete(stored ?: stub(id))
+            withContext(Dispatchers.IO) { journal.record(listOf(entry)) }
             if (stored != null) activityRepo.delete(id)
-            googleCopySync.afterDelete(stored ?: stub(id))
+            journal.run(entry, googleCopySync, activityRepo)
         }
         token.habitIds.forEach { habitRepo.delete(it) }
         resyncSafely()
+    }
+
+    /** La nota es un extra: si el DataStore falla, lo agendado ya está confirmado y no se pierde el token. */
+    private suspend fun writeNote(reply: String, labels: List<String>) {
+        val store = notes ?: return
+        try {
+            store.set(ClaudeNote(reply.trim().ifBlank { "Agendé " + labels.joinToString("; ") }, today(), null))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("ActionExecutor", "No se pudo escribir la nota: ${e.javaClass.simpleName}")
+        }
     }
 
     /** Ya está todo confirmado: un fallo del resync no debe tumbar apply/undo (el token se perdería y Reintentar duplicaría). */

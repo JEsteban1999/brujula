@@ -30,4 +30,7 @@ interface ClaudeGateway {
 
     /** Clasifica títulos de eventos como trabajo o no (Haiku, salida estructurada). Nunca lanza (salvo cancelación). */
     suspend fun classify(system: String, user: String): GatewayResult<ClassificationResult>
+
+    /** Propone cambios para un día (Opus 5.5, salida estructurada). Nunca lanza (salvo cancelación). */
+    suspend fun plan(system: String, user: String): GatewayResult<PlanResult>
 }

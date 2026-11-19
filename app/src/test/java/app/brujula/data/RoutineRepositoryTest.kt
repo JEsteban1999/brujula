@@ -55,4 +55,25 @@ class RoutineRepositoryTest {
         assertEquals(LocalTime.of(11, 0), r.routine.first().restWake)
         assertEquals(LocalTime.of(2, 0), r.routine.first().restBed)
     }
+
+    @Test fun nightNoticeDefaultsTo2245AndPersists() = runTest {
+        val file = File(tmp.root, "night.preferences_pb")
+        val r = repo(file)
+        assertEquals(LocalTime.of(22, 45), r.routine.first().nightNotice)
+        r.update { it.copy(nightNotice = LocalTime.of(21, 30)) }
+        assertEquals(LocalTime.of(21, 30), r.routine.first().nightNotice)
+        // Otros cambios de la rutina no lo pisan.
+        r.update { it.copy(wake = LocalTime.of(7, 0)) }
+        assertEquals(LocalTime.of(21, 30), r.routine.first().nightNotice)
+    }
+
+    @Test fun bedtimeReminderDefaultsOnAndPersists() = runTest {
+        val file = File(tmp.root, "bed.preferences_pb")
+        val r = repo(file)
+        assertEquals(true, r.bedtimeReminderOn.first())
+        r.setBedtimeReminder(false)
+        assertEquals(false, r.bedtimeReminderOn.first())
+        r.setBedtimeReminder(true)
+        assertEquals(true, r.bedtimeReminderOn.first())
+    }
 }

@@ -135,4 +135,51 @@ class MigrationTest {
         mid.close()
         assertV4Data(helper.runMigrationsAndValidate("mig14.db", 4, true))
     }
+
+    private fun insertV4Rows(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        insertV1Rows(db)
+        db.execSQL("INSERT INTO work_classifications(`key`, isWork, source) VALUES ('reunion', 1, 'USER')")
+        db.execSQL("UPDATE activities SET googleEventId = 77 WHERE id = 1")
+    }
+
+    private fun assertV5Data(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.query("SELECT title, origin, googleEventId, copyToGoogle FROM activities").use { c ->
+            assertEquals(1, c.count); c.moveToFirst()
+            assertEquals("Dentista", c.getString(0)); assertEquals("UNKNOWN", c.getString(1))
+            assertEquals(77, c.getInt(2)); assertEquals(1, c.getInt(3))
+        }
+        db.query("SELECT name FROM habits").use { c -> assertEquals(1, c.count) }
+        db.query("SELECT reminderKey FROM habit_logs").use { c -> assertEquals(1, c.count); c.moveToFirst(); assertEquals("k1", c.getString(0)) }
+        db.query("SELECT day FROM activity_completions WHERE activityId = 1").use { c -> assertEquals(1, c.count) }
+        db.query("SELECT `key`, source FROM work_classifications").use { c ->
+            assertEquals(1, c.count); c.moveToFirst(); assertEquals("reunion", c.getString(0)); assertEquals("USER", c.getString(1))
+        }
+        db.execSQL("INSERT INTO activity_overrides(activityId, day, start, durationMin, skipped) VALUES (1, '2026-11-20', '2026-11-20T18:00', 30, 0)")
+        db.execSQL(
+            "INSERT INTO proposals(day, createdAt, status, request, summary, payload) " +
+                "VALUES ('2026-11-20', '2026-11-19T22:00', 'PENDING', NULL, 'resumen', '{}')",
+        )
+        db.query("SELECT status, undo, acceptedAt FROM proposals").use { c ->
+            assertEquals(1, c.count); c.moveToFirst()
+            assertEquals("PENDING", c.getString(0)); assertTrue(c.isNull(1)); assertTrue(c.isNull(2))
+        }
+        db.query("SELECT COUNT(*) FROM activity_overrides").use { c -> c.moveToFirst(); assertEquals(1, c.getInt(0)) }
+        db.execSQL("PRAGMA foreign_keys = ON")
+        db.execSQL("DELETE FROM activities WHERE id = 1")
+        db.query("SELECT COUNT(*) FROM activity_overrides").use { c -> c.moveToFirst(); assertEquals(0, c.getInt(0)) }
+    }
+
+    @Test fun v4ToV5KeepsActivitiesWithUnknownOrigin() {
+        helper.createDatabase("mig45.db", 4).apply { insertV4Rows(this); close() }
+        assertV5Data(helper.runMigrationsAndValidate("mig45.db", 5, true))
+    }
+
+    @Test fun v1ToV5ChainedKeepsEverything() {
+        helper.createDatabase("mig15.db", 1).apply { insertV1Rows(this); close() }
+        val mid = helper.runMigrationsAndValidate("mig15.db", 4, true)
+        mid.execSQL("INSERT INTO work_classifications(`key`, isWork, source) VALUES ('reunion', 1, 'USER')")
+        mid.execSQL("UPDATE activities SET googleEventId = 77 WHERE id = 1")
+        mid.close()
+        assertV5Data(helper.runMigrationsAndValidate("mig15.db", 5, true))
+    }
 }

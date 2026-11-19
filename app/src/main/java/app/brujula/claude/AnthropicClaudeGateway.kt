@@ -39,6 +39,7 @@ class AnthropicClaudeGateway internal constructor(
     private val readKey: suspend () -> String?,
     private val dictationParams: (String, String) -> BetaMessageCreateParams = DictationCall::params,
     private val classificationParams: (String, String) -> MessageCreateParams = ClassificationCall::params,
+    private val planParams: (String, String) -> BetaMessageCreateParams = PlanCall::params,
     private val keyTestParams: () -> MessageCreateParams = ::keyTestParams,
 ) : ClaudeGateway {
     constructor(keyStore: ClaudeKeyStore) : this(keyStore::read)
@@ -69,22 +70,36 @@ class AnthropicClaudeGateway internal constructor(
     // LinkageError (NoSuchMethodError, NoClassDefFoundError, ExceptionInInitializerError, ...) = el SDK o una dependencia no
     // encaja con el runtime de Android. Se captura para no tumbar la app; OutOfMemoryError y demás VirtualMachineError no.
 
-    override suspend fun interpret(system: String, user: String): GatewayResult<DictationResult> = withContext(Dispatchers.IO) {
+    override suspend fun interpret(system: String, user: String): GatewayResult<DictationResult> =
+        callBeta("Dictado", { dictationParams(system, user) }, DictationCall::requestOptions, DictationCall::read)
+
+    override suspend fun plan(system: String, user: String): GatewayResult<PlanResult> =
+        callBeta("Plan", { planParams(system, user) }, PlanCall::requestOptions, PlanCall::read)
+
+    /**
+     * Llamada al endpoint beta con su propio tiempo por petición (el cliente queda en 30 s para testKey). Sin clave no arma
+     * la petición; los fallos se clasifican por tipo con la etiqueta [what] en el log.
+     */
+    private suspend fun <T> callBeta(
+        what: String,
+        params: () -> BetaMessageCreateParams,
+        options: () -> RequestOptions,
+        read: (BetaMessage) -> GatewayResult<T>,
+    ): GatewayResult<T> = withContext(Dispatchers.IO) {
         try {
             val key = readKey()
             if (key == null) {
                 dropClient()
                 return@withContext GatewayResult.NoKey
             }
-            val params = dictationParams(system, user)
-            // Tiempo propio del dictado (el cliente queda en 30 s para testKey).
-            DictationCall.read(clientFor(key).beta().messages().create(params, DictationCall.requestOptions()))
+            val p = params()
+            read(clientFor(key).beta().messages().create(p, options()))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            DictationCall.failureOf(e)
+            DictationCall.failureOf(e, what)
         } catch (e: LinkageError) {
-            DictationCall.incompatible(e)
+            DictationCall.incompatible(e, what)
         }
     }
 
@@ -149,30 +164,9 @@ internal fun keyTestParams(): MessageCreateParams =
 internal object DictationCall {
     private const val MAX_TOKENS = 4096L
 
-    /**
-     * Salida estructurada con el schema escrito a mano ([Schemas.DICTATION]; nunca el derivado de la clase, que revienta en
-     * ART); esfuerzo bajo, sin `thinking`, sin temperatura ni prefill.
-     */
+    /** Esfuerzo bajo y el schema escrito a mano [Schemas.DICTATION] (ver [betaStructuredParams]). */
     fun params(system: String, user: String): BetaMessageCreateParams =
-        BetaMessageCreateParams.builder()
-            .model(ClaudeModels.DICTATION)
-            .maxTokens(MAX_TOKENS)
-            .addBeta(AnthropicBeta.SERVER_SIDE_FALLBACK_2026_07_01)
-            .fallbacksDefault()
-            .systemOfBetaTextBlockParams(
-                listOf(
-                    // El system es fijo: se marca cacheable (si no alcanza el mínimo de tokens, el API simplemente no cachea).
-                    BetaTextBlockParam.builder().text(system).cacheControl(BetaCacheControlEphemeral.builder().build()).build(),
-                ),
-            )
-            .addUserMessage(user)
-            .outputConfig(
-                BetaOutputConfig.builder()
-                    .effort(BetaOutputConfig.Effort.LOW)
-                    .format(Schemas.betaFormat(Schemas.DICTATION))
-                    .build(),
-            )
-            .build()
+        betaStructuredParams(ClaudeModels.DICTATION, MAX_TOKENS, BetaOutputConfig.Effort.LOW, Schemas.DICTATION, system, user)
 
     /** Opus 5.5 siempre piensa y un respaldo puede correr dos modelos en la misma llamada: más que los 30 s del cliente. */
     val TIMEOUT: Duration = Duration.ofSeconds(60)
@@ -183,22 +177,7 @@ internal object DictationCall {
     @Volatile var warn: (String) -> Unit = { Log.w("ClaudeGateway", it) }
 
     /** Revisa stopReason antes de leer el contenido. */
-    fun read(response: BetaMessage): GatewayResult<DictationResult> {
-        val stop = response.stopReason().orElse(null)
-        if (stop == BetaStopReason.REFUSAL) return GatewayResult.Refused
-        // Truncada por max_tokens: puede salir bien al repetir.
-        if (stop == BetaStopReason.MAX_TOKENS) return GatewayResult.Error(retryable = true)
-        if (stop != BetaStopReason.END_TURN) return GatewayResult.Error(retryable = false)
-        return try {
-            // Tras un respaldo puede haber texto parcial del primer modelo antes del bloque fallback: vale el último texto.
-            val block = response.content().lastOrNull { it.isText() } ?: return GatewayResult.Error(retryable = false)
-            GatewayResult.Ok(StructuredJson.parse(block.asText().text(), DictationResult::class.java))
-        } catch (e: Exception) {
-            // JSON que no encaja en DictationResult (excepción de Jackson) u otra respuesta ilegible.
-            warn("Respuesta de dictado ilegible: ${e.javaClass.simpleName}")
-            GatewayResult.Error(retryable = false)
-        }
-    }
+    fun read(response: BetaMessage): GatewayResult<DictationResult> = readStructured(response, DictationResult::class.java, "dictado")
 
     /** Clasifica por tipo de excepción, nunca por el texto del mensaje. */
     fun failureOf(e: Exception, what: String = "Dictado"): GatewayResult<Nothing> {
@@ -228,6 +207,74 @@ internal object DictationCall {
     }
 
     private fun Throwable.causes(): Sequence<Throwable> = generateSequence(cause) { it.cause?.takeIf { c -> c !== it } }
+}
+
+/**
+ * Petición beta con salida estructurada: respaldo en el servidor (`fallbacks` "default", beta server-side-fallback-2026-07-01),
+ * system fijo y cacheable, un solo mensaje de usuario (sin prefill), sin `thinking` ni temperatura. El schema es siempre uno
+ * escrito a mano de [Schemas], nunca el derivado de la clase (revienta en ART: Method.getAnnotatedReturnType no existe).
+ */
+internal fun betaStructuredParams(
+    model: String,
+    maxTokens: Long,
+    effort: BetaOutputConfig.Effort,
+    schema: Map<String, Any>,
+    system: String,
+    user: String,
+): BetaMessageCreateParams =
+    BetaMessageCreateParams.builder()
+        .model(model)
+        .maxTokens(maxTokens)
+        .addBeta(AnthropicBeta.SERVER_SIDE_FALLBACK_2026_07_01)
+        .fallbacksDefault()
+        .systemOfBetaTextBlockParams(
+            listOf(
+                // El system es fijo: se marca cacheable (si no alcanza el mínimo de tokens, el API simplemente no cachea).
+                BetaTextBlockParam.builder().text(system).cacheControl(BetaCacheControlEphemeral.builder().build()).build(),
+            ),
+        )
+        .addUserMessage(user)
+        .outputConfig(BetaOutputConfig.builder().effort(effort).format(Schemas.betaFormat(schema)).build())
+        .build()
+
+/**
+ * Lectura común de una respuesta beta con salida estructurada: revisa stopReason antes del contenido y lee el último bloque
+ * de texto con Jackson ([StructuredJson]). [what] solo aparece en el log, que lleva la clase de la excepción y nunca el texto.
+ */
+internal fun <T : Any> readStructured(response: BetaMessage, type: Class<T>, what: String): GatewayResult<T> {
+    val stop = response.stopReason().orElse(null)
+    if (stop == BetaStopReason.REFUSAL) return GatewayResult.Refused
+    // Truncada por max_tokens: puede salir bien al repetir.
+    if (stop == BetaStopReason.MAX_TOKENS) return GatewayResult.Error(retryable = true)
+    if (stop != BetaStopReason.END_TURN) return GatewayResult.Error(retryable = false)
+    return try {
+        // Tras un respaldo puede haber texto parcial del primer modelo antes del bloque fallback: vale el último texto.
+        val block = response.content().lastOrNull { it.isText() } ?: return GatewayResult.Error(retryable = false)
+        GatewayResult.Ok(StructuredJson.parse(block.asText().text(), type))
+    } catch (e: Exception) {
+        // JSON que no encaja en la clase (excepción de Jackson) u otra respuesta ilegible.
+        DictationCall.warn("Respuesta de $what ilegible: ${e.javaClass.simpleName}")
+        GatewayResult.Error(retryable = false)
+    }
+}
+
+/**
+ * Petición de planificación de un día (D8): Claude Opus 5.5, esfuerzo MEDIUM (equilibra meta de trabajo, huecos, ejercicio,
+ * almuerzo y sueño sin la espera de HIGH), 16000 tokens y 90 s por petición. Mismo endpoint beta y respaldo que el dictado;
+ * schema escrito a mano [Schemas.PLAN]. Los fallos se clasifican con [DictationCall.failureOf] / [DictationCall.incompatible].
+ */
+internal object PlanCall {
+    private const val MAX_TOKENS = 16_000L
+
+    fun params(system: String, user: String): BetaMessageCreateParams =
+        betaStructuredParams(ClaudeModels.PLANNING, MAX_TOKENS, BetaOutputConfig.Effort.MEDIUM, Schemas.PLAN, system, user)
+
+    /** Más pensamiento que el dictado y un posible respaldo con dos modelos en la misma llamada. */
+    val TIMEOUT: Duration = Duration.ofSeconds(90)
+
+    fun requestOptions(): RequestOptions = RequestOptions.builder().timeout(TIMEOUT).build()
+
+    fun read(response: BetaMessage): GatewayResult<PlanResult> = readStructured(response, PlanResult::class.java, "plan")
 }
 
 /**

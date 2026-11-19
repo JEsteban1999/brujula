@@ -16,7 +16,10 @@ import app.brujula.habits.HabitIcon
 import app.brujula.habits.HabitRepository
 import app.brujula.habits.HabitSchedule
 import app.brujula.reminders.ReminderResync
+import androidx.room.withTransaction
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.job
 import kotlinx.coroutines.joinAll
@@ -143,6 +146,9 @@ class ActionExecutorTest {
     @Test fun nonActionItemsCreateNothingAndPassMessages() = run {
         val r = executor.apply(listOf(Validated.Question("¿A qué hora?"), Validated.Unsupported("No puedo mover cosas."), Validated.Invalid("«X»: fecha ya pasó.")))
         assertEquals(listOf("¿A qué hora?", "No puedo mover cosas.", "«X»: fecha ya pasó."), r.messages)
+        // Un pedido de plan no crea nada ni da mensaje: se atiende en la Propuesta.
+        val plan = executor.apply(listOf(Validated.PlanRequest(java.time.LocalDate.of(2026, 11, 19), "hoy no entreno")))
+        assertTrue(plan.created.isEmpty() && plan.messages.isEmpty() && plan.undo == null)
         assertTrue(r.created.isEmpty())
         assertNull(r.undo)
         assertEquals(0, resyncs)
@@ -199,6 +205,29 @@ class ActionExecutorTest {
         assertTrue(writer.events.isEmpty())
     }
 
+    @Test fun undoJournalsTheCopyDeleteAndALeftoverIsDrained() = run {
+        val prefs = ApplicationProvider.getApplicationContext<Context>().getSharedPreferences("exec-journal", Context.MODE_PRIVATE)
+            .also { it.edit().clear().commit() }
+        val journal = app.brujula.calendar.GoogleCopyJournal(prefs)
+        val sync = GoogleCopySync(writer, activities)
+        val ex = ActionExecutor(db, activities, habits, sync, ReminderResync { }, scope, journal = journal)
+        val r = ex.apply(listOf(Validated.Activity(dentist)))
+        advanceUntilIdle()
+        val id = r.undo!!.activityIds.single()
+        val eventId = activities.get(id)!!.googleEventId!!
+        // Sin permiso, la copia no se puede borrar ahora: el borrado queda en el diario (lleva id de evento).
+        writer.permission = false
+        ex.undo(r.undo!!)
+        assertNull(activities.get(id))
+        assertEquals(setOf(eventId), writer.events.keys)
+        assertEquals(1, journal.pending().size)
+        // Al volver el permiso, el arranque lo termina.
+        writer.permission = true
+        app.brujula.calendar.GoogleCopyJournal(prefs).drain(sync, activities)
+        assertTrue(writer.events.isEmpty())
+        assertTrue(journal.pending().isEmpty())
+    }
+
     @Test fun undoAfterLogRemovesHabitAndItsLogs() = run {
         val r = executor.apply(listOf(Validated.Habit(stretch)))
         val hid = r.undo!!.habitIds.single()
@@ -206,5 +235,55 @@ class ActionExecutorTest {
         executor.undo(r.undo!!)
         assertEquals(0, habits.count())
         assertEquals(0, db.query("SELECT COUNT(*) FROM habit_logs", null).use { it.moveToFirst(); it.getInt(0) })
+    }
+
+    @Test fun cancellingTheCallerDuringApplyIsAllOrNothing() = kotlinx.coroutines.runBlocking {
+        val real = CoroutineScope(SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+        val ex = ActionExecutor(db, activities, habits, GoogleCopySync(writer, activities), ReminderResync { resyncs++ }, real)
+        val entered = kotlinx.coroutines.CompletableDeferred<Unit>()
+        // El gancho no se cancela: Room confirma la transacción aunque quien llamó ya se fue.
+        ex.afterInsert = { entered.complete(Unit); kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { kotlinx.coroutines.delay(300) } }
+        val job = launch(kotlinx.coroutines.Dispatchers.Default) { ex.apply(listOf(Validated.Activity(dentist))) }
+        entered.await()
+        job.cancel()
+        job.join()
+        db.withTransaction { } // espera a que termine la transacción (se serializan)
+        real.coroutineContext.job.children.toList().joinAll()
+        if (activities.count() == 1) {
+            assertEquals(1, resyncs)
+            assertEquals(1, writer.events.size)
+        } else {
+            assertEquals(0, resyncs)
+            assertTrue(writer.events.isEmpty())
+        }
+        real.cancel()
+    }
+
+    private val noteTmp = org.junit.rules.TemporaryFolder().also { it.create() }
+    private fun noteStore(): Pair<ClaudeNotes, CoroutineScope> {
+        val storeScope = CoroutineScope(SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+        val n = ClaudeNotes(androidx.datastore.preferences.core.PreferenceDataStoreFactory.create(scope = storeScope) {
+            java.io.File(noteTmp.root, "notes-${System.nanoTime()}.preferences_pb")
+        })
+        return n to storeScope
+    }
+
+    @Test fun applyWritesNoteWithReply() = run {
+        val (n, storeScope) = noteStore()
+        val ex = ActionExecutor(db, activities, habits, GoogleCopySync(writer, activities), ReminderResync { }, scope, n, { LocalDate.of(2026, 11, 19) })
+        ex.apply(listOf(Validated.Activity(exercise)), "Listo, agendé tu ejercicio.")
+        assertEquals(ClaudeNote("Listo, agendé tu ejercicio.", LocalDate.of(2026, 11, 19), null), n.note.first { it != null })
+        storeScope.cancel()
+    }
+
+    @Test fun applyNoteFallsBackToLabels() = run {
+        val (n, storeScope) = noteStore()
+        val ex = ActionExecutor(db, activities, habits, GoogleCopySync(writer, activities), ReminderResync { }, scope, n, { LocalDate.of(2026, 11, 19) })
+        ex.apply(listOf(Validated.Activity(exercise), Validated.Habit(stretch)))
+        assertEquals(
+            "Agendé Ejercicio · jue 19 nov · 19:00–20:00; Hábito · Estirarse · cada 2 h",
+            n.note.first { it != null }!!.text,
+        )
+        storeScope.cancel()
     }
 }

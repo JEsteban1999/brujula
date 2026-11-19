@@ -10,13 +10,10 @@ import app.brujula.routine.RoutineRepository
 import app.brujula.routine.awakeWindow
 import app.brujula.routine.dayTypeOf
 import app.brujula.routine.logicalDay
-import app.brujula.today.eventsAroundLogicalDay
 import app.brujula.today.logicalOccurrences
+import app.brujula.today.selectedEventsAroundOrEmpty
 import app.brujula.today.spillOccurrences
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -43,12 +40,13 @@ class DictationContextProvider(
         val routine = routineRepository.routine.first()
         val activities = activityRepository.observeAll().first()
         val done = activityRepository.observeDoneKeys().first()
+        val overrides = activityRepository.observeOverrides().first()
         val linked = activityRepository.observeGoogleEventIds().first()
         val raw = externalAround(today).filter { it.eventId !in linked }
 
         fun busyOn(day: LocalDate): List<BusyItem> {
             val window = routine.awakeWindow(day)
-            val own = (spillOccurrences(day, activities, done, window) + logicalOccurrences(day, activities, done))
+            val own = (spillOccurrences(day, activities, done, window, overrides) + logicalOccurrences(day, activities, done, overrides))
                 .map { BusyItem(it.activity.title, it.span.start, it.span.end, external = false) }
             val external = eventsOnLogicalDay(day, raw, window).filter { !it.allDay }
                 .map { BusyItem(it.displayTitle, it.span.start, it.span.end, external = true) }
@@ -70,12 +68,6 @@ class DictationContextProvider(
     }
 
     /** Un fallo al leer los calendarios no impide dictar: se sigue solo con lo propio. */
-    private suspend fun externalAround(day: LocalDate): List<ExternalEvent> = try {
-        val ids = routineRepository.calendarPrefs.selectedCalendarIds.first()
-        withContext(Dispatchers.IO) { calendarSource.eventsAroundLogicalDay(ids, day) }
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        emptyList()
-    }
+    private suspend fun externalAround(day: LocalDate): List<ExternalEvent> =
+        calendarSource.selectedEventsAroundOrEmpty(routineRepository.calendarPrefs.selectedCalendarIds, day)
 }

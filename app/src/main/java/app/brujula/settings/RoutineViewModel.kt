@@ -77,6 +77,23 @@ class RoutineViewModel(
 
     fun shiftRestBed(min: Int): Job = change(resyncAfter = true) { it.copy(restBed = it.restBed.plusMinutes(min.toLong())) }
 
+    /** Hora del aviso "¿Armamos mañana?", entre 18:00 y 23:45 (sin dar la vuelta a la medianoche); reprograma los avisos. */
+    fun shiftNightNotice(min: Int): Job = change(resyncAfter = true) {
+        // Se cuenta en minutos del día (sin LocalTime.plus, que daría la vuelta a la medianoche).
+        val minutes = (it.nightNotice.toSecondOfDay() / 60 + min)
+            .coerceIn(NIGHT_NOTICE_MIN.toSecondOfDay() / 60, NIGHT_NOTICE_MAX.toSecondOfDay() / 60)
+        it.copy(nightNotice = java.time.LocalTime.of(minutes / 60, minutes % 60))
+    }
+
+    /** "Aviso para dormir" (por defecto encendido); la pantalla de la noche cambia esta misma preferencia. */
+    val bedtimeReminder: StateFlow<Boolean> =
+        repository.bedtimeReminderOn.stateIn(scope, SharingStarted.WhileSubscribed(5_000), true)
+
+    fun setBedtimeReminder(on: Boolean): Job = scope.launch {
+        repository.setBedtimeReminder(on)
+        runCatching { resync.resync() }
+    }
+
     fun setFlexible(on: Boolean): Job = change { it.copy(flexibleWork = on) }
 
     fun setGoal(range: IntRange): Job? =
@@ -225,5 +242,7 @@ class RoutineViewModel(
 
     companion object {
         val GOAL_OPTIONS = listOf(300..360, 360..420, 420..480)
+        val NIGHT_NOTICE_MIN: java.time.LocalTime = java.time.LocalTime.of(18, 0)
+        val NIGHT_NOTICE_MAX: java.time.LocalTime = java.time.LocalTime.of(23, 45)
     }
 }

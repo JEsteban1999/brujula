@@ -9,13 +9,17 @@ import app.brujula.activities.ActivityType
 import app.brujula.activities.Occurrence
 import app.brujula.activities.Repeat
 import app.brujula.activities.findConflict
+import app.brujula.activities.Overrides
 import app.brujula.activities.occurrencesOn
 import app.brujula.calendar.CalendarSource
 import app.brujula.calendar.ExternalEvent
+import app.brujula.calendar.GoogleCopyJournal
 import app.brujula.calendar.GoogleCopyStatus
 import app.brujula.calendar.GoogleCopySync
 import app.brujula.calendar.NoCalendarSource
+import app.brujula.claude.PromptBuilder
 import app.brujula.core.time.Clock
+import app.brujula.core.time.formatMinutes
 import app.brujula.core.time.TimeSpan
 import app.brujula.reminders.ReminderResync
 import app.brujula.routine.logicalDay
@@ -65,6 +69,8 @@ data class ActivityFormState(
     val saving: Boolean = false,
     /** En edición, falso hasta que la actividad termina de cargar. */
     val ready: Boolean = true,
+    /** No se pudo eliminar (no se borró nada). */
+    val deleteError: String? = null,
 ) {
     val end: LocalTime get() = start.plusMinutes(durationMin.toLong())
 
@@ -86,6 +92,7 @@ data class ActivityFormState(
 const val REMIND_BEFORE_MIN = 15
 const val MIN_DURATION = 1
 const val MAX_DURATION = 720
+private const val ASK_DAYS_AHEAD = 6L
 private val LOGICAL_DAY_START: LocalTime = LocalTime.of(4, 0)
 
 class ActivityFormViewModel(
@@ -102,6 +109,8 @@ class ActivityFormViewModel(
     private val googleScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val googleTimeoutMillis: Long = 4_000,
     scopeOverride: CoroutineScope? = null,
+    /** Borrados pendientes en Google, persistidos antes de borrar la fila (producción: `container.googleCopyJournal`). */
+    private val googleJournal: GoogleCopyJournal = GoogleCopyJournal(),
 ) : ViewModel() {
     /** "Hoy" del usuario: el día lógico (cambia a las 04:00). */
     val today: LocalDate get() = logicalDay(clock.now())
@@ -109,6 +118,7 @@ class ActivityFormViewModel(
     private val scope = scopeOverride ?: viewModelScope
     private var editingId: Long? = null
     private var all: List<Activity> = emptyList()
+    private var overrides: Overrides = emptyMap()
     private var external: List<ExternalEvent> = emptyList()
     private var externalDate: LocalDate? = null
     private var selectedIds: Set<Long>? = null
@@ -122,6 +132,12 @@ class ActivityFormViewModel(
         scope.launch {
             activityRepository.observeAll().collect { list ->
                 all = list
+                _state.update(::withConflict)
+            }
+        }
+        scope.launch {
+            activityRepository.observeOverrides().collect { o ->
+                overrides = o
                 _state.update(::withConflict)
             }
         }
@@ -194,7 +210,7 @@ class ActivityFormViewModel(
     private fun withConflict(s: ActivityFormState): ActivityFormState {
         val begin = s.date.atTime(s.start)
         val candidate = TimeSpan(begin, begin.plusMinutes(s.durationMin.toLong()))
-        val busy = (-1L..1L).flatMap { occurrencesOn(s.date.plusDays(it), all, emptySet()) }
+        val busy = (-1L..1L).flatMap { occurrencesOn(s.date.plusDays(it), all, emptySet(), overrides) }
         val own = findConflict(candidate, busy, editingId)
         val outside = if (own == null) external.firstOrNull { !it.allDay && it.eventId !in linkedEventIds && it.span.overlaps(candidate) } else null
         return s.copy(conflict = own, externalConflict = outside)
@@ -258,6 +274,24 @@ class ActivityFormViewModel(
 
     fun setCopyToGoogle(on: Boolean) = edit { it.copy(copyToGoogle = on, copyToGoogleTouched = true) }
 
+    /**
+     * Pedido para Claude cuando la hora elegida choca: `(día lógico, texto)` para abrir la Propuesta, o `null` si no aplica
+     * (sin choque, editando, repetida —la Propuesta solo mueve una vez— o fuera de hoy..hoy+6). No guarda nada.
+     */
+    fun askClaudeRequest(): Pair<LocalDate, String>? {
+        val s = _state.value
+        if (editingId != null || s.isEdit || s.repeat != Repeat.NONE) return null
+        // La Propuesta nunca crea ni mueve citas (D11).
+        if (s.type == ActivityType.APPOINTMENT) return null
+        val clash = s.conflict?.activity?.title ?: s.externalConflict?.title?.ifBlank { "un evento sin título" } ?: return null
+        val day = logicalDay(s.date.atTime(s.start))
+        if (day < today || day > today.plusDays(ASK_DAYS_AHEAD)) return null
+        val title = PromptBuilder.sanitize(s.title).ifBlank { "Actividad" }
+        val text = "Agenda «$title» (${s.type.labelEs.lowercase()}, ${formatMinutes(s.durationMin)}) el ${PromptBuilder.shortDay(day)}. " +
+            "A las ${PromptBuilder.hm(s.start)} choca con «${PromptBuilder.sanitize(clash)}»; búscale otro horario."
+        return day to text
+    }
+
     fun save() {
         val s = _state.value
         if (s.saving || !s.ready) return
@@ -304,13 +338,31 @@ class ActivityFormViewModel(
     fun delete() {
         val id = editingId ?: return
         scope.launch {
-            val before = activityRepository.get(id)
-            activityRepository.delete(id)
+            _state.update { it.copy(deleteError = null) }
+            val entry = try {
+                val before = activityRepository.get(id)
+                // Antes de borrar: si el proceso muere antes de la tanda de Google, el arranque borra la copia. Solo si
+                // hay (o puede haber) copia: una actividad que nunca se copió no tiene nada que perseguir.
+                val copied = before?.takeIf { googleCopy != null && (it.copyToGoogle || it.googleEventId != null) }
+                val e = copied?.let { googleJournal.delete(it) }?.also { withContext(Dispatchers.IO) { googleJournal.record(listOf(it)) } }
+                activityRepository.delete(id)
+                e
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("ActivityForm", "No se pudo eliminar la actividad: ${e.javaClass.simpleName}")
+                _state.update { it.copy(deleteError = DELETE_FAILED) }
+                return@launch
+            }
             runCatching { resync.resync() }
-            if (before != null) {
-                googleCopy?.let { sync -> googleScope.launch { sync.afterDelete(before) } }
+            if (entry != null) {
+                googleCopy?.let { sync -> googleScope.launch { googleJournal.run(entry, sync, activityRepository) } }
             }
             _state.update { it.copy(saved = true) }
         }
+    }
+
+    companion object {
+        const val DELETE_FAILED = "No pude eliminar la actividad. Inténtalo de nuevo."
     }
 }

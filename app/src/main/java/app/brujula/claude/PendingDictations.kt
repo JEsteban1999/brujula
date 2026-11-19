@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.LocalDate
 
 data class PendingDictation(val text: String, val at: Long, val attempts: Int = 0)
 
@@ -25,6 +26,8 @@ interface PendingNotifier {
     fun needsKey(count: Int) = Unit
     /** La cola se detuvo porque Claude rechazó la solicitud (HTTP 400/404, p. ej. saldo agotado); [count] pendientes. */
     fun configStalled(count: Int) = Unit
+    /** Un dictado de la cola pidió cambiar o armar un día: no se aplica nada, solo se avisa con un enlace a la Propuesta. */
+    fun planRequested(day: LocalDate, text: String) = Unit
 
     object None : PendingNotifier {
         override fun scheduled(labels: List<String>, problems: List<String>) = Unit
@@ -39,6 +42,10 @@ object PendingCopy {
             ": Claude rechazó la solicitud. Revisa tu saldo y tu clave en platform.claude.com."
 
     fun successTitle(labels: List<String>): String = "Agendé tu dictado pendiente: " + labels.joinToString("; ")
+
+    const val PLAN_TITLE = "Claude puede reorganizar tu día"
+
+    fun planText(text: String): String = "Toca para ver la propuesta: «$text»"
 
     fun keyNotice(count: Int): String =
         (if (count == 1) "Tienes 1 dictado pendiente." else "Tienes $count dictados pendientes.") +
@@ -67,6 +74,8 @@ class ValidatedTransition(initiallyValidated: Boolean = false) {
 class PendingDictations(
     private val dataStore: DataStore<Preferences>,
     private val notifier: PendingNotifier = PendingNotifier.None,
+    /** La tarjeta de Claude en Hoy: un pedido de plan deja ahí su nota por si la notificación está bloqueada. */
+    private val notes: ClaudeNotes? = null,
 ) {
     private val key = stringPreferencesKey("pending_dictations")
     private val backupKey = stringPreferencesKey("pending_dictations_backup")
@@ -166,6 +175,14 @@ class PendingDictations(
         labels: MutableList<String>, problems: MutableList<String>,
     ): Boolean {
         val work = outcome.items.any { it is Validated.Activity || it is Validated.Habit }
+        // Un pedido de plan es trabajo atendido: nunca se aplica solo; el usuario lo ve en la Propuesta (por el aviso).
+        val plans = outcome.items.filterIsInstance<Validated.PlanRequest>().distinctBy { it.day }
+        if (!work && plans.isNotEmpty()) {
+            update { it.drop(1) }
+            plans.forEach { notifier.planRequested(it.day, it.text.ifBlank { item.text }) }
+            plans.firstOrNull()?.let { writePlanNote(it.day, it.text.ifBlank { item.text }) }
+            return true
+        }
         if (!work) {
             val reasons = outcome.items.mapNotNull {
                 when (it) {
@@ -178,12 +195,23 @@ class PendingDictations(
             drop(item, reasons.joinToString(" ").ifBlank { outcome.reply.ifBlank { NOTHING_SCHEDULED } })
             return true
         }
-        val result = executor.apply(outcome.items)
+        val result = executor.apply(outcome.items, outcome.reply)
         if (result.created.isEmpty()) return failedAttempt(item, result.messages.lastOrNull() ?: NOTHING_SCHEDULED)
         labels += result.created.map { it.label }
         problems += result.messages
         update { it.drop(1) }
+        plans.forEach { notifier.planRequested(it.day, it.text.ifBlank { item.text }) }
         return true
+    }
+
+    private suspend fun writePlanNote(day: LocalDate, text: String) {
+        try {
+            notes?.set(ClaudeNote("Pediste: «$text». Toca para que Claude lo arme.", day, null, request = text))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // La nota es un extra: el pedido ya salió de la cola con su aviso.
+        }
     }
 
     /** Cuenta un intento fallido; devuelve true (seguir) solo si el elemento se descartó tras el último intento. */

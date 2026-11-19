@@ -13,7 +13,7 @@ import com.fasterxml.jackson.module.kotlin.kotlinModule
  *
  * No se usa la derivación del SDK desde la clase (`format(Class)` / `outputConfig(Class)`): pasa por victools, que llama a
  * `Method.getAnnotatedReturnType()`, y ART no tiene ese método (NoSuchMethodError en el teléfono). Estos mapas reproducen
- * exactamente lo que el SDK derivaba de [DictationResult] y [ClassificationResult]; SchemasTest lo compara en la JVM.
+ * exactamente lo que el SDK derivaba de [DictationResult], [ClassificationResult] y [PlanResult]; SchemasTest lo compara en la JVM.
  *
  * Igual que en el derivado, todas las propiedades son obligatorias: las nulables de Kotlin admiten `null` en su `type`.
  */
@@ -35,10 +35,10 @@ internal object Schemas {
     private val ACTION = obj(
         "Una acción. Solo se llenan los campos que aplican a su tipo; los demás van en null.",
         mapOf(
-            "type" to prop("string", "create_activity | create_habit | need_more_info | unsupported"),
+            "type" to prop("string", "create_activity | create_habit | need_more_info | plan_request | unsupported"),
             "title" to nullable("string", "Nombre corto de la actividad o del hábito, sin fecha ni hora. Ej.: \"Dentista\", \"Tomar agua\"."),
             "activityType" to nullable("string", "Solo create_activity: WORK | EXERCISE | APPOINTMENT | PERSONAL"),
-            "date" to nullable("string", "Solo create_activity: fecha de calendario del inicio, yyyy-MM-dd."),
+            "date" to nullable("string", "create_activity: fecha de calendario del inicio, yyyy-MM-dd. plan_request: el día lógico afectado, yyyy-MM-dd."),
             "start" to nullable("string", "Solo create_activity: hora de inicio en 24 h, HH:mm."),
             "durationMin" to nullable("integer", "Solo create_activity: duración en minutos (5 a 720)."),
             "repeat" to nullable("string", "Solo create_activity: NONE | DAILY | WEEKDAYS | WORKDAYS | WEEKLY"),
@@ -93,7 +93,39 @@ internal object Schemas {
         ),
     )
 
-    /** Formato `json_schema` para el endpoint beta (dictado). */
+    private val PLAN_CHANGE = obj(
+        "Un cambio. Solo se llenan los campos que aplican a su operación; los demás van en null.",
+        mapOf(
+            "op" to prop("string", "create | move | skip"),
+            "ref" to nullable(
+                "string",
+                "move y skip: la referencia A… de un bloque propio movible, tal como aparece en la lista. Nunca E…. create: null.",
+            ),
+            "title" to nullable("string", "Solo create: nombre corto del bloque, sin fecha ni hora. Ej.: \"Bloque de trabajo\"."),
+            "activityType" to nullable("string", "Solo create: WORK | EXERCISE | PERSONAL"),
+            "date" to nullable("string", "create y move: fecha de calendario del nuevo inicio, yyyy-MM-dd."),
+            "start" to nullable("string", "create y move: nueva hora de inicio en 24 h, HH:mm."),
+            "durationMin" to nullable("integer", "create: duración en minutos (5 a 720). move: la nueva duración, o null para dejar la misma."),
+        ),
+    )
+
+    /** Schema de [PlanResult] / [PlanChange]. */
+    val PLAN: Map<String, Any> = mapOf("\$schema" to DRAFT) + obj(
+        "Cambios propuestos para el día y un resumen corto para el usuario.",
+        mapOf(
+            "summary" to prop(
+                "string",
+                "En español colombiano, 1 a 3 frases, tuteo, sin emojis: qué cambias y por qué. Aquí van también las sugerencias sobre eventos externos.",
+            ),
+            "changes" to mapOf(
+                "type" to "array",
+                "items" to PLAN_CHANGE,
+                "description" to "Solo lo que cambia: primero los move y skip, después los create. Vacío si no hace falta cambiar nada.",
+            ),
+        ),
+    )
+
+    /** Formato `json_schema` para el endpoint beta (dictado y planificación). */
     fun betaFormat(schema: Map<String, Any>): BetaJsonOutputFormat =
         BetaJsonOutputFormat.builder()
             .schema(BetaJsonOutputFormat.Schema.builder().apply { schema.forEach { (k, v) -> putAdditionalProperty(k, JsonValue.from(v)) } }.build())

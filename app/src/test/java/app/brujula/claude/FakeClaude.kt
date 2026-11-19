@@ -17,7 +17,17 @@ class FakeClaudeGateway(
     var result: KeyTestResult = KeyTestResult.OK,
     var dictation: GatewayResult<DictationResult> = GatewayResult.Error(retryable = false),
     var classification: GatewayResult<ClassificationResult> = GatewayResult.Error(retryable = false),
+    var plan: GatewayResult<PlanResult> = GatewayResult.Error(retryable = false),
 ) : ClaudeGateway {
+    var planCalls = 0
+    var lastPlanSystem: String? = null
+    var lastPlanUser: String? = null
+    override suspend fun plan(system: String, user: String): GatewayResult<PlanResult> {
+        planCalls++
+        lastPlanSystem = system
+        lastPlanUser = user
+        return plan
+    }
     var classifyCalls = 0
     val classifyUsers = mutableListOf<String>()
     var classifySystem: String? = null

@@ -9,6 +9,7 @@ import app.brujula.calendar.WorkClassificationRepository
 import app.brujula.calendar.DeviceCalendarSource
 import app.brujula.calendar.DeviceGoogleCalendarWriter
 import app.brujula.calendar.GoogleCalendarWriter
+import app.brujula.calendar.GoogleCopyJournal
 import app.brujula.calendar.GoogleCopySync
 import app.brujula.claude.AnthropicClaudeGateway
 import app.brujula.claude.AutoClassifier
@@ -21,6 +22,16 @@ import app.brujula.claude.DictationContextProvider
 import app.brujula.claude.ActionApplier
 import app.brujula.claude.ActionExecutor
 import app.brujula.claude.DictationInterpreter
+import app.brujula.claude.DayPlanner
+import app.brujula.claude.PlanContext
+import app.brujula.claude.PlanContextProvider
+import app.brujula.claude.lunchWindow
+import app.brujula.planning.BedtimeSource
+import app.brujula.planning.DaySnapshotProvider
+import app.brujula.planning.ProposalExecutor
+import app.brujula.planning.ProposalLock
+import app.brujula.planning.ProposalRepository
+import app.brujula.claude.ClaudeNotes
 import app.brujula.claude.PendingDictations
 import app.brujula.claude.PendingCopy
 import app.brujula.claude.PendingNotifier
@@ -52,6 +63,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import app.brujula.routine.logicalDay
+import app.brujula.ui.DeepLinks
+import app.brujula.ui.Routes
 import java.time.LocalDate
 
 private val Context.routineDataStore by preferencesDataStore(name = "routine")
@@ -91,6 +104,51 @@ class AppContainer(val context: Context) {
     val dictationInterpreter: DictationInterpreter
         get() = DictationInterpreter(claudeGateway, { at -> dictationContext(at) }, isOnline = { isOnline(context) })
 
+    /** Foto de un día con las mismas reglas que Hoy; usa las dependencias vigentes (calendarios sustituibles). */
+    private var daySnapshotsOverride: DaySnapshotProvider? = null
+    var daySnapshots: DaySnapshotProvider
+        get() = daySnapshotsOverride ?: DaySnapshotProvider(routineRepository, activityRepository, habitRepository, calendarSource, workClassificationRepository)
+        set(value) { daySnapshotsOverride = value }
+
+    /** Hora de dormir de esta noche y su interruptor; la leen los avisos, la pantalla de la noche y la confirmación del plan. */
+    val bedtimeSource: BedtimeSource
+        get() = BedtimeSource(clock, routineRepository, daySnapshots)
+
+    /** Contexto para planificar un día; usa el reloj y los calendarios vigentes. */
+    val planContextProvider: PlanContextProvider
+        get() = PlanContextProvider(clock, daySnapshots, habitRepository, routineRepository)
+
+    suspend fun planContext(day: LocalDate): PlanContext = planContextProvider.forDay(day)
+
+    private var dayPlannerOverride: DayPlanner? = null
+
+    /** Arma propuestas de Claude para un día (no guarda ni aplica); por defecto con el gateway vigente. Sustituible en pruebas. */
+    var dayPlanner: DayPlanner
+        get() = dayPlannerOverride ?: DayPlanner(claudeGateway, { day -> planContext(day) }, isOnline = { isOnline(context) }, clock = clock)
+        set(value) { dayPlannerOverride = value }
+
+    /** Propuestas de Claude guardadas (D1). */
+    val proposalRepository: ProposalRepository by lazy { ProposalRepository(database.proposalDao()) }
+
+    /** Nota de la tarjeta de Claude en Hoy (D15). */
+    val claudeNotes: ClaudeNotes by lazy { ClaudeNotes(context.applicationContext.routineDataStore) }
+
+    /** Un solo vuelo para aceptar y deshacer, compartido por todos los ejecutores que se arman aquí. */
+    private val proposalLock = ProposalLock()
+    private var proposalExecutorOverride: ProposalExecutor? = null
+
+    /**
+     * Acepta y deshace propuestas con las dependencias vigentes (reloj, Google, avisos sustituibles) y el cerrojo
+     * compartido; las copias de Google corren en [syncScope]. Sustituible en pruebas.
+     */
+    var proposalExecutor: ProposalExecutor
+        get() = proposalExecutorOverride ?: ProposalExecutor(
+            database, activityRepository, proposalRepository, googleCopySync, reminderSync, claudeNotes, clock, syncScope,
+            reminderScheduler = reminderScheduler, journal = googleCopyJournal, lock = proposalLock,
+            snapshots = daySnapshots, lunchFor = { day -> routineRepository.routine.first().lunchWindow(day) },
+        )
+        set(value) { proposalExecutorOverride = value }
+
     private var interpreterOverride: TextInterpreter? = null
     private var executorOverride: ActionApplier? = null
 
@@ -101,7 +159,7 @@ class AppContainer(val context: Context) {
 
     /** Aplica y deshace lo dictado, con las dependencias vigentes; sustituible en pruebas. */
     var executor: ActionApplier
-        get() = executorOverride ?: ActionExecutor(database, activityRepository, habitRepository, googleCopySync, reminderSync, syncScope = syncScope)
+        get() = executorOverride ?: ActionExecutor(database, activityRepository, habitRepository, googleCopySync, reminderSync, syncScope = syncScope, notes = claudeNotes, today = { logicalDay(clock.now()) }, journal = googleCopyJournal)
         set(value) { executorOverride = value }
 
     /** Dictados guardados sin conexión; al terminar una pasada avisa con una notificación en `actividades`. */
@@ -109,6 +167,8 @@ class AppContainer(val context: Context) {
         val app = context.applicationContext
         PendingDictations(
             app.routineDataStore,
+            notes = claudeNotes,
+            notifier =
             object : PendingNotifier {
                 private fun id() = (System.nanoTime() / 1000).toInt()
                 override fun scheduled(labels: List<String>, problems: List<String>) {
@@ -120,6 +180,13 @@ class AppContainer(val context: Context) {
                 }
                 override fun needsKey(count: Int) {
                     Notifications.showText(app, KEY_NOTICE_ID, "Dictados pendientes", PendingCopy.keyNotice(count))
+                }
+                override fun planRequested(day: LocalDate, text: String) {
+                    val request = text.take(DeepLinks.MAX_REQUEST)
+                    Notifications.showText(
+                        app, id(), PendingCopy.PLAN_TITLE, PendingCopy.planText(request),
+                        DeepLinks.intent(app, Routes.proposal(day, request)),
+                    )
                 }
                 override fun dropped(text: String, reason: String) {
                     Notifications.showText(app, id(), "Dictado sin agendar", "No pude agendar «$text»: $reason")
@@ -146,8 +213,19 @@ class AppContainer(val context: Context) {
         GoogleCopySync(googleCalendarWriter, activityRepository) { routineRepository.calendarPrefs.copyToGoogleEnabled.first() }
     }
 
-    /** Crea las copias a Google que falten (idempotente); se lanza en [syncScope]. */
-    suspend fun reconcileGoogleCopies() = googleCopySync.reconcile(logicalDay(clock.now()))
+    /** Copias a Google pendientes de aceptar/deshacer un plan o de borrar una actividad (sobreviven a la muerte del proceso). */
+    val googleCopyJournal: GoogleCopyJournal by lazy {
+        GoogleCopyJournal(context.applicationContext.getSharedPreferences(GoogleCopyJournal.PREFS_NAME, Context.MODE_PRIVATE))
+    }
+
+    /**
+     * Termina lo que quedó en el diario y luego crea las copias a Google que falten (idempotente); se lanza en
+     * [syncScope] al arrancar y al conceder el permiso.
+     */
+    suspend fun reconcileGoogleCopies() {
+        googleCopyJournal.drain(googleCopySync, activityRepository)
+        googleCopySync.reconcile(logicalDay(clock.now()))
+    }
 
     /** Un solo GoogleCopySync (su Mutex serializa); sustituible en pruebas. */
     var googleCopySync: GoogleCopySync
@@ -161,7 +239,22 @@ class AppContainer(val context: Context) {
     private var syncOverride: ReminderResync? = null
     private val defaultScheduler: ReminderScheduler by lazy { AlarmReminderScheduler(context.applicationContext) }
     private val defaultSync: ReminderResync by lazy {
-        ReminderSync(clock, routineRepository, activityRepository, habitRepository, reminderScheduler)
+        ReminderSync(
+            clock, routineRepository, activityRepository, habitRepository, reminderScheduler,
+            plannedDays = { proposalRepository.acceptedDays() },
+            bedtime = {
+                // Un fallo leyendo la agenda no debe tumbar el resto de los avisos.
+                try {
+                    bedtimeSource.choice()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("AppContainer", "No pude calcular la hora de dormir", e)
+                    null
+                }
+            },
+            cancelPosted = { Notifications.cancel(context.applicationContext, it) },
+        )
     }
 
     /** Sustituibles en pruebas; por defecto, alarmas reales. */
@@ -240,7 +333,7 @@ open class BrujulaApp : Application() {
         val c = container
         startReminderResync(
             appScope,
-            reminderChanges(c.routineRepository, c.activityRepository, c.habitRepository, c.clock),
+            reminderChanges(c.routineRepository, c.activityRepository, c.habitRepository, c.clock, c.proposalRepository.observeAcceptedDays()),
             ReminderResync { c.reminderSync.resync() },
         )
     }

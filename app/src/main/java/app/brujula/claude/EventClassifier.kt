@@ -48,6 +48,7 @@ class DelegatingGateway(private val current: () -> ClaudeGateway) : ClaudeGatewa
     override suspend fun testKey() = current().testKey()
     override suspend fun interpret(system: String, user: String) = current().interpret(system, user)
     override suspend fun classify(system: String, user: String) = current().classify(system, user)
+    override suspend fun plan(system: String, user: String) = current().plan(system, user)
 }
 
 /** Resultado de una pasada: marcas por clave normalizada y claves a reintentar más tarde (sin clave o sin red). */

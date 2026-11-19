@@ -8,6 +8,8 @@ import android.content.Intent
 import android.net.Uri
 import androidx.core.app.NotificationCompat
 import app.brujula.R
+import app.brujula.ui.DeepLinks
+import app.brujula.ui.Routes
 import java.time.LocalDate
 import java.time.LocalDateTime
 
@@ -47,6 +49,10 @@ object Notifications {
     const val CHANNEL_HABITS = "habitos"
     const val CHANNEL_ACTIVITIES = "actividades"
     const val CHANNEL_WELLNESS = "pausas"
+    const val CHANNEL_PLANNING = "planificacion"
+
+    /** Id de la notificación que un botón (actividad) debe quitar al abrirse: Android no la cierra solo. */
+    const val EXTRA_CANCEL_ID = "app.brujula.cancelId"
     private const val WELLNESS_TIMEOUT_MS = 25 * 60_000L
 
     fun notificationId(key: String): Int = key.hashCode()
@@ -65,9 +71,14 @@ object Notifications {
             NotificationChannel(CHANNEL_ACTIVITIES, "Actividades", NotificationManager.IMPORTANCE_HIGH)
                 .apply { description = "Avisos antes de tus actividades" },
         )
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_PLANNING, "Planificación", NotificationManager.IMPORTANCE_DEFAULT)
+                .apply { description = "Aviso nocturno, resumen de la mañana y hora de dormir" },
+        )
     }
 
     fun show(context: Context, r: Reminder) {
+        if (r.kind.isPlanning) return showPlanning(context, r)
         ensureChannels(context)
         val grouped = r.habitIds.size > 1
         val channel = when {
@@ -102,6 +113,44 @@ object Notifications {
         post(context, notificationId(r.key), b)
     }
 
+    private val ReminderKind.isPlanning: Boolean
+        get() = this == ReminderKind.PLAN_NIGHT || this == ReminderKind.PLAN_MORNING || this == ReminderKind.BEDTIME
+
+    /**
+     * Avisos de planificación (D13): canal `planificacion`, sin Hecho ni En 15 min. Noche → "¿Armamos mañana?" con
+     * `Mañana lo veo`; mañana → Hoy, con `Ver mi día` y `Ajustar`; dormir → abre la app.
+     */
+    private fun showPlanning(context: Context, r: Reminder) {
+        ensureChannels(context)
+        val b = NotificationCompat.Builder(context, CHANNEL_PLANNING)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(r.title)
+            .setContentText(r.body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(r.body))
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+        val id = notificationId(r.key)
+        val tap: Intent? = when (r.kind) {
+            ReminderKind.PLAN_NIGHT -> DeepLinks.intent(context, Routes.PLAN_TOMORROW)
+            ReminderKind.PLAN_MORNING -> DeepLinks.intent(context, DeepLinks.TODAY)
+            else -> context.packageManager.getLaunchIntentForPackage(context.packageName)
+        }
+        tap?.let { b.setContentIntent(activity(context, id, it)) }
+        when (r.kind) {
+            ReminderKind.PLAN_NIGHT -> b.addAction(0, "Mañana lo veo", actionIntent(context, r, NotificationActionReceiver.ACTION_LATER))
+            ReminderKind.PLAN_MORNING -> {
+                b.addAction(0, "Ver mi día", activity(context, (r.key + DeepLinks.TODAY).hashCode(), DeepLinks.intent(context, DeepLinks.TODAY).putExtra(EXTRA_CANCEL_ID, id)))
+                b.addAction(0, "Ajustar", activity(context, (r.key + DeepLinks.VOICE).hashCode(), DeepLinks.intent(context, DeepLinks.VOICE).putExtra(EXTRA_CANCEL_ID, id)))
+            }
+            else -> Unit
+        }
+        post(context, id, b)
+    }
+
+    private fun activity(context: Context, requestCode: Int, intent: Intent): PendingIntent =
+        PendingIntent.getActivity(context, requestCode, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+
     /** Aviso informativo sin botones. */
     fun showInfo(context: Context, key: String, title: String) {
         ensureChannels(context)
@@ -114,7 +163,8 @@ object Notifications {
     }
 
     /** Aviso informativo con texto largo (BigTextStyle) que abre la app al tocarlo; un [id] distinto por aviso. */
-    fun showText(context: Context, id: Int, title: String, text: String) {
+    /** [contentIntent]: a dónde lleva el toque (p. ej. `DeepLinks.intent`); sin él, abre la app. */
+    fun showText(context: Context, id: Int, title: String, text: String, contentIntent: Intent? = null) {
         ensureChannels(context)
         val b = NotificationCompat.Builder(context, CHANNEL_ACTIVITIES)
             .setSmallIcon(R.drawable.ic_notification)
@@ -123,7 +173,7 @@ object Notifications {
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
-        context.packageManager.getLaunchIntentForPackage(context.packageName)?.let { launch ->
+        (contentIntent ?: context.packageManager.getLaunchIntentForPackage(context.packageName))?.let { launch ->
             b.setContentIntent(PendingIntent.getActivity(context, id, launch, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
         }
         post(context, id, b)

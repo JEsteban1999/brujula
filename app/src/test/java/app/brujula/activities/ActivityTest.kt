@@ -47,4 +47,34 @@ class ActivityTest {
         assertEquals(listOf("Trabajo", "Ejercicio", "Cita", "Personal"), ActivityType.values().map { it.labelEs })
         assertEquals(listOf("No se repite", "Todos los días", "Lunes a viernes", "Días laborales (sin festivos)", "Cada semana"), Repeat.values().map { it.labelEs })
     }
+
+    private fun ov(id: Long, day: LocalDate, start: java.time.LocalDateTime? = null, min: Int? = null, skipped: Boolean = false) =
+        OccurrenceOverride(id, day, start, min, skipped)
+
+    @Test fun skippedOverrideHidesOnlyThatDay() {
+        val a = act(Repeat.DAILY)
+        val overrides: Overrides = mapOf((1L to wed) to ov(1, wed, skipped = true))
+        assertTrue(occurrencesOn(wed, listOf(a), emptySet(), overrides).isEmpty())
+        assertEquals(1, occurrencesOn(wed.minusDays(1), listOf(a.copy(date = wed.minusDays(5))), emptySet(), overrides).size)
+        assertEquals(1, occurrencesOn(wed.plusDays(1), listOf(a), emptySet(), overrides).size)
+    }
+
+    @Test fun movedOverrideKeepsSeriesDay() {
+        val a = act(Repeat.DAILY)
+        val newStart = wed.atTime(19, 30)
+        val overrides: Overrides = mapOf((1L to wed) to ov(1, wed, start = newStart, min = 45))
+        val occ = occurrencesOn(wed, listOf(a), setOf(1L to wed), overrides).single()
+        assertEquals(wed, occ.day)
+        assertEquals(newStart, occ.span.start)
+        assertEquals(newStart.plusMinutes(45), occ.span.end)
+        assertTrue(occ.done)
+    }
+
+    @Test fun movedPastMidnightStaysInLogicalDay() {
+        val a = act(Repeat.DAILY)
+        val overrides: Overrides = mapOf((1L to wed) to ov(1, wed, start = wed.plusDays(1).atTime(0, 30)))
+        val occ = app.brujula.today.logicalOccurrences(wed, listOf(a), emptySet(), overrides).single()
+        assertEquals(wed, occ.day)
+        assertEquals(wed.plusDays(1).atTime(0, 30), occ.span.start)
+    }
 }

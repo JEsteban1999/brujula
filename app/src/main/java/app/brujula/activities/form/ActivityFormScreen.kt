@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,6 +21,8 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -84,6 +87,10 @@ fun ActivityFormScreen(
     viewModel: ActivityFormViewModel,
     onClose: () -> Unit,
     onHabit: () -> Unit,
+    /** "Mejor dictarlo": abre la voz y quita el formulario. */
+    onDictate: () -> Unit,
+    /** "Pedir a Claude otro horario": abre la Propuesta del día con el pedido armado; no guarda nada. */
+    onAskClaude: (LocalDate, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -112,8 +119,16 @@ fun ActivityFormScreen(
                 Modifier.weight(1f), color = c.text, textAlign = TextAlign.Center,
                 fontFamily = BrujulaTheme.type.display, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp,
             )
-            // Mismo ancho que el botón de cerrar; el micrófono queda oculto en esta fase.
-            Spacer(Modifier.size(44.dp))
+            if (state.isEdit) {
+                Spacer(Modifier.size(44.dp))
+            } else {
+                Text(
+                    "Mejor dictarlo", color = c.accentText, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                        .clickable(role = Role.Button, onClick = onDictate)
+                        .padding(start = 6.dp, top = 14.dp, bottom = 14.dp),
+                )
+            }
         }
 
         Column(
@@ -154,7 +169,7 @@ fun ActivityFormScreen(
             }
 
             TimeCard(state, viewModel, reduced)
-            ConflictStatus(state)
+            ConflictStatus(state, askClaude = remember(state) { viewModel.askClaudeRequest() }, onAskClaude = onAskClaude)
 
             Column(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.surface)
@@ -173,6 +188,15 @@ fun ActivityFormScreen(
             state.googleNotice?.let { notice ->
                 Text(
                     notice, color = c.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.soft2)
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .semantics { this.liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
+                )
+            }
+
+            state.deleteError?.let { error ->
+                Text(
+                    error, color = c.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.soft2)
                         .padding(horizontal = 12.dp, vertical = 10.dp)
                         .semantics { this.liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
@@ -427,7 +451,7 @@ private fun CustomDuration(current: Int, onChange: (Int) -> Unit) {
 }
 
 @Composable
-private fun ConflictStatus(state: ActivityFormState) {
+private fun ConflictStatus(state: ActivityFormState, askClaude: Pair<LocalDate, String>?, onAskClaude: (LocalDate, String) -> Unit) {
     val dark = BrujulaTheme.colors.bg.luminance() < 0.5f
     val message = state.conflictMessage
     val bg = if (message != null) BrujulaTheme.colors.soft2 else if (dark) Color(0xFF13332A) else Color(0xFFDDF3E8)
@@ -446,7 +470,17 @@ private fun ConflictStatus(state: ActivityFormState) {
         Text(
             message ?: "Libre a esa hora. No choca con nada.",
             color = BrujulaTheme.colors.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f),
         )
+        if (message != null && askClaude != null) {
+            Text(
+                "Pedir a Claude otro horario", color = BrujulaTheme.colors.accentText, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold,
+                textAlign = TextAlign.End,
+                modifier = Modifier.widthIn(max = 130.dp).defaultMinSize(minHeight = 48.dp)
+                    .clickable(role = Role.Button) { onAskClaude(askClaude.first, askClaude.second) }
+                    .wrapContentHeight(Alignment.CenterVertically),
+            )
+        }
     }
 }
 

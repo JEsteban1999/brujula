@@ -8,6 +8,7 @@ import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 import java.time.LocalDate
+import java.time.LocalDateTime
 
 @Dao
 interface ActivityDao {
@@ -28,8 +29,10 @@ interface ActivityDao {
      */
     @Transaction
     suspend fun upsertKeepingGoogleLink(e: ActivityEntity): Long {
-        val kept = if (e.id != 0L && e.googleEventId == null) get(e.id)?.googleEventId else e.googleEventId
-        return upsert(e.copy(googleEventId = kept))
+        val old = if (e.id != 0L) get(e.id) else null
+        val keptLink = if (e.googleEventId == null) old?.googleEventId else e.googleEventId
+        val keptOrigin = if (e.origin == "UNKNOWN" && old != null) old.origin else e.origin
+        return upsert(e.copy(googleEventId = keptLink, origin = keptOrigin))
     }
 
     @Query("UPDATE activities SET googleEventId = :eventId WHERE id = :id")
@@ -49,6 +52,83 @@ interface ActivityDao {
 
     @Query("DELETE FROM activity_completions WHERE activityId = :id AND day = :day")
     suspend fun deleteCompletion(id: Long, day: LocalDate)
+
+    @Query("SELECT EXISTS(SELECT 1 FROM activity_completions WHERE activityId = :id AND day = :day)")
+    suspend fun isDone(id: Long, day: LocalDate): Boolean
+
+    /** Tiene marcas de hecho u overrides (que un borrado arrastraría en cascada). */
+    @Query(
+        "SELECT EXISTS(SELECT 1 FROM activity_completions WHERE activityId = :id) " +
+            "OR EXISTS(SELECT 1 FROM activity_overrides WHERE activityId = :id)",
+    )
+    suspend fun hasDependents(id: Long): Boolean
+
+    @Query("SELECT * FROM activity_overrides")
+    fun observeOverrides(): Flow<List<ActivityOverrideEntity>>
+
+    @Query("SELECT * FROM activity_overrides WHERE activityId = :id AND day = :day")
+    suspend fun getOverride(id: Long, day: LocalDate): ActivityOverrideEntity?
+
+    @Upsert suspend fun upsertOverride(e: ActivityOverrideEntity)
+
+    @Query("DELETE FROM activity_overrides WHERE activityId = :id AND day = :day")
+    suspend fun deleteOverride(id: Long, day: LocalDate)
+}
+
+data class AcceptedRow(val id: Long, val day: LocalDate)
+
+@Dao
+interface ProposalDao {
+    @Insert suspend fun insert(e: ProposalEntity): Long
+
+    @Query("SELECT * FROM proposals WHERE id = :id")
+    suspend fun get(id: Long): ProposalEntity?
+
+    @Query("SELECT * FROM proposals WHERE day = :day AND status = :status ORDER BY id DESC LIMIT 1")
+    suspend fun latestByStatus(day: LocalDate, status: String): ProposalEntity?
+
+    @Query("UPDATE proposals SET status = :status WHERE id = :id")
+    suspend fun setStatus(id: Long, status: String)
+
+    @Query("UPDATE proposals SET status = 'ACCEPTED', undo = :undo, acceptedAt = :at WHERE id = :id")
+    suspend fun markAccepted(id: Long, undo: String?, at: LocalDateTime)
+
+    @Query("SELECT DISTINCT day FROM proposals WHERE status = 'ACCEPTED'")
+    fun observeAcceptedDays(): Flow<List<LocalDate>>
+
+    @Query("SELECT id FROM proposals WHERE status = 'ACCEPTED'")
+    fun observeAcceptedIds(): Flow<List<Long>>
+
+    @Query("SELECT id, day FROM proposals WHERE status = 'ACCEPTED' ORDER BY id DESC")
+    fun observeAccepted(): Flow<List<AcceptedRow>>
+
+    /** Descartar solo si sigue pendiente: una aceptada o reemplazada nunca se pisa. */
+    @Query("UPDATE proposals SET status = 'DISCARDED' WHERE id = :id AND status = 'PENDING'")
+    suspend fun discardIfPending(id: Long)
+
+    @Query("UPDATE proposals SET status = 'SUPERSEDED' WHERE day = :day AND status = 'PENDING'")
+    suspend fun supersedePending(day: LocalDate)
+
+    @Query("SELECT DISTINCT day FROM proposals WHERE status = 'ACCEPTED'")
+    suspend fun acceptedDays(): List<LocalDate>
+
+    /** Deshacer: la propuesta vuelve a estar pendiente, sin datos para deshacer. */
+    @Query("UPDATE proposals SET status = 'PENDING', undo = NULL, acceptedAt = NULL WHERE id = :id")
+    suspend fun reopen(id: Long)
+
+    /** Una sola pendiente por día: las anteriores del mismo día pasan a SUPERSEDED en la misma transacción. */
+    @Transaction
+    suspend fun insertPending(e: ProposalEntity): Long {
+        supersedePending(e.day)
+        return insert(e.copy(id = 0, status = "PENDING", undo = null, acceptedAt = null))
+    }
+
+    /** Vuelve a dejar [id] como la pendiente de su día (las demás pendientes de ese día pasan a SUPERSEDED). */
+    @Transaction
+    suspend fun reopenAsOnlyPending(id: Long, day: LocalDate) {
+        supersedePending(day)
+        reopen(id)
+    }
 }
 
 @Dao

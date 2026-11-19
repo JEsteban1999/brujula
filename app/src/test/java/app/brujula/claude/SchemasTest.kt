@@ -26,6 +26,11 @@ class SchemasTest {
         val expected = schemaOf(derived.rawOutputConfig)
         assertTrue("El derivado no debe venir vacío", expected.path("properties").size() == 2)
         assertEquals(expected, schemaOf(handWritten))
+        // El tipo plan_request y el día afectado viajan en ambos schemas, con la misma descripción.
+        val props = expected.path("properties").path("actions").path("items").path("properties")
+        assertTrue(props.path("type").path("description").asText().contains("plan_request"))
+        assertTrue(props.path("date").path("description").asText().contains("plan_request: el día lógico afectado"))
+        assertEquals(props, schemaOf(handWritten).path("properties").path("actions").path("items").path("properties"))
     }
 
     @Test fun classificationSchemaMatchesTheSdkDerivedOne() {
@@ -33,6 +38,18 @@ class SchemasTest {
         val handWritten = ClassificationCall.params("s", "u").outputConfig().get()
         val expected = schemaOf(derived.rawOutputConfig)
         assertTrue(expected.path("properties").has("items"))
+        assertEquals(expected, schemaOf(handWritten))
+    }
+
+    @Test fun planSchemaMatchesTheSdkDerivedOne() {
+        val derived = BetaStructuredOutputConfig.builder<PlanResult>().format(PlanResult::class.java).build()
+        val handWritten = PlanCall.params("s", "u").outputConfig().get()
+        val expected = schemaOf(derived.rawOutputConfig)
+        assertEquals(setOf("summary", "changes"), expected.path("properties").fieldNames().asSequence().toSet())
+        assertEquals(
+            setOf("op", "ref", "title", "activityType", "date", "start", "durationMin"),
+            expected.path("properties").path("changes").path("items").path("properties").fieldNames().asSequence().toSet(),
+        )
         assertEquals(expected, schemaOf(handWritten))
     }
 

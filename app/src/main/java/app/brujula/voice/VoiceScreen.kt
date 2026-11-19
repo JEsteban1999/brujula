@@ -75,6 +75,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.brujula.core.theme.BrujulaTheme
 import app.brujula.ui.pressScale
 import app.brujula.ui.rememberReducedMotion
+import java.time.LocalDate
 
 @Composable
 fun VoiceScreen(
@@ -83,6 +84,8 @@ fun VoiceScreen(
     modifier: Modifier = Modifier,
     /** "Prefiero escribir": abre el formulario manual de actividad (la misma ruta del toque largo). */
     onWriteInstead: () -> Unit = {},
+    /** Un cambio o armado de día dictado pasa a la Propuesta (la navegación quita esta pantalla). */
+    onOpenProposal: (LocalDate, String) -> Unit = { _, _ -> },
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val draft by viewModel.draft.collectAsStateWithLifecycle()
@@ -113,6 +116,10 @@ fun VoiceScreen(
         }
     }
 
+    (state as? VoiceState.OpenProposal)?.let { open ->
+        LaunchedEffect(open) { onOpenProposal(open.day, open.request) }
+    }
+
     Column(
         modifier.fillMaxSize().background(c.bg).imePadding().padding(horizontal = 22.dp).padding(top = 8.dp, bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -137,7 +144,8 @@ fun VoiceScreen(
                 is VoiceState.Idle -> Idle(reduced, hint, textOnly, listen, onWriteInstead)
                 is VoiceState.Listening -> Listening(s.partial, reduced, viewModel::stop)
                 VoiceState.Thinking -> Thinking(reduced)
-                is VoiceState.Result -> ResultView(s, reduced, viewModel::undo, onClose)
+                is VoiceState.OpenProposal -> Thinking(reduced)
+                is VoiceState.Result -> ResultView(s, reduced, viewModel::undo, onClose, onOpenProposal)
                 VoiceState.Undone -> Message(VoiceCopy.UNDONE, null, reduced, primary = VoiceCopy.DONE, onPrimary = onClose)
                 is VoiceState.NeedsMore -> NeedsMore(s.question, reduced, textOnly, listen)
                 is VoiceState.Error -> ErrorView(s, hint, reduced, textOnly, listen, viewModel::retry)
@@ -155,7 +163,7 @@ fun VoiceScreen(
 
 private fun stepLabel(s: VoiceState) = when (s) {
     is VoiceState.Listening -> "Escuchando"
-    VoiceState.Thinking -> "Interpretando"
+    VoiceState.Thinking, is VoiceState.OpenProposal -> "Interpretando"
     is VoiceState.Result, VoiceState.Undone, VoiceState.SavedOffline -> "Listo"
     else -> "Dictar"
 }
@@ -287,7 +295,9 @@ private fun Thinking(reduced: Boolean) {
 }
 
 @Composable
-private fun ResultView(s: VoiceState.Result, reduced: Boolean, onUndo: () -> Unit, onDone: () -> Unit) {
+private fun ResultView(
+    s: VoiceState.Result, reduced: Boolean, onUndo: () -> Unit, onDone: () -> Unit, onOpenProposal: (LocalDate, String) -> Unit,
+) {
     val c = BrujulaTheme.colors
     val scheduled = s.created.isNotEmpty()
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -298,7 +308,7 @@ private fun ResultView(s: VoiceState.Result, reduced: Boolean, onUndo: () -> Uni
             ) { Icon(Icons.Outlined.Check, contentDescription = null, tint = c.onAccent, modifier = Modifier.size(36.dp)) }
         }
         Text(
-            if (scheduled) VoiceCopy.SCHEDULED else VoiceCopy.NOTHING_SCHEDULED,
+            s.title,
             Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }, color = c.text, textAlign = TextAlign.Center,
             fontFamily = BrujulaTheme.type.display, fontWeight = FontWeight.ExtraBold, fontSize = 28.sp,
         )
@@ -316,9 +326,12 @@ private fun ResultView(s: VoiceState.Result, reduced: Boolean, onUndo: () -> Uni
             )
         }
         s.messages.forEach { Text(it, color = c.textMuted, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.fillMaxWidth()) }
+        s.proposal?.let { p ->
+            BigButton(VoiceCopy.VIEW_PROPOSAL, primary = true, reduced = reduced, onClick = { onOpenProposal(p.day, p.text) })
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (s.undoAvailable) BigButton(VoiceCopy.UNDO, primary = false, reduced = reduced, onClick = onUndo, modifier = Modifier.weight(1f))
-            BigButton(VoiceCopy.DONE, primary = true, reduced = reduced, onClick = onDone, modifier = Modifier.weight(if (s.undoAvailable) 1.4f else 1f))
+            BigButton(VoiceCopy.DONE, primary = s.proposal == null, reduced = reduced, onClick = onDone, modifier = Modifier.weight(if (s.undoAvailable) 1.4f else 1f))
         }
     }
 }

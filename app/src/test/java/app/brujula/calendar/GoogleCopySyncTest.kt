@@ -9,6 +9,7 @@ import app.brujula.activities.ActivityType
 import app.brujula.data.db.BrujulaDatabase
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -274,5 +275,62 @@ class GoogleCopySyncTest {
         repo.delete(a.id)
         assertEquals(GoogleCopyStatus.NOT_REQUESTED, sync.afterSave(a))
         assertEquals(0, writer.inserts + writer.updates)
+    }
+
+    // ---- Diario de copias (M6, M8) ----
+
+    @Test fun journalDeleteChecksTheRowUnderTheLockSoARestoredCopySurvives() = runTest {
+        // La fila X se borró (su copia 300 quedó en el diario) y otra copia lenta tiene el cerrojo.
+        val x = save(base)
+        writer.events[300] = GoogleEventDraft("Dentista", base.date.atTime(16, 45), base.date.atTime(17, 45), null, x.id)
+        repo.setGoogleEventId(x.id, 300)
+        val gone = repo.get(x.id)!!
+        repo.delete(x.id)
+        val journal = GoogleCopyJournal()
+        val entry = journal.delete(gone)
+        journal.record(listOf(entry))
+        val y = save(base.copy(title = "Otra"))
+        writer.insertDelayMs = 1_000
+        val slow = launch { sync.afterSave(y) }
+        val run = launch { journal.run(entry, sync, repo) }
+        // Deja que el diario llegue a esperar el cerrojo (Room responde en sus hilos).
+        repeat(30) { testScheduler.runCurrent(); Thread.sleep(10) }
+        // Mientras espera, deshacer vuelve a crear X con el mismo id y su copia nueva (101).
+        repo.upsert(gone.copy(googleEventId = null))
+        writer.events[101] = GoogleEventDraft("Dentista", base.date.atTime(16, 45), base.date.atTime(17, 45), null, x.id)
+        repo.setGoogleEventId(x.id, 101)
+        slow.join(); run.join()
+        // El barrido no se lleva la copia nueva: la fila ya existe cuando se revisa bajo el cerrojo.
+        assertEquals(true, 101L in writer.events)
+        assertEquals(true, journal.pending().isEmpty())
+    }
+
+    @Test fun journalSaveOfAGoneRowWritesNothing() = runTest {
+        val x = save(base)
+        val journal = GoogleCopyJournal()
+        val entry = journal.save(x.id)
+        journal.record(listOf(entry))
+        repo.delete(x.id)
+        journal.run(entry, sync, repo)
+        assertEquals(0, writer.inserts)
+        assertEquals(true, journal.pending().isEmpty())
+    }
+
+    @Test fun withoutPermissionTheDrainDropsEntriesWithoutAnEventIdAndKeepsTheRest() = runTest {
+        writer.permission = false
+        val journal = GoogleCopyJournal()
+        // Borrados: sin id de evento no hay nada que perseguir (reconcile no aplica: la fila ya no está); con id, se guarda.
+        val noId = journal.delete(base.copy(id = 900, googleEventId = null))
+        val withId = journal.delete(base.copy(id = 901, googleEventId = 301))
+        // Guardados: una copia que falta la crea reconcile; una copia existente que actualizar se guarda.
+        val unlinked = save(base.copy(title = "Sin copia"))
+        val linked = save(base.copy(title = "Con copia"))
+        repo.setGoogleEventId(linked.id, 302)
+        val saveUnlinked = journal.save(unlinked.id)
+        val saveLinked = journal.save(linked.id)
+        journal.record(listOf(noId, withId, saveUnlinked, saveLinked))
+
+        journal.drain(sync, repo)
+        assertEquals(setOf(withId, saveLinked), journal.pending().toSet())
     }
 }

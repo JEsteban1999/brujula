@@ -12,7 +12,17 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
+
+/**
+ * Hora de dormir sugerida para la noche del día lógico [day] (D12), calculada en cada resincronización. [bedtime] puede caer
+ * después de las 00:00 (otra fecha de calendario, mismo día lógico). [remind]: la preferencia "Aviso para dormir"; el aviso
+ * sale 30 min antes ([remindAt]).
+ */
+data class BedtimeChoice(val day: LocalDate, val bedtime: LocalDateTime, val sleepMinutes: Int, val remind: Boolean) {
+    val remindAt: LocalDateTime get() = bedtime.minusMinutes(BEDTIME_REMIND_BEFORE_MIN.toLong())
+}
 
 /** Rutina en DataStore Preferences; las horas se guardan como "HH:mm". */
 class RoutineRepository(private val dataStore: DataStore<Preferences>) {
@@ -30,9 +40,18 @@ class RoutineRepository(private val dataStore: DataStore<Preferences>) {
         val exercisePrompts = stringPreferencesKey("exercise_prompt_answered")
         val wellnessSeeded = booleanPreferencesKey("wellness_seeded")
         val exerciseMigrated = booleanPreferencesKey("exercise_workdays_migrated")
+        val nightNotice = stringPreferencesKey("night_notice")
+        val bedRemind = booleanPreferencesKey("bedtime_remind")
     }
 
     val routine: Flow<Routine> = dataStore.data.map(::read)
+
+    /** Interruptor "Aviso para dormir" (por defecto encendido): una preferencia, no una elección de cada noche. */
+    val bedtimeReminderOn: Flow<Boolean> = dataStore.data.map { it[Keys.bedRemind] ?: true }
+
+    suspend fun setBedtimeReminder(on: Boolean) {
+        dataStore.edit { it[Keys.bedRemind] = on }
+    }
 
     /** Calendarios del telefono elegidos, en el mismo DataStore. */
     val calendarPrefs = CalendarPrefs(dataStore)
@@ -81,6 +100,7 @@ class RoutineRepository(private val dataStore: DataStore<Preferences>) {
             p[Keys.goalMin] = r.workGoalMin.first
             p[Keys.goalMax] = r.workGoalMin.last
             p[Keys.theme] = r.themeMode.name
+            p[Keys.nightNotice] = r.nightNotice.toString()
         }
     }
 
@@ -95,6 +115,7 @@ class RoutineRepository(private val dataStore: DataStore<Preferences>) {
             flexibleWork = p[Keys.flexible] ?: d.flexibleWork,
             workGoalMin = (p[Keys.goalMin] ?: d.workGoalMin.first)..(p[Keys.goalMax] ?: d.workGoalMin.last),
             themeMode = p[Keys.theme]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: d.themeMode,
+            nightNotice = p[Keys.nightNotice]?.let { runCatching { LocalTime.parse(it) }.getOrNull() } ?: d.nightNotice,
         )
     }
 

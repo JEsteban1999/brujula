@@ -2,7 +2,9 @@ package app.brujula.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.Intent
 import android.os.Bundle
+import kotlinx.coroutines.flow.MutableStateFlow
 import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,14 +30,46 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.core.app.NotificationManagerCompat
 import app.brujula.container
+import app.brujula.reminders.Notifications
 import app.brujula.core.theme.BrujulaTheme
 import app.brujula.core.theme.darkFlow
 
 class MainActivity : ComponentActivity() {
+    /** Ruta de un enlace de notificación, ya filtrada; la consume `BrujulaNavHost` al componer. */
+    private val pendingRoute = MutableStateFlow<String?>(null)
+
+    /** Solo rutas de la lista blanca: lo demás del extra se ignora; un pedido sin el secreto de la app se descarta. */
+    private fun deliverRoute(intent: Intent?) {
+        // Reabrir la app desde Recientes reutiliza el intent viejo: su enlace ya se siguió una vez.
+        if (intent == null || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        // Los botones del resumen de la mañana piden quitar su notificación; se hace aunque la ruta no valga.
+        if (intent.hasExtra(Notifications.EXTRA_CANCEL_ID)) {
+            NotificationManagerCompat.from(this).cancel(intent.getIntExtra(Notifications.EXTRA_CANCEL_ID, 0))
+            intent.removeExtra(Notifications.EXTRA_CANCEL_ID)
+        }
+        // Un pedido para Claude solo vale si viene de nuestras notificaciones (llevan el secreto de la app).
+        val route = DeepLinks.fromIntent(
+            intent.getStringExtra(DeepLinks.EXTRA_ROUTE), intent.getStringExtra(DeepLinks.EXTRA_TOKEN), DeepLinks.token(this),
+        )
+        // Se quitan los extras: al recrear la actividad (rotación) el mismo enlace no se vuelve a seguir.
+        intent.removeExtra(DeepLinks.EXTRA_ROUTE)
+        intent.removeExtra(DeepLinks.EXTRA_TOKEN)
+        if (route == null) return
+        pendingRoute.value = route
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        deliverRoute(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) deliverRoute(intent)
         applySystemBars(dark = true) // el fondo inicial y la intro son oscuros
 
         // La intro solo en arranque en frío: ni al recrear la actividad (rotación) ni al reabrirla
@@ -67,7 +101,7 @@ class MainActivity : ComponentActivity() {
                     dark?.let { isDark ->
                         BrujulaTheme(dark = isDark) {
                             AskNotificationsOnFirstOpen()
-                            BrujulaNavHost()
+                            BrujulaNavHost(pendingRoute = pendingRoute, onRouteConsumed = { pendingRoute.value = null })
                         }
                     }
                 }

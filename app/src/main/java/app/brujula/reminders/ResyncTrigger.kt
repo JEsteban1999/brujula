@@ -14,19 +14,23 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 
 private const val TAG = "ResyncTrigger"
 const val RESYNC_DEBOUNCE_MS = 500L
 private const val RESYNC_RETRY_MS = 5_000L
 
-/** Emite cada vez que cambian rutina, actividades, hechos, habitos, avisos atendidos o conteos del dia logico. */
+/** Emite cada vez que cambian rutina, actividades, hechos, habitos, avisos atendidos, conteos del dia logico, planes aceptados o el aviso para dormir. */
 fun reminderChanges(
     routineRepository: RoutineRepository,
     activityRepository: ActivityRepository,
     habitRepository: HabitRepository,
     clock: Clock,
+    /** Días con plan aceptado (resumen de la mañana); producción: `proposalRepository.observeAcceptedDays()`. */
+    acceptedDays: Flow<Set<LocalDate>> = flowOf(emptySet()),
 ): Flow<Unit> = combine(
     routineRepository.routine,
     activityRepository.observeAll(),
@@ -34,6 +38,9 @@ fun reminderChanges(
     habitRepository.observeHabits(),
     habitRepository.observeHandledKeys(),
     habitRepository.observeCountsFor(logicalDay(clock.now())),
+    activityRepository.observeOverrides(),
+    acceptedDays,
+    routineRepository.bedtimeReminderOn,
 ) { _ -> }
 
 /**

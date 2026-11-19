@@ -20,6 +20,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -100,6 +101,56 @@ class ActivityFormViewModelTest {
         vm.shiftStart(-60) // 13:30-14:30 libre; el de todo el dia no choca
         assertNull(vm.state.value.externalConflict)
         assertNull(vm.state.value.conflictMessage)
+    }
+
+    private suspend fun TestScope.conflictingVm(): ActivityFormViewModel {
+        val vm = newVm(); vm.setTitle("Lectura"); vm.setDateChoice(DateChoice.TOMORROW); vm.shiftStart(495); vm.setDuration(60)
+        vm.state.first { it.conflict != null }
+        return vm
+    }
+
+    @Test fun askClaudeNullWithoutConflict() = runTest {
+        val vm = newVm()
+        vm.state.first { it.ready }
+        assertNull(vm.askClaudeRequest())
+    }
+
+    @Test fun askClaudeNullWhenEditingOrRepeating() = runTest {
+        val vm = conflictingVm()
+        vm.setRepeat(app.brujula.activities.Repeat.DAILY)
+        assertNull(vm.askClaudeRequest())
+        // Editando una existente que choca, tampoco.
+        val other = repo.upsert(Activity(title = "Cine", type = ActivityType.PERSONAL, date = tomorrow, start = LocalTime.of(19, 30), durationMin = 60))
+        val edit = newVm(id = other)
+        edit.state.first { it.isEdit && it.conflict != null }
+        assertNull(edit.askClaudeRequest())
+    }
+
+    @Test fun askClaudeNullOutsideSevenDays() = runTest {
+        for (offset in listOf(6L, 7L)) {
+            repo.upsert(Activity(title = "Bloque $offset", type = ActivityType.PERSONAL, date = today.plusDays(offset), start = LocalTime.of(19, 0), durationMin = 60))
+        }
+        val vm = conflictingVm()
+        vm.setDate(today.plusDays(7))
+        vm.state.first { it.conflict?.activity?.title == "Bloque 7" }
+        assertNull(vm.askClaudeRequest())
+        vm.setDate(today.plusDays(6))
+        vm.state.first { it.conflict?.activity?.title == "Bloque 6" }
+        assertEquals(today.plusDays(6), vm.askClaudeRequest()?.first)
+    }
+
+    @Test fun askClaudeNullForAppointments() = runTest {
+        val vm = conflictingVm()
+        vm.setType(ActivityType.APPOINTMENT)
+        assertNull(vm.askClaudeRequest())
+    }
+
+    @Test fun askClaudeRequestMentionsTitleConflictAndTime() = runTest {
+        val vm = conflictingVm()
+        assertEquals(
+            tomorrow to "Agenda «Lectura» (personal, 1 h) el jueves 19. A las 19:00 choca con «Ejercicio en casa»; búscale otro horario.",
+            vm.askClaudeRequest(),
+        )
     }
 
     @Test fun noConflictWhenFree() = runTest {
@@ -299,6 +350,76 @@ class ActivityFormViewModelTest {
         assertTrue(writer.events.isEmpty())
     }
 
+    @Test fun deleteJournalsTheGoogleCopyBeforeDeletingSoItSurvivesProcessDeath() = runTest {
+        val writer = app.brujula.calendar.FakeGoogleCalendarWriter()
+        val sync = app.brujula.calendar.GoogleCopySync(writer, repo)
+        val prefs = ApplicationProvider.getApplicationContext<Context>().getSharedPreferences("form-journal", Context.MODE_PRIVATE)
+        val journal = app.brujula.calendar.GoogleCopyJournal(prefs)
+        val id = repo.upsert(
+            Activity(title = "Dentista", type = ActivityType.APPOINTMENT, date = tomorrow, start = LocalTime.of(9, 0), durationMin = 30),
+        )
+        writer.events[300] = app.brujula.calendar.GoogleEventDraft("Dentista", tomorrow.atTime(9, 0), tomorrow.atTime(9, 30), null, id)
+        repo.setGoogleEventId(id, 300)
+        // El proceso muere antes de que corra la tanda de Google: su ámbito nunca ejecuta nada.
+        val dead = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Job().apply { cancel() })
+        val vm = ActivityFormViewModel(
+            activityId = id, prefillStart = null, clock = clock, activityRepository = repo,
+            resync = { resyncs++ }, calendarSource = calendar, selectedCalendarIds = flowOf(setOf(1L)),
+            googleCopy = sync, googleScope = dead, scopeOverride = backgroundScope, googleJournal = journal,
+        )
+        vm.state.first { it.ready }
+        vm.delete()
+        vm.state.first { it.saved }
+        assertNull(repo.get(id))
+        assertEquals(300L, writer.events.keys.single())
+        app.brujula.calendar.GoogleCopyJournal(prefs).drain(sync, repo)
+        assertTrue(writer.events.isEmpty())
+        assertTrue(journal.pending().isEmpty())
+    }
+
+    private class RecordingJournal(private val fail: Boolean = false) : app.brujula.calendar.GoogleCopyJournal() {
+        var records = 0
+        override fun record(entries: List<Entry>) {
+            records++
+            if (fail) throw IllegalStateException("commit")
+            super.record(entries)
+        }
+    }
+
+    private fun TestScope.deleteVm(id: Long, journal: app.brujula.calendar.GoogleCopyJournal) = ActivityFormViewModel(
+        activityId = id, prefillStart = null, clock = clock, activityRepository = repo,
+        resync = { resyncs++ }, calendarSource = calendar, selectedCalendarIds = flowOf(setOf(1L)),
+        googleCopy = app.brujula.calendar.GoogleCopySync(app.brujula.calendar.FakeGoogleCalendarWriter(), repo),
+        googleScope = realScope, scopeOverride = backgroundScope, googleJournal = journal,
+    )
+
+    @Test fun deleteWithoutAGoogleCopyDoesNotJournal() = runTest {
+        val id = repo.observeAll().first().single().id
+        val journal = RecordingJournal()
+        val vm = deleteVm(id, journal)
+        vm.state.first { it.ready && it.isEdit }
+        vm.delete()
+        vm.state.first { it.saved }
+        assertNull(repo.get(id))
+        assertEquals(0, journal.records)
+    }
+
+    @Test fun deleteThatCannotJournalKeepsTheRowAndShowsAnError() = runTest {
+        val id = repo.upsert(
+            Activity(title = "Dentista", type = ActivityType.APPOINTMENT, date = tomorrow, start = LocalTime.of(9, 0), durationMin = 30, copyToGoogle = true),
+        )
+        val journal = RecordingJournal(fail = true)
+        val vm = deleteVm(id, journal)
+        vm.state.first { it.ready && it.isEdit }
+        vm.delete()
+        val s = vm.state.first { it.deleteError != null }
+        assertEquals(ActivityFormViewModel.DELETE_FAILED, s.deleteError)
+        assertFalse(s.saved)
+        assertEquals(1, journal.records)
+        assertNotNull(repo.get(id))
+        assertEquals(0, resyncs)
+    }
+
     @Test fun slowGoogleWriteClosesFormAndFinishesInBackground() = runTest {
         val writer = app.brujula.calendar.FakeGoogleCalendarWriter().apply { insertDelayMs = 1_500 }
         val vm = ActivityFormViewModel(
@@ -356,5 +477,20 @@ class ActivityFormViewModelTest {
         assertNull(s.googleNotice)
         assertTrue(testScheduler.currentTime < 5_000)
         assertTrue(repo.observeAll().first().any { it.title == "Dentista" })
+    }
+
+    @Test fun conflictUsesMovedOccurrence() = runTest {
+        // Yoga diaria 13:00-14:00; solo manana se mueve a las 15:00: 13:00 ya no choca y 15:00 si.
+        val id = repo.upsert(
+            Activity(title = "Yoga", type = ActivityType.PERSONAL, date = tomorrow, start = LocalTime.of(13, 0), durationMin = 60, repeat = app.brujula.activities.Repeat.DAILY),
+        )
+        repo.setOverride(app.brujula.activities.OccurrenceOverride(id, tomorrow, tomorrow.atTime(15, 0), null, false))
+        val vm = newVm(); vm.setDateChoice(DateChoice.TOMORROW); vm.setDuration(60)
+        vm.shiftStart(255) // 15:00 (desde 10:45)
+        // Esperar el choque con Yoga prueba que actividades y overrides ya cargaron.
+        assertEquals("Yoga", vm.state.first { it.conflict != null }.conflict!!.activity.title)
+        assertEquals(LocalTime.of(15, 0), vm.state.value.start)
+        vm.shiftStart(-120) // 13:00: libre porque Yoga se movio
+        assertNull(vm.state.value.conflict)
     }
 }

@@ -4,6 +4,7 @@ import app.brujula.core.time.TimeSpan
 import app.brujula.routine.dayTypeOf
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 
 enum class ActivityType(val labelEs: String) {
@@ -25,7 +26,25 @@ data class Activity(
     val remindBeforeMin: Int? = 15,
     val copyToGoogle: Boolean = type == ActivityType.APPOINTMENT,
     val googleEventId: Long? = null,
+    val origin: ActivityOrigin = ActivityOrigin.UNKNOWN,
 )
+
+/** De donde vino la actividad; las filas anteriores a la fase 3A quedan en UNKNOWN. */
+enum class ActivityOrigin { UNKNOWN, DICTATION, PLAN }
+
+/**
+ * Cambio de una sola ocurrencia de una serie. [day] es la fecha de la ocurrencia en la serie (la misma clave que los
+ * hechos); [start] y [durationMin] reemplazan lo de la serie solo ese dia, y [skipped] la oculta.
+ */
+data class OccurrenceOverride(
+    val activityId: Long,
+    val day: LocalDate,
+    val start: LocalDateTime?,
+    val durationMin: Int?,
+    val skipped: Boolean,
+)
+
+typealias Overrides = Map<Pair<Long, LocalDate>, OccurrenceOverride>
 
 fun Activity.occursOn(day: LocalDate): Boolean {
     if (day < date) return false
@@ -44,10 +63,14 @@ fun occurrencesOn(
     day: LocalDate,
     activities: List<Activity>,
     doneKeys: Set<Pair<Long, LocalDate>>,
+    overrides: Overrides = emptyMap(),
 ): List<Occurrence> = activities
     .filter { it.occursOn(day) }
-    .map { a ->
-        val start = day.atTime(a.start)
-        Occurrence(a, day, TimeSpan(start, start.plusMinutes(a.durationMin.toLong())), (a.id to day) in doneKeys)
+    .mapNotNull { a ->
+        val o = overrides[a.id to day]
+        if (o?.skipped == true) return@mapNotNull null
+        val start = o?.start ?: day.atTime(a.start)
+        val minutes = (o?.durationMin ?: a.durationMin).toLong()
+        Occurrence(a, day, TimeSpan(start, start.plusMinutes(minutes)), (a.id to day) in doneKeys)
     }
     .sortedBy { it.span.start }

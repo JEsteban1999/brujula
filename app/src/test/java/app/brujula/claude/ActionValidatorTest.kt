@@ -179,4 +179,38 @@ class ActionValidatorTest {
     }
 
     @Test fun questionWithoutTextIsInvalid() = assertInvalid(DictationAction(type = "need_more_info"))
+
+    @Test fun validActivityComesOutWithDictationOrigin() {
+        val v = ActionValidator.validate(activity(), ctx) as Validated.Activity
+        assertEquals(app.brujula.activities.ActivityOrigin.DICTATION, v.activity.origin)
+    }
+
+    private fun plan(date: String?) = DictationAction(type = "plan_request", date = date)
+
+    @Test fun planRequestTomorrow() {
+        val v = ActionValidator.validate(plan("2026-11-19"), ctx, "hoy no voy a entrenar")
+        assertEquals(Validated.PlanRequest(LocalDate.of(2026, 11, 19), "hoy no voy a entrenar"), v)
+        // El último día permitido es hoy + 6.
+        assertEquals(Validated.PlanRequest(LocalDate.of(2026, 11, 24), "x"), ActionValidator.validate(plan("2026-11-24"), ctx, "x"))
+    }
+
+    @Test fun planRequestWithoutDateIsToday() {
+        assertEquals(Validated.PlanRequest(wed, "arma mi día"), ActionValidator.validate(plan(null), ctx, "arma mi día"))
+        // A las 00:30 del jueves el día lógico sigue siendo el miércoles.
+        val late = dictationCtx(now = wed.plusDays(1).atTime(0, 30))
+        assertEquals(Validated.PlanRequest(wed, "t"), ActionValidator.validate(plan(""), late, "t"))
+        // Y "mañana" dictado a esa hora es el jueves: dentro del rango.
+        assertEquals(Validated.PlanRequest(wed.plusDays(1), "t"), ActionValidator.validate(plan("2026-11-19"), late, "t"))
+    }
+
+    @Test fun planRequestBeyondSixDaysUnsupported() {
+        val v = ActionValidator.validate(plan("2026-11-25"), ctx, "arma el miércoles")
+        assertEquals(Validated.Unsupported("Por ahora puedo reorganizar hasta 6 días adelante."), v)
+    }
+
+    @Test fun planRequestPastUnsupported() {
+        val v = ActionValidator.validate(plan("2026-11-17"), ctx, "ayer")
+        assertEquals(Validated.Unsupported(app.brujula.planning.PlanValidator.PAST_DAY), v)
+        assertTrue(ActionValidator.validate(plan("no-es-fecha"), ctx, "x") is Validated.Invalid)
+    }
 }

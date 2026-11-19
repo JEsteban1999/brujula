@@ -4,11 +4,17 @@ import android.net.Uri
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -23,6 +29,12 @@ import app.brujula.activities.form.ActivityFormViewModel
 import app.brujula.container
 import app.brujula.core.theme.BrujulaTheme
 import app.brujula.habits.HabitFormScreen
+import app.brujula.planning.NightScreen
+import app.brujula.planning.NightViewModel
+import app.brujula.planning.ProposalScreen
+import app.brujula.planning.ProposalViewModel
+import app.brujula.routine.logicalDay
+import app.brujula.routine.wakeFor
 import app.brujula.habits.HabitGroup
 import app.brujula.habits.HabitFormViewModel
 import app.brujula.habits.HabitsScreen
@@ -38,6 +50,8 @@ import app.brujula.today.TodayScreen
 import app.brujula.today.TodayViewModel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.net.URLEncoder
+import java.time.LocalDate
 import java.time.LocalDateTime
 
 object Routes {
@@ -47,6 +61,23 @@ object Routes {
     const val VOICE = "voice"
     const val ACTIVITY_FORM = "activity?id={id}&start={start}"
     const val HABIT_FORM = "habit?id={id}&group={group}"
+    const val PROPOSAL = "proposal?day={day}&request={request}"
+
+    /** "¿Armamos mañana?"; es también la ruta de enlace `plan_tomorrow` de la notificación nocturna. */
+    const val PLAN_TOMORROW = "plan_tomorrow"
+
+    /**
+     * Cuántas pantallas sacar con `Listo` después de aceptar una propuesta, según la que está debajo. Si es el formulario
+     * ("Pedir a Claude otro horario"), su borrador chocaba y el plan ya lo resolvió: volver a él y Guardar duplicaría.
+     * Atrás sin aceptar sigue volviendo al borrador.
+     */
+    fun popsAfterAccept(belowRoute: String?): Int = if (belowRoute == ACTIVITY_FORM) 2 else 1
+
+    /** `day` es ISO; `request` (opcional) se codifica como URL y se decodifica al abrir la pantalla. */
+    fun proposal(day: LocalDate, request: String? = null): String {
+        val q = request?.takeIf { it.isNotBlank() }?.let { "&request=" + URLEncoder.encode(it, "UTF-8").replace("+", "%20") }.orEmpty()
+        return "proposal?day=$day$q"
+    }
 
     /** `start` es un LocalDateTime ISO; ambos son opcionales. */
     fun activityForm(id: Long? = null, start: LocalDateTime? = null): String {
@@ -68,11 +99,35 @@ object Routes {
 
 private val TopLevel = setOf(Routes.TODAY, Routes.HABITS, Routes.ROUTINE)
 
+/**
+ * [pendingRoute]: ruta de un enlace de notificación (ya filtrada por la lista blanca de [DeepLinks]); se navega a ella al
+ * componer y se avisa con [onRouteConsumed] para no repetirla al rotar.
+ */
 @Composable
-fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
+fun BrujulaNavHost(
+    navController: NavHostController = rememberNavController(),
+    pendingRoute: StateFlow<String?> = remember { MutableStateFlow<String?>(null) },
+    onRouteConsumed: () -> Unit = {},
+) {
     val backStack by navController.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
     val showBar = route in TopLevel
+    val linkContainer = LocalContext.current.container
+    val pending by pendingRoute.collectAsStateWithLifecycle()
+    LaunchedEffect(pending) {
+        val raw = pending ?: return@LaunchedEffect
+        val nav = DeepLinks.toNavRoute(raw, logicalDay(linkContainer.clock.now()).plusDays(1))
+        onRouteConsumed()
+        when (nav) {
+            null -> Unit
+            Routes.TODAY -> navController.navigateTop(Routes.TODAY)
+            else -> navController.navigate(nav) {
+                launchSingleTop = true
+                // Una Propuesta abierta de otro día no se reutiliza: sus argumentos no cambiarían.
+                if (nav.startsWith("proposal")) popUpTo(Routes.PROPOSAL) { inclusive = true }
+            }
+        }
+    }
 
     Scaffold(
         containerColor = BrujulaTheme.colors.bg,
@@ -106,6 +161,9 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                                 calendarSource = container.calendarSource,
                                 classifications = container.workClassificationRepository,
                                 autoClassifier = container.autoClassifier,
+                                claudeNotes = container.claudeNotes.note,
+                                acceptedPlans = container.proposalRepository.observeAcceptedPlans(),
+                                undoPlan = { container.proposalExecutor.undo(it) },
                             )
                         }
                     },
@@ -114,6 +172,87 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                     viewModel = vm,
                     onEditActivity = { navController.navigate(Routes.activityForm(id = it)) },
                     onAddAt = { navController.navigate(Routes.activityForm(start = it)) },
+                    onAskClaude = { day, request -> navController.navigate(Routes.proposal(day, request?.take(DeepLinks.MAX_REQUEST))) },
+                )
+            }
+            composable(
+                Routes.PROPOSAL,
+                arguments = listOf(
+                    navArgument("day") { type = NavType.StringType; nullable = true; defaultValue = null },
+                    navArgument("request") { type = NavType.StringType; nullable = true; defaultValue = null },
+                ),
+            ) { entry ->
+                val context = LocalContext.current
+                val container = context.container
+                val day = entry.arguments?.getString("day")?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+                    ?: logicalDay(container.clock.now())
+                val request = entry.arguments?.getString("request")?.takeIf { it.isNotBlank() && it.length <= DeepLinks.MAX_REQUEST }
+                val vm: ProposalViewModel = viewModel(
+                    factory = viewModelFactory {
+                        initializer {
+                            ProposalViewModel(
+                                day = day,
+                                request = request,
+                                planner = container.dayPlanner,
+                                proposals = container.proposalRepository,
+                                executor = container.proposalExecutor,
+                                speech = AndroidSpeechInput(context.applicationContext),
+                                clock = container.clock,
+                                wakeFor = { d -> container.routineRepository.routine.first().wakeFor(d) },
+                                bedtimeRemindAt = {
+                                    // El aviso de esta noche, solo si el plan es de hoy o de mañana (la misma fuente que los avisos).
+                                    val today = logicalDay(container.clock.now())
+                                    if (day == today || day == today.plusDays(1)) container.bedtimeSource.remindAt() else null
+                                },
+                                saved = createSavedStateHandle(),
+                            )
+                        }
+                    },
+                )
+                ProposalScreen(
+                    viewModel = vm,
+                    onClose = { if (navController.currentDestination?.route == Routes.PROPOSAL) navController.popBackStack() },
+                    onAcceptedDone = {
+                        if (navController.currentDestination?.route == Routes.PROPOSAL) {
+                            val below = navController.previousBackStackEntry?.destination?.route
+                            repeat(Routes.popsAfterAccept(below)) { navController.popBackStack() }
+                        }
+                    },
+                )
+            }
+            composable(Routes.PLAN_TOMORROW) {
+                val container = LocalContext.current.container
+                val vm: NightViewModel = viewModel(
+                    factory = viewModelFactory {
+                        initializer {
+                            NightViewModel(
+                                clock = container.clock,
+                                snapshots = container.daySnapshots,
+                                routineRepository = container.routineRepository,
+                                resync = container.reminderSync,
+                            )
+                        }
+                    },
+                )
+                NightScreen(
+                    viewModel = vm,
+                    onArmDay = { day ->
+                        if (navController.currentDestination?.route == Routes.PLAN_TOMORROW) {
+                            navController.navigate(Routes.proposal(day)) {
+                                popUpTo(Routes.PLAN_TOMORROW) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
+                    },
+                    onAddSomething = {
+                        if (navController.currentDestination?.route == Routes.PLAN_TOMORROW) {
+                            navController.navigate(Routes.VOICE) {
+                                popUpTo(Routes.PLAN_TOMORROW) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
+                    },
+                    onClose = { if (navController.currentDestination?.route == Routes.PLAN_TOMORROW) navController.popBackStack() },
                 )
             }
             composable(Routes.HABITS) {
@@ -159,6 +298,14 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                     // Dos toques rápidos en ✕/Listo no sacan también la pantalla de abajo.
                     onClose = { if (navController.currentDestination?.route == Routes.VOICE) navController.popBackStack() },
                     onWriteInstead = { navController.navigate(Routes.activityForm()) },
+                    onOpenProposal = { day, request ->
+                        if (navController.currentDestination?.route == Routes.VOICE) {
+                            navController.navigate(Routes.proposal(day, request.take(DeepLinks.MAX_REQUEST))) {
+                                popUpTo(Routes.VOICE) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
+                    },
                 )
             }
             composable(Routes.ROUTINE) {
@@ -203,6 +350,7 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                                 selectedCalendarIds = container.routineRepository.calendarPrefs.selectedCalendarIds,
                                 googleCopy = container.googleCopySync,
                                 googleScope = container.syncScope,
+                                googleJournal = container.googleCopyJournal,
                             )
                         }
                     },
@@ -212,6 +360,13 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                     onClose = { navController.popBackStack() },
                     onHabit = {
                         navController.navigate(Routes.habitForm()) { popUpTo(entry.destination.id) { inclusive = true } }
+                    },
+                    onDictate = {
+                        navController.navigate(Routes.VOICE) { popUpTo(entry.destination.id) { inclusive = true }; launchSingleTop = true }
+                    },
+                    onAskClaude = { day, request ->
+                        // El formulario queda en la pila: Atrás vuelve al borrador.
+                        navController.navigate(Routes.proposal(day, request.take(DeepLinks.MAX_REQUEST))) { launchSingleTop = true }
                     },
                 )
             }

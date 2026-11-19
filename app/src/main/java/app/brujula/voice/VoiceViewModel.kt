@@ -18,15 +18,19 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 
 object VoiceCopy {
     const val LISTENING = "Escuchando…"
     const val THINKING = "Claude está entendiendo…"
     const val SCHEDULED = "Agendado"
     const val NOTHING_SCHEDULED = "No agendé nada"
+    /** Título del Resultado cuando no se agendó nada pero sigue una Propuesta. */
+    const val PLAN_OFFERED = "Claude puede reorganizar tu día"
     const val UNDONE = "Deshecho"
     const val UNDO = "Deshacer"
     const val DONE = "Listo"
+    const val VIEW_PROPOSAL = "Ver propuesta"
     const val RETRY = "Reintentar"
     const val STOP_TALKING = "Terminar de hablar"
     const val PREFER_WRITING = "Prefiero escribir"
@@ -54,7 +58,17 @@ sealed interface VoiceState {
         /** Pendientes que el validador rechazó, preguntas y avisos: se muestran junto a la respuesta de Claude. */
         val messages: List<String>,
         val undoAvailable: Boolean,
-    ) : VoiceState
+        /** Además de lo agendado, el dictado pidió cambiar o armar un día: lleva a la Propuesta (no se aplicó nada de eso). */
+        val proposal: Validated.PlanRequest? = null,
+    ) : VoiceState {
+        val title: String get() = when {
+            created.isNotEmpty() -> VoiceCopy.SCHEDULED
+            proposal != null -> VoiceCopy.PLAN_OFFERED
+            else -> VoiceCopy.NOTHING_SCHEDULED
+        }
+    }
+    /** El dictado solo pidió un cambio o armar un día: no se aplica nada, la pantalla pasa a la Propuesta de [day]. */
+    data class OpenProposal(val day: LocalDate, val request: String) : VoiceState
     data object Undone : VoiceState
     data class NeedsMore(val question: String) : VoiceState
     data class Error(val message: String, val retry: Boolean) : VoiceState
@@ -238,6 +252,34 @@ class VoiceViewModel(
     private suspend fun applyOk(outcome: InterpretOutcome.Ok, full: String, back: String) {
         val creatable = outcome.items.any { it is Validated.Activity || it is Validated.Habit }
         val question = outcome.items.filterIsInstance<Validated.Question>().firstOrNull()
+        val plan = outcome.items.filterIsInstance<Validated.PlanRequest>().firstOrNull()
+        val notes = outcome.items.mapNotNull {
+            when (it) {
+                is Validated.Question -> it.text
+                is Validated.Unsupported -> it.text
+                is Validated.Invalid -> it.reason
+                else -> null
+            }
+        }
+        if (!creatable && plan != null && notes.isNotEmpty()) {
+            // Hay avisos que el usuario debe leer: un Resultado corto antes de pasar a la Propuesta.
+            base = null
+            lastText = null
+            undoToken = null
+            _state.value = VoiceState.Result(
+                created = emptyList(), reply = outcome.reply, messages = notes, undoAvailable = false,
+                proposal = plan.copy(text = plan.text.ifBlank { full }),
+            )
+            return
+        }
+        if (!creatable && plan != null) {
+            // Nada se aplica: la propuesta la genera y la acepta el usuario en su pantalla.
+            base = null
+            lastText = null
+            undoToken = null
+            _state.value = VoiceState.OpenProposal(plan.day, plan.text.ifBlank { full })
+            return
+        }
         if (!creatable && question != null) {
             base = full
             _state.value = VoiceState.NeedsMore(question.text)
@@ -246,7 +288,7 @@ class VoiceViewModel(
         // Desde aqui el dictado es de apply (termina su transaccion, resync y copia a Google): no se encola de nuevo.
         handedOff = true
         val result = try {
-            withContext(NonCancellable) { executor.apply(outcome.items) }
+            withContext(NonCancellable) { executor.apply(outcome.items, outcome.reply) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -263,6 +305,7 @@ class VoiceViewModel(
             reply = outcome.reply,
             messages = result.messages,
             undoAvailable = result.undo != null,
+            proposal = plan?.let { it.copy(text = it.text.ifBlank { full }) },
         )
     }
 

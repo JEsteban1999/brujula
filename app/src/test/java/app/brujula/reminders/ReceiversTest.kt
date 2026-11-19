@@ -421,4 +421,151 @@ class ReceiversTest {
         assertEquals(listOf(0L), timeouts[Notifications.CHANNEL_ACTIVITIES])
         assertEquals(4, byId.size)
     }
+
+    // --- Avisos de planificacion ---
+    private fun planningReminder(kind: ReminderKind, key: String, day: LocalDate, title: String, body: String) =
+        Reminder(key, now, kind, title, body, day = day)
+
+    private fun routeOf(pi: android.app.PendingIntent?): String? = shadowOf(pi).savedIntent.getStringExtra(app.brujula.ui.DeepLinks.EXTRA_ROUTE)
+
+    @Test fun planningKindsUsePlanningChannel() {
+        val day = LocalDate.of(2026, 11, 18)
+        Notifications.show(ctx, planningReminder(ReminderKind.PLAN_NIGHT, "night:20261118", day, "¿Armamos mañana?", "Mira cómo te fue hoy y deja listo tu día de mañana."))
+        Notifications.show(ctx, planningReminder(ReminderKind.PLAN_MORNING, "morning:20261118", day, "Tu día está listo", "Toca para ver tu día."))
+        Notifications.show(ctx, planningReminder(ReminderKind.BEDTIME, "bed:202611182345", day, "Hora de ir a dormir", "Para dormir 8 h, acuéstate a las 0:15."))
+        val byTitle = shadowOf(nm).allNotifications.associateBy { it.extras.getString(android.app.Notification.EXTRA_TITLE) }
+        assertEquals(3, byTitle.size)
+        byTitle.values.forEach { assertEquals(Notifications.CHANNEL_PLANNING, it.channelId) }
+
+        val channel = nm.getNotificationChannel(Notifications.CHANNEL_PLANNING)
+        assertEquals("Planificación", channel.name.toString())
+        assertEquals(NotificationManager.IMPORTANCE_DEFAULT, channel.importance)
+        assertEquals("Aviso nocturno, resumen de la mañana y hora de dormir", channel.description)
+
+        val night = byTitle.getValue("¿Armamos mañana?")
+        assertEquals(listOf("Mañana lo veo"), night.actions.map { it.title.toString() })
+        assertEquals("plan_tomorrow", routeOf(night.contentIntent))
+        val morning = byTitle.getValue("Tu día está listo")
+        assertEquals(listOf("Ver mi día", "Ajustar"), morning.actions.map { it.title.toString() })
+        assertEquals("today", routeOf(morning.contentIntent))
+        assertEquals("today", routeOf(morning.actions[0].actionIntent))
+        assertEquals("voice", routeOf(morning.actions[1].actionIntent))
+        val bed = byTitle.getValue("Hora de ir a dormir")
+        assertTrue(bed.actions.isNullOrEmpty())
+        assertEquals(null, routeOf(bed.contentIntent))
+    }
+
+    @Test fun laterActionOnlyCancels() {
+        val key = "night:20261118"
+        Notifications.show(ctx, planningReminder(ReminderKind.PLAN_NIGHT, key, LocalDate.of(2026, 11, 18), "¿Armamos mañana?", "Mira cómo te fue hoy y deja listo tu día de mañana."))
+        assertEquals(1, shadowOf(nm).allNotifications.size)
+        val intent = Intent(ctx, NotificationActionReceiver::class.java).setAction(NotificationActionReceiver.ACTION_LATER)
+            .putExtra(NotificationActionReceiver.EXTRA_KEY, key)
+            .putExtra(NotificationActionReceiver.EXTRA_DAY, "2026-11-18")
+            .putExtra(NotificationActionReceiver.EXTRA_TITLE, "¿Armamos mañana?")
+            .putExtra(NotificationActionReceiver.EXTRA_BODY, "Mira cómo te fue hoy y deja listo tu día de mañana.")
+            .putExtra(NotificationActionReceiver.EXTRA_KIND, ReminderKind.PLAN_NIGHT.name)
+        NotificationActionReceiver().onReceive(ctx, intent)
+        awaitCalls(1)
+        assertTrue(shadowOf(nm).allNotifications.isEmpty())
+        assertTrue("no agenda esperas", scheduler.one.isEmpty())
+        assertTrue("no marca nada", answered().isEmpty() || LocalDate.of(2026, 11, 18) !in answered())
+    }
+
+    @Test fun morningNotificationBuildsBodyFromSnapshot() {
+        // Un dia propio de esta prueba: Room y DataStore persisten entre pruebas Robolectric.
+        val day = LocalDate.of(2026, 12, 2)
+        setNow(day.minusDays(1).atTime(23, 0))
+        runBlocking {
+            ctx.container.activityRepository.upsert(
+                app.brujula.activities.Activity(
+                    title = "Informe", type = app.brujula.activities.ActivityType.WORK, date = day,
+                    start = java.time.LocalTime.of(9, 0), durationMin = 390, repeat = app.brujula.activities.Repeat.NONE,
+                ),
+            )
+            ctx.container.activityRepository.upsert(
+                app.brujula.activities.Activity(
+                    title = "Ejercicio en casa", type = app.brujula.activities.ActivityType.EXERCISE, date = day,
+                    start = java.time.LocalTime.of(19, 0), durationMin = 30, repeat = app.brujula.activities.Repeat.NONE,
+                ),
+            )
+        }
+        connectCalendar(meeting(77, day.atTime(15, 0), day.atTime(16, 0)).copy(title = "Llamada con cliente"))
+        val intent = Intent(ctx, ReminderReceiver::class.java)
+            .putExtra(NotificationActionReceiver.EXTRA_KEY, "morning:20261202")
+            .putExtra(NotificationActionReceiver.EXTRA_DAY, day.toString())
+            .putExtra(NotificationActionReceiver.EXTRA_TITLE, "Tu día está listo")
+            .putExtra(NotificationActionReceiver.EXTRA_BODY, "Toca para ver tu día.")
+            .putExtra(NotificationActionReceiver.EXTRA_KIND, ReminderKind.PLAN_MORNING.name)
+        ReminderReceiver().onReceive(ctx, intent)
+        awaitCalls(1)
+        val n = shadowOf(nm).allNotifications.single()
+        assertEquals("Tu día está listo", n.extras.getString(android.app.Notification.EXTRA_TITLE))
+        assertEquals(
+            "6 h 30 de trabajo \u00b7 Llamada con cliente a las 15:00 \u00b7 Ejercicio en casa a las 19:00",
+            n.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString(),
+        )
+        assertEquals(Notifications.CHANNEL_PLANNING, n.channelId)
+        assertEquals(listOf("Ver mi día", "Ajustar"), n.actions.map { it.title.toString() })
+    }
+
+    @Test fun nonMorningPlanningKindsShowSynchronously() {
+        val intent = Intent(ctx, ReminderReceiver::class.java)
+            .putExtra(NotificationActionReceiver.EXTRA_KEY, "bed:202611182345")
+            .putExtra(NotificationActionReceiver.EXTRA_DAY, "2026-11-18")
+            .putExtra(NotificationActionReceiver.EXTRA_TITLE, "Hora de ir a dormir")
+            .putExtra(NotificationActionReceiver.EXTRA_BODY, "Para dormir 8 h, acuéstate a las 0:15.")
+            .putExtra(NotificationActionReceiver.EXTRA_KIND, ReminderKind.BEDTIME.name)
+        ReminderReceiver().onReceive(ctx, intent)
+        // Sale antes de que termine la resincronizacion.
+        assertEquals(1, shadowOf(nm).allNotifications.size)
+        awaitCalls(1)
+    }
+
+    private fun morningIntent(day: LocalDate) = Intent(ctx, ReminderReceiver::class.java)
+        .putExtra(NotificationActionReceiver.EXTRA_KEY, "morning:${day.toString().replace("-", "")}")
+        .putExtra(NotificationActionReceiver.EXTRA_DAY, day.toString())
+        .putExtra(NotificationActionReceiver.EXTRA_TITLE, "Tu día está listo")
+        .putExtra(NotificationActionReceiver.EXTRA_BODY, "Toca para ver tu día.")
+        .putExtra(NotificationActionReceiver.EXTRA_KIND, ReminderKind.PLAN_MORNING.name)
+
+    private fun snapshotProvider(block: suspend (LocalDate) -> app.brujula.planning.DaySnapshot) = object : app.brujula.planning.DaySnapshotProvider(
+        ctx.container.routineRepository, ctx.container.activityRepository, ctx.container.habitRepository,
+        ctx.container.calendarSource, ctx.container.workClassificationRepository,
+    ) {
+        override suspend fun snapshot(day: LocalDate) = block(day)
+    }
+
+    @Test fun morningFallsBackWhenTheSnapshotThrows() {
+        ctx.container.daySnapshots = snapshotProvider { error("boom") }
+        ReminderReceiver().onReceive(ctx, morningIntent(LocalDate.of(2026, 12, 3)))
+        awaitCalls(1)
+        val n = shadowOf(nm).allNotifications.single()
+        assertEquals("Toca para ver tu día.", n.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString())
+    }
+
+    @Test fun morningFallsBackWhenTheSnapshotHangs() {
+        val previous = morningSnapshotTimeoutMs
+        morningSnapshotTimeoutMs = 200
+        try {
+            ctx.container.daySnapshots = snapshotProvider { kotlinx.coroutines.awaitCancellation() }
+            ReminderReceiver().onReceive(ctx, morningIntent(LocalDate.of(2026, 12, 4)))
+            awaitCalls(1)
+            val n = shadowOf(nm).allNotifications.single()
+            assertEquals("Toca para ver tu día.", n.extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString())
+        } finally {
+            morningSnapshotTimeoutMs = previous
+        }
+    }
+
+    @Test fun morningActionsCancelTheNotificationWhenOpened() {
+        val day = LocalDate.of(2026, 12, 5)
+        Notifications.show(ctx, planningReminder(ReminderKind.PLAN_MORNING, "morning:20261205", day, "Tu día está listo", "Toca para ver tu día."))
+        val n = shadowOf(nm).allNotifications.single()
+        val action = shadowOf(n.actions[0].actionIntent).savedIntent
+        assertEquals(Notifications.notificationId("morning:20261205"), action.getIntExtra(Notifications.EXTRA_CANCEL_ID, -1))
+        org.robolectric.Robolectric.buildActivity(app.brujula.ui.MainActivity::class.java).create().newIntent(action)
+        assertTrue(shadowOf(nm).allNotifications.isEmpty())
+        assertTrue("el extra se consume", !action.hasExtra(Notifications.EXTRA_CANCEL_ID))
+    }
 }
