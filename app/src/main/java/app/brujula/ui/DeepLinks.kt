@@ -36,13 +36,13 @@ object DeepLinks {
         }
     }
 
-    /** Ruta de navegación de Compose para una ruta válida; [tomorrow] es el día lógico de mañana. `null` si no es válida. */
+    /** Ruta de navegación de Compose para una ruta válida; [tomorrow] es el día lógico de mañana (para las rutas con día). `null` si no es válida. */
     fun toNavRoute(route: String, tomorrow: LocalDate): String? {
         val valid = parse(route) ?: return null
         return when (valid) {
             TODAY -> Routes.TODAY
             VOICE -> Routes.VOICE
-            PLAN_TOMORROW -> Routes.proposal(tomorrow)
+            PLAN_TOMORROW -> Routes.PLAN_TOMORROW
             else -> parseProposal(valid)?.let { Routes.proposal(it.day, it.request) }
         }
     }

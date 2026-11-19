@@ -11,6 +11,8 @@ import app.brujula.habits.HabitIcon
 import app.brujula.habits.HabitSchedule
 import app.brujula.routine.logicalDay
 import app.brujula.habits.timesFor
+import app.brujula.core.time.formatMinutes
+import app.brujula.routine.BedtimeChoice
 import app.brujula.routine.Routine
 import app.brujula.routine.awakeWindow
 import app.brujula.routine.dayTypeOf
@@ -23,6 +25,7 @@ import java.time.temporal.ChronoUnit
 object ReminderPlanner {
     private val KEY_MINUTE = DateTimeFormatter.ofPattern("yyyyMMddHHmm")
     private val KEY_DAY = DateTimeFormatter.ofPattern("yyyyMMdd")
+    private const val NIGHT_BEFORE_BED_MIN = 30L
 
     /** Clave del aviso de la ocurrencia de [activityId] en [day] (fecha de la serie). */
     fun activityKey(activityId: Long, day: LocalDate): String = "act:$activityId:${day.format(KEY_DAY)}"
@@ -42,6 +45,9 @@ object ReminderPlanner {
         horizonHours: Long = 24,
         exercisePromptAnswered: Set<LocalDate> = emptySet(),
         overrides: Overrides = emptyMap(),
+        /** Días (lógicos) con un plan ACCEPTED: solo ellos reciben el resumen de la mañana, y su noche anterior no avisa. */
+        plannedDays: Set<LocalDate> = emptySet(),
+        bedtime: BedtimeChoice? = null,
     ): List<Reminder> {
         val limit = now.plusHours(horizonHours)
         // La vigilia de ayer puede cruzar la medianoche; la de manana puede caer dentro del horizonte.
@@ -98,7 +104,46 @@ object ReminderPlanner {
                 day = day,
             )
         }
+        planningReminders(now, limit, days, routine, plannedDays, bedtime, out)
         return out.sortedBy { it.at }
+    }
+
+    /** Aviso de la noche, resumen de la mañana y hora de dormir (D12, D13, D14); claves estables entre resincronizaciones. */
+    private fun planningReminders(
+        now: LocalDateTime, limit: LocalDateTime, days: List<LocalDate>, routine: Routine,
+        plannedDays: Set<LocalDate>, bedtime: BedtimeChoice?, out: MutableList<Reminder>,
+    ) {
+        for (day in days) {
+            // Por dia logico: la noche de `day` cae en su fecha de calendario; si la hora de acostarse es mas temprana, se corre.
+            if (day.plusDays(1) !in plannedDays) {
+                val window = routine.awakeWindow(day)
+                var at = day.atTime(routine.nightNotice)
+                if (at !in window) at = window.end.minusMinutes(NIGHT_BEFORE_BED_MIN)
+                if (at > now && at <= limit) {
+                    out += Reminder(
+                        key = "night:${day.format(KEY_DAY)}", at = at, kind = ReminderKind.PLAN_NIGHT,
+                        title = "¿Armamos mañana?", body = "Mira cómo te fue hoy y deja listo tu día de mañana.", day = day,
+                    )
+                }
+            }
+            if (day in plannedDays) {
+                val at = day.atTime(routine.wakeFor(day))
+                if (at > now && at <= limit) {
+                    out += Reminder(
+                        key = "morning:${day.format(KEY_DAY)}", at = at, kind = ReminderKind.PLAN_MORNING,
+                        title = "Tu día está listo", body = "Toca para ver tu día.", day = day,
+                    )
+                }
+            }
+        }
+        if (bedtime != null && bedtime.remind && bedtime.remindAt > now) {
+            out += Reminder(
+                key = "bed:${bedtime.remindAt.format(KEY_MINUTE)}", at = bedtime.remindAt, kind = ReminderKind.BEDTIME,
+                title = "Hora de ir a dormir",
+                body = "Para dormir ${formatMinutes(bedtime.sleepMinutes)}, acuéstate a las ${formatTime(bedtime.bedtime.toLocalTime())}.",
+                day = bedtime.day,
+            )
+        }
     }
 
     /** Une los avisos de bienestar que caen en el mismo minuto; uno solo queda como aviso normal. */

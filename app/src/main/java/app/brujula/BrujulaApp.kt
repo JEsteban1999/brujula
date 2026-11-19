@@ -230,7 +230,11 @@ class AppContainer(val context: Context) {
     private var syncOverride: ReminderResync? = null
     private val defaultScheduler: ReminderScheduler by lazy { AlarmReminderScheduler(context.applicationContext) }
     private val defaultSync: ReminderResync by lazy {
-        ReminderSync(clock, routineRepository, activityRepository, habitRepository, reminderScheduler)
+        ReminderSync(
+            clock, routineRepository, activityRepository, habitRepository, reminderScheduler,
+            plannedDays = { proposalRepository.acceptedDays() },
+            bedtime = { routineRepository.bedtimeChoice.first() },
+        )
     }
 
     /** Sustituibles en pruebas; por defecto, alarmas reales. */
@@ -309,7 +313,7 @@ open class BrujulaApp : Application() {
         val c = container
         startReminderResync(
             appScope,
-            reminderChanges(c.routineRepository, c.activityRepository, c.habitRepository, c.clock),
+            reminderChanges(c.routineRepository, c.activityRepository, c.habitRepository, c.clock, c.proposalRepository.observeAcceptedDays()),
             ReminderResync { c.reminderSync.resync() },
         )
     }

@@ -336,4 +336,22 @@ class RoutineViewModelTest {
         e.vm.saveClaudeKey("  ").join()
         assertEquals(1, drains)
     }
+
+    @Test fun shiftNightNoticeClampsAndResyncs() = runTest {
+        val e = env()
+        assertEquals(LocalTime.of(22, 45), e.repo.routine.first().nightNotice)
+        e.vm.shiftNightNotice(15).join()
+        assertEquals(LocalTime.of(23, 0), e.repo.routine.first().nightNotice)
+        assertEquals(1, e.sync.calls)
+        e.vm.shiftNightNotice(60).join()
+        assertEquals(LocalTime.of(23, 45), e.repo.routine.first().nightNotice)
+        e.vm.shiftNightNotice(15).join()
+        assertEquals("No da la vuelta a la medianoche", LocalTime.of(23, 45), e.repo.routine.first().nightNotice)
+        e.repo.update { it.copy(nightNotice = LocalTime.of(18, 15)) }
+        e.vm.shiftNightNotice(-15).join()
+        assertEquals(LocalTime.of(18, 0), e.repo.routine.first().nightNotice)
+        e.vm.shiftNightNotice(-15).join()
+        assertEquals(LocalTime.of(18, 0), e.repo.routine.first().nightNotice)
+        assertEquals(5, e.sync.calls)
+    }
 }

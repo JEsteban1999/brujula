@@ -29,6 +29,8 @@ import app.brujula.activities.form.ActivityFormViewModel
 import app.brujula.container
 import app.brujula.core.theme.BrujulaTheme
 import app.brujula.habits.HabitFormScreen
+import app.brujula.planning.NightScreen
+import app.brujula.planning.NightViewModel
 import app.brujula.planning.ProposalScreen
 import app.brujula.planning.ProposalViewModel
 import app.brujula.routine.logicalDay
@@ -60,6 +62,9 @@ object Routes {
     const val ACTIVITY_FORM = "activity?id={id}&start={start}"
     const val HABIT_FORM = "habit?id={id}&group={group}"
     const val PROPOSAL = "proposal?day={day}&request={request}"
+
+    /** "¿Armamos mañana?"; es también la ruta de enlace `plan_tomorrow` de la notificación nocturna. */
+    const val PLAN_TOMORROW = "plan_tomorrow"
 
     /** `day` es ISO; `request` (opcional) se codifica como URL y se decodifica al abrir la pantalla. */
     fun proposal(day: LocalDate, request: String? = null): String {
@@ -187,6 +192,12 @@ fun BrujulaNavHost(
                                 speech = AndroidSpeechInput(context.applicationContext),
                                 clock = container.clock,
                                 wakeFor = { d -> container.routineRepository.routine.first().wakeFor(d) },
+                                bedtimeRemindAt = {
+                                    // El aviso de dormir de la noche anterior al día armado (o de esta noche si se arma hoy).
+                                    val today = logicalDay(container.clock.now())
+                                    val night = if (day > today) day.minusDays(1) else day
+                                    container.routineRepository.bedtimeChoice.first()?.takeIf { it.remind && it.day == night }?.remindAt
+                                },
                                 saved = createSavedStateHandle(),
                             )
                         }
@@ -195,6 +206,41 @@ fun BrujulaNavHost(
                 ProposalScreen(
                     viewModel = vm,
                     onClose = { if (navController.currentDestination?.route == Routes.PROPOSAL) navController.popBackStack() },
+                )
+            }
+            composable(Routes.PLAN_TOMORROW) {
+                val container = LocalContext.current.container
+                val vm: NightViewModel = viewModel(
+                    factory = viewModelFactory {
+                        initializer {
+                            NightViewModel(
+                                clock = container.clock,
+                                snapshots = container.daySnapshots,
+                                routineRepository = container.routineRepository,
+                                resync = container.reminderSync,
+                            )
+                        }
+                    },
+                )
+                NightScreen(
+                    viewModel = vm,
+                    onArmDay = { day ->
+                        if (navController.currentDestination?.route == Routes.PLAN_TOMORROW) {
+                            navController.navigate(Routes.proposal(day)) {
+                                popUpTo(Routes.PLAN_TOMORROW) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
+                    },
+                    onAddSomething = {
+                        if (navController.currentDestination?.route == Routes.PLAN_TOMORROW) {
+                            navController.navigate(Routes.VOICE) {
+                                popUpTo(Routes.PLAN_TOMORROW) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
+                    },
+                    onClose = { if (navController.currentDestination?.route == Routes.PLAN_TOMORROW) navController.popBackStack() },
                 )
             }
             composable(Routes.HABITS) {

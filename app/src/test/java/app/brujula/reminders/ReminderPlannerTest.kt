@@ -154,4 +154,91 @@ class ReminderPlannerTest {
         val r = ReminderPlanner.plan(d.atTime(12, 0), Routine(), emptyList(), emptyMap(), emptySet(), listOf(gym), emptySet(), overrides = overrides)
         assertTrue(r.none { it.key == "act:5:20261118" })
     }
+
+    // --- Planificacion: noche, manana y dormir ---
+    private val thu = LocalDate.of(2026, 11, 19)
+    private fun planning(
+        now: LocalDateTime, routine: Routine = Routine(), planned: Set<LocalDate> = emptySet(),
+        bedtime: app.brujula.routine.BedtimeChoice? = null,
+    ) = ReminderPlanner.plan(
+        now, routine, emptyList(), emptyMap(), emptySet(), emptyList(), emptySet(), plannedDays = planned, bedtime = bedtime,
+    ).filter { it.kind in setOf(ReminderKind.PLAN_NIGHT, ReminderKind.PLAN_MORNING, ReminderKind.BEDTIME) }
+
+    @Test fun nightNoticeAt2245() {
+        val r = planning(thu.atTime(20, 0)).single()
+        assertEquals("night:20261119", r.key)
+        assertEquals(ReminderKind.PLAN_NIGHT, r.kind)
+        assertEquals(thu.atTime(22, 45), r.at)
+        assertEquals("¿Armamos mañana?", r.title)
+        assertEquals("Mira cómo te fue hoy y deja listo tu día de mañana.", r.body)
+        assertEquals(thu, r.day)
+        // Pasada la hora, el de hoy ya no sale.
+        assertTrue(planning(thu.atTime(23, 0)).none { it.key == "night:20261119" })
+        // Misma clave entre resincronizaciones.
+        assertEquals(planning(thu.atTime(20, 0)).map { it.key }, planning(thu.atTime(20, 30)).map { it.key })
+    }
+
+    @Test fun nightNoticeFollowsTheConfiguredTime() {
+        val r = planning(thu.atTime(12, 0), Routine(nightNotice = LocalTime.of(21, 0))).single { it.key == "night:20261119" }
+        assertEquals(thu.atTime(21, 0), r.at)
+    }
+
+    @Test fun nightNoticeSkippedWhenTomorrowPlanned() {
+        assertTrue(planning(thu.atTime(20, 0), planned = setOf(thu.plusDays(1))).none { it.kind == ReminderKind.PLAN_NIGHT })
+        // Un plan de hoy no apaga el aviso de esta noche.
+        assertEquals(1, planning(thu.atTime(20, 0), planned = setOf(thu)).count { it.kind == ReminderKind.PLAN_NIGHT })
+    }
+
+    @Test fun nightNoticeMovesInsideAwakeWindow() {
+        val early = Routine(bed = LocalTime.of(22, 0))
+        val r = planning(thu.atTime(12, 0), early).single { it.key == "night:20261119" }
+        assertEquals(thu.atTime(21, 30), r.at)
+        // Con la hora de acostarse pasada la medianoche, 22:45 sigue siendo vigilia: no se mueve.
+        assertEquals(thu.atTime(22, 45), planning(thu.atTime(12, 0), Routine(bed = LocalTime.of(0, 30))).single { it.key == "night:20261119" }.at)
+    }
+
+    @Test fun nightNoticeAfterMidnightCountsTheLogicalDay() {
+        // A las 00:30 del viernes sigue siendo la noche del jueves: el aviso del jueves ya paso y el siguiente es el del viernes.
+        val fri = thu.plusDays(1)
+        val r = planning(fri.atTime(0, 30))
+        assertEquals(listOf("night:20261120"), r.map { it.key })
+        assertEquals(fri.atTime(22, 45), r.single().at)
+    }
+
+    @Test fun morningAtWakeOnlyForPlannedDays() {
+        val fri = thu.plusDays(1)
+        val sat = LocalDate.of(2026, 11, 21)
+        val now = fri.atTime(23, 0)
+        val r = planning(now, planned = setOf(sat)).single { it.kind == ReminderKind.PLAN_MORNING }
+        assertEquals("morning:20261121", r.key)
+        assertEquals(sat.atTime(10, 0), r.at)
+        assertEquals("Tu día está listo", r.title)
+        assertEquals("Toca para ver tu día.", r.body)
+        assertEquals(sat, r.day)
+        assertTrue(planning(now).none { it.kind == ReminderKind.PLAN_MORNING })
+        // Viernes laboral: levantarse 8:15.
+        assertEquals(fri.atTime(8, 15), planning(thu.atTime(23, 0), planned = setOf(fri)).single { it.kind == ReminderKind.PLAN_MORNING }.at)
+    }
+
+    @Test fun bedtimeReminderOnlyWhenOnAndFuture() {
+        val bed = app.brujula.routine.BedtimeChoice(thu, thu.plusDays(1).atTime(0, 15), 480, remind = true)
+        val on = planning(thu.atTime(20, 0), bedtime = bed).single { it.kind == ReminderKind.BEDTIME }
+        assertEquals("bed:202611192345", on.key)
+        assertEquals(thu.atTime(23, 45), on.at)
+        assertEquals("Hora de ir a dormir", on.title)
+        assertEquals("Para dormir 8 h, acuéstate a las 0:15.", on.body)
+        assertTrue(planning(thu.atTime(20, 0), bedtime = bed.copy(remind = false)).none { it.kind == ReminderKind.BEDTIME })
+        assertTrue(planning(thu.atTime(23, 45), bedtime = bed).none { it.kind == ReminderKind.BEDTIME })
+        assertTrue(planning(thu.atTime(23, 50), bedtime = bed).none { it.kind == ReminderKind.BEDTIME })
+    }
+
+    @Test fun bedtimeAfterMidnightKeepsLogicalDay() {
+        val bed = app.brujula.routine.BedtimeChoice(thu, thu.plusDays(1).atTime(0, 15), 480, remind = true)
+        val r = planning(thu.atTime(20, 0), bedtime = bed).single { it.kind == ReminderKind.BEDTIME }
+        // Dormir 00:15 del viernes: el aviso cae 23:45 del jueves y pertenece al dia logico del jueves.
+        assertEquals(thu.atTime(23, 45), r.at)
+        assertEquals(thu, r.day)
+        // A las 00:05 del viernes el aviso del jueves ya paso.
+        assertTrue(planning(thu.plusDays(1).atTime(0, 5), bedtime = bed).none { it.kind == ReminderKind.BEDTIME })
+    }
 }

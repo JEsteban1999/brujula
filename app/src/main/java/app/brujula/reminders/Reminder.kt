@@ -3,7 +3,8 @@ package app.brujula.reminders
 import java.time.LocalDate
 import java.time.LocalDateTime
 
-enum class ReminderKind { HABIT, ACTIVITY, EXERCISE_PROMPT }
+/** [PLAN_NIGHT], [PLAN_MORNING] y [BEDTIME] son los avisos de planificación (canal `planificacion`, sin Hecho ni En 15 min). */
+enum class ReminderKind { HABIT, ACTIVITY, EXERCISE_PROMPT, PLAN_NIGHT, PLAN_MORNING, BEDTIME }
 
 data class Reminder(
     val key: String,

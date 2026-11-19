@@ -11,7 +11,7 @@ class DeepLinksTest {
             assertEquals(r, DeepLinks.parse(r))
         }
         assertEquals("proposal?day=2026-11-20&request=x", DeepLinks.toNavRoute("proposal?day=2026-11-20&request=x", LocalDate.of(2026, 11, 20)))
-        assertEquals("proposal?day=2026-11-20", DeepLinks.toNavRoute("plan_tomorrow", LocalDate.of(2026, 11, 20)))
+        assertEquals(Routes.PLAN_TOMORROW, DeepLinks.toNavRoute("plan_tomorrow", LocalDate.of(2026, 11, 20)))
         assertEquals("today", DeepLinks.toNavRoute("today", LocalDate.of(2026, 11, 20)))
         assertEquals("voice", DeepLinks.toNavRoute("voice", LocalDate.of(2026, 11, 20)))
     }

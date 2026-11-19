@@ -101,6 +101,11 @@ fun RoutineScreen(viewModel: RoutineViewModel, modifier: Modifier = Modifier) {
                 "Me acuesto", formatTime(routine.bed), "Acostarme 15 minutos antes", "Acostarme 15 minutos después", reduced,
                 onMinus = { viewModel.shiftBed(-STEP) }, onPlus = { viewModel.shiftBed(STEP) },
             )
+            StepperRow(
+                "Aviso para armar mañana", formatTime(routine.nightNotice), "Avisarme 15 minutos antes para armar mañana",
+                "Avisarme 15 minutos después para armar mañana", reduced,
+                onMinus = { viewModel.shiftNightNotice(-STEP) }, onPlus = { viewModel.shiftNightNotice(STEP) },
+            )
         }
 
         Text("FINES DE SEMANA Y FESTIVOS", color = c.textMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)

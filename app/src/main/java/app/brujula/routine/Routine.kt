@@ -18,6 +18,8 @@ data class Routine(
     val flexibleWork: Boolean = true,
     val workGoalMin: IntRange = 360..420,
     val themeMode: ThemeMode = ThemeMode.AUTO,
+    /** Hora del aviso "¿Armamos mañana?" (se corre dentro de la vigilia si la hora de acostarse es más temprana). */
+    val nightNotice: LocalTime = LocalTime.of(22, 45),
 )
 
 /** Vigilia del día [day]: de levantarse a acostarse (acostarse puede ser del día siguiente). */

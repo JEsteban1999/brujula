@@ -411,4 +411,13 @@ class ProposalViewModelTest {
         assertEquals(DayPlanner.NO_KEY, e.message)
         assertFalse(e.retry)
     }
+
+    @Test fun acceptBodyMentionsBedtimeWhenReminderOn() = runTest {
+        proposals.savePending(proposal())
+        val v = vm(bedtime = { thu.atTime(23, 45) })
+        showing(v)
+        v.accept()
+        val a = v.state.first { it is ProposalUiState.Accepted } as ProposalUiState.Accepted
+        assertTrue(a.body, a.body.contains("A las 8:15 te llega el resumen y a las 23:45 el aviso para ir a dormir."))
+    }
 }
