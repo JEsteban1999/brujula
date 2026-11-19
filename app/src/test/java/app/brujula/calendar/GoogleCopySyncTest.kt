@@ -245,4 +245,34 @@ class GoogleCopySyncTest {
         assertEquals(GoogleCopyStatus.NOT_REQUESTED, sync.afterSave(a))
         assertEquals(emptyMap<Long, GoogleEventDraft>(), writer.events)
     }
+
+    // --- instantanea obsoleta en reconcile ---
+    @Test fun pendingCopyIsSkippedWhenActivityWasDeletedAfterSnapshot() = runTest {
+        val a = save(base)
+        repo.delete(a.id)
+        sync.copyIfStillPending(a.id)
+        assertEquals(0, writer.inserts + writer.updates)
+    }
+
+    @Test fun pendingCopyIsSkippedWhenCopyWasTurnedOffAfterSnapshot() = runTest {
+        val a = save(base)
+        save(a.copy(copyToGoogle = false))
+        sync.copyIfStillPending(a.id)
+        assertEquals(0, writer.inserts + writer.updates)
+    }
+
+    @Test fun pendingCopyIsSkippedWhenAlreadyLinked() = runTest {
+        val a = save(base)
+        repo.setGoogleEventId(a.id, 100L)
+        writer.events[100L] = draftFor(a)
+        sync.copyIfStillPending(a.id)
+        assertEquals(0, writer.inserts + writer.updates)
+    }
+
+    @Test fun afterSaveForDeletedActivityInsertsNothing() = runTest {
+        val a = save(base)
+        repo.delete(a.id)
+        assertEquals(GoogleCopyStatus.NOT_REQUESTED, sync.afterSave(a))
+        assertEquals(0, writer.inserts + writer.updates)
+    }
 }

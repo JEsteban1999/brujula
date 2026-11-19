@@ -122,7 +122,14 @@ class RoutineViewModel(
 
     /** Al encenderlo se crean las copias pendientes; al apagarlo no se borra nada. */
     fun setCopyToGoogleEnabled(on: Boolean): Job = scope.launch {
-        repository.calendarPrefs.setCopyToGoogleEnabled(on)
+        try {
+            repository.calendarPrefs.setCopyToGoogleEnabled(on)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.w("RoutineViewModel", "No se pudo guardar el interruptor de copia a Google", e)
+            return@launch
+        }
         if (on) launchReconcile().join()
     }
 

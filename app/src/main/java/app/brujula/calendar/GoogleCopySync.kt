@@ -28,9 +28,31 @@ class GoogleCopySync(
     private val mutex = Mutex()
 
     /** [a] ya esta guardada en Brujula; el id de evento vigente se lee del repositorio. */
-    suspend fun afterSave(a: Activity): GoogleCopyStatus = mutex.withLock {
-        try {
-            val stored = activityRepository.get(a.id) ?: a
+    suspend fun afterSave(a: Activity): GoogleCopyStatus = mutex.withLock { syncLocked(a, activityRepository.safeGet(a.id)) }
+
+    /**
+     * Para [reconcile]: con el cerrojo tomado relee la fila y solo copia si sigue pendiente (existe, con copia activa y
+     * sin vinculo); asi un borrado o un "copia apagada" posteriores a la instantanea no producen una copia huerfana.
+     */
+    internal suspend fun copyIfStillPending(id: Long): GoogleCopyStatus = mutex.withLock {
+        val stored = activityRepository.safeGet(id) ?: return@withLock GoogleCopyStatus.NOT_REQUESTED
+        if (!stored.copyToGoogle || stored.googleEventId != null) return@withLock GoogleCopyStatus.NOT_REQUESTED
+        syncLocked(stored, stored)
+    }
+
+    private suspend fun ActivityRepository.safeGet(id: Long): Activity? = try {
+        get(id)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w("GoogleCopySync", "No se pudo leer la actividad", e)
+        null
+    }
+
+    private suspend fun syncLocked(a: Activity, stored: Activity?): GoogleCopyStatus {
+        // Sin fila guardada (borrada): nunca se escribe en Google; de la copia se encarga afterDelete.
+        if (stored == null) return GoogleCopyStatus.NOT_REQUESTED
+        return try {
             val eventId = stored.googleEventId
             when {
                 !a.copyToGoogle -> removeCopy(a.id, eventId)
@@ -85,7 +107,7 @@ class GoogleCopySync(
             if (!copyEnabled() || !writer.hasWritePermission() || writer.primaryGoogleCalendarId() == null) return
             activityRepository.observeAll().first()
                 .filter { it.copyToGoogle && it.googleEventId == null && (it.repeat != Repeat.NONE || it.date >= today) }
-                .forEach { afterSave(it) }
+                .forEach { copyIfStillPending(it.id) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
