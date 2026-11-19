@@ -136,17 +136,20 @@ class HabitFormViewModel(
         _state.update {
             it.copy(saving = true, nameError = null, intervalError = null, timesError = null, daysError = null)
         }
-        val schedule = when (s.mode) {
+        // "Antes de dormir" aun no se edita en este formulario: se conserva tal cual.
+        val keptBeforeBed = editing?.schedule as? HabitSchedule.BeforeBed
+        val schedule = keptBeforeBed ?: when (s.mode) {
             HabitMode.EVERY -> HabitSchedule.Every(s.intervalMin)
             HabitMode.AT_TIMES -> HabitSchedule.AtTimes(s.times.distinct().sorted())
         }
         // A horas fijas: la meta es una por cada hora, asi nunca se pausan los avisos restantes.
-        val target = if (s.mode == HabitMode.AT_TIMES) s.times.distinct().size else s.dailyTarget
+        val target = if (keptBeforeBed == null && s.mode == HabitMode.AT_TIMES) s.times.distinct().size else s.dailyTarget
         scope.launch {
             habitRepository.upsert(
                 Habit(
                     id = editing?.id ?: 0L, name = name, icon = s.icon, schedule = schedule,
                     dailyTarget = target, days = s.days, active = editing?.active ?: true,
+                    group = editing?.group ?: HabitGroup.ESSENTIAL, window = editing?.window ?: HabitWindow.AWAKE,
                 ),
             )
             runCatching { resync.resync() }

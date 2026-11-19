@@ -90,4 +90,11 @@ class HabitTimesTest {
         assertEquals(listOf(d.atTime(23, 45)), h.timesFor(d, Routine()))
         assertEquals(listOf(sat.plusDays(1).atTime(0, 15)), h.timesFor(sat, Routine()))
     }
+
+    @Test fun workWindowRespectsAwakeWindow() {
+        val late = work(HabitSchedule.Every(30)).timesFor(d, Routine(wake = LocalTime.of(9, 0)))
+        assertEquals(d.atTime(9, 0), late.first())
+        assertTrue(late.none { it < d.atTime(9, 0) })
+        assertTrue(work(HabitSchedule.AtTimes(listOf(LocalTime.of(8, 5)))).timesFor(d, Routine()).isEmpty())
+    }
 }
