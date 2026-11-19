@@ -8,7 +8,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,7 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material.icons.outlined.Tune
@@ -52,6 +54,7 @@ fun BottomBar(
     onToday: () -> Unit,
     onHabits: () -> Unit,
     onSettings: () -> Unit,
+    onVoice: () -> Unit,
     onAdd: () -> Unit,
 ) {
     val c = BrujulaTheme.colors
@@ -65,7 +68,7 @@ fun BottomBar(
             NavItem("Hoy", Icons.Outlined.WbSunny, currentRoute == Routes.TODAY, true, onToday)
             // Semana llega en una fase posterior.
             NavItem("Semana", Icons.Outlined.CalendarMonth, false, false, {}, hint = "Pronto")
-            AddButton(onAdd)
+            AddButton(onVoice, onAdd)
             NavItem("Hábitos", Icons.Outlined.CheckCircleOutline, currentRoute == Routes.HABITS, true, onHabits)
             NavItem("Ajustes", Icons.Outlined.Tune, currentRoute == Routes.ROUTINE, true, onSettings)
         }
@@ -100,9 +103,10 @@ private fun NavItem(
     }
 }
 
-/** Boton central; en esta fase abre el formulario (la voz llega en la Fase 2). */
+/** Boton central: tocar = dictar, mantener = formulario de actividad. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AddButton(onClick: () -> Unit) {
+private fun AddButton(onVoice: () -> Unit, onAdd: () -> Unit) {
     val c = BrujulaTheme.colors
     val reduced = rememberReducedMotion()
     val source = remember { MutableInteractionSource() }
@@ -118,11 +122,15 @@ private fun AddButton(onClick: () -> Unit) {
                 .pressScale(source, reduced)
                 .shadow(10.dp, CircleShape, ambientColor = c.accent, spotColor = c.accent)
                 .background(c.accent, CircleShape)
-                .clickable(interactionSource = source, indication = null, role = Role.Button, onClick = onClick)
-                .semantics { contentDescription = "Agregar actividad" },
+                .combinedClickable(
+                    interactionSource = source, indication = null, role = Role.Button,
+                    onClickLabel = "Dictar", onClick = onVoice,
+                    onLongClickLabel = "Nueva actividad", onLongClick = onAdd,
+                )
+                .semantics { contentDescription = "Dictar" },
             contentAlignment = Alignment.Center,
         ) {
-            Icon(Icons.Outlined.Add, contentDescription = null, tint = c.onAccent, modifier = Modifier.size(28.dp))
+            Icon(Icons.Outlined.Mic, contentDescription = null, tint = c.onAccent, modifier = Modifier.size(28.dp))
         }
     }
 }

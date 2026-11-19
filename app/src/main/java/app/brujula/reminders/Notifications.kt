@@ -113,6 +113,22 @@ object Notifications {
         post(context, notificationId(key), b)
     }
 
+    /** Aviso informativo con texto largo (BigTextStyle) que abre la app al tocarlo; un [id] distinto por aviso. */
+    fun showText(context: Context, id: Int, title: String, text: String) {
+        ensureChannels(context)
+        val b = NotificationCompat.Builder(context, CHANNEL_ACTIVITIES)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+        context.packageManager.getLaunchIntentForPackage(context.packageName)?.let { launch ->
+            b.setContentIntent(PendingIntent.getActivity(context, id, launch, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+        }
+        post(context, id, b)
+    }
+
     private fun post(context: Context, id: Int, b: NotificationCompat.Builder) {
         try {
             context.getSystemService(NotificationManager::class.java).notify(id, b.build())

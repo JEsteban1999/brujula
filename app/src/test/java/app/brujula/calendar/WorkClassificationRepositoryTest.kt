@@ -57,4 +57,32 @@ class WorkClassificationRepositoryTest {
         repo.set(k, false)
         assertFalse(repo.isWork(ev("Stand up"), repo.observe().first()))
     }
+
+    @Test fun setAutoWritesWhenThereIsNoMark() = runTest {
+        repo.setAuto("yoga", false)
+        repo.setAuto("reunion", true)
+        assertEquals(mapOf("yoga" to false, "reunion" to true), repo.observe().first())
+    }
+
+    @Test fun setAutoNeverOverridesUserMark() = runTest {
+        repo.set("reunion", false)
+        repo.setAuto("reunion", true)
+        assertEquals(mapOf("reunion" to false), repo.observe().first())
+        assertEquals("USER", db.workClassificationDao().sourceOf("reunion"))
+    }
+
+    @Test fun setAutoUpdatesEarlierAutoButUserOverwritesAuto() = runTest {
+        repo.setAuto("reunion", true)
+        repo.setAuto("reunion", false)
+        assertEquals(false, repo.observe().first()["reunion"])
+        assertEquals("AUTO", db.workClassificationDao().sourceOf("reunion"))
+        repo.set("reunion", true)
+        assertEquals(true, repo.observe().first()["reunion"])
+        assertEquals("USER", db.workClassificationDao().sourceOf("reunion"))
+    }
+
+    @Test fun setAutoIgnoresBlankKeys() = runTest {
+        repo.setAuto("", true)
+        assertTrue(repo.observe().first().isEmpty())
+    }
 }

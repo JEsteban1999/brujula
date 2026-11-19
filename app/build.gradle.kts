@@ -62,6 +62,9 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.core.splashscreen)
+    implementation("com.anthropic:anthropic-java:3.9.0")
+    // El SDK la trae solo en runtime; se declara para leer la salida estructurada con nuestro ObjectMapper (misma versión).
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.19.4")
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)

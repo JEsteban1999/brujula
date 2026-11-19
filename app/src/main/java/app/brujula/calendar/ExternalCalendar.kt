@@ -69,8 +69,11 @@ private val DIACRITICS = Regex("""\p{Mn}+""")
 private val WHITESPACE = Regex("[\\s\\p{Z}]+")
 
 /** Clave para recordar si un evento cuenta como trabajo: titulo sin tildes, en minusculas, espacios colapsados. */
-fun classificationKey(e: ExternalEvent): String =
-    java.text.Normalizer.normalize(e.title, java.text.Normalizer.Form.NFD)
+fun classificationKey(e: ExternalEvent): String = normalizeTitle(e.title)
+
+/** Misma normalizacion que [classificationKey], para un titulo suelto. */
+fun normalizeTitle(title: String): String =
+    java.text.Normalizer.normalize(title, java.text.Normalizer.Form.NFD)
         .replace(DIACRITICS, "")
         .lowercase(java.util.Locale.ROOT)
         .replace(WHITESPACE, " ")

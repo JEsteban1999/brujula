@@ -31,15 +31,20 @@ import app.brujula.habits.HabitsViewModel
 import app.brujula.reminders.readPermissionStatus
 import app.brujula.settings.RoutineScreen
 import app.brujula.settings.RoutineViewModel
+import app.brujula.voice.AndroidSpeechInput
+import app.brujula.voice.VoiceScreen
+import app.brujula.voice.VoiceViewModel
 import app.brujula.today.TodayScreen
 import app.brujula.today.TodayViewModel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import java.time.LocalDateTime
 
 object Routes {
     const val TODAY = "today"
     const val HABITS = "habits"
     const val ROUTINE = "routine"
+    const val VOICE = "voice"
     const val ACTIVITY_FORM = "activity?id={id}&start={start}"
     const val HABIT_FORM = "habit?id={id}&group={group}"
 
@@ -78,6 +83,7 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                     onToday = { navController.navigateTop(Routes.TODAY) },
                     onHabits = { navController.navigateTop(Routes.HABITS) },
                     onSettings = { navController.navigateTop(Routes.ROUTINE) },
+                    onVoice = { navController.navigate(Routes.VOICE) { launchSingleTop = true } },
                     onAdd = { navController.navigate(Routes.activityForm()) },
                 )
             }
@@ -99,6 +105,7 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                                 readPermissions = { readPermissionStatus(appContext) },
                                 calendarSource = container.calendarSource,
                                 classifications = container.workClassificationRepository,
+                                autoClassifier = container.autoClassifier,
                             )
                         }
                     },
@@ -131,6 +138,29 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                     onEditHabit = { navController.navigate(Routes.habitForm(it)) },
                 )
             }
+            composable(Routes.VOICE) {
+                val context = LocalContext.current
+                val container = context.container
+                val vm: VoiceViewModel = viewModel(
+                    factory = viewModelFactory {
+                        initializer {
+                            VoiceViewModel(
+                                speech = AndroidSpeechInput(context.applicationContext),
+                                interpreter = container.interpreter,
+                                executor = container.executor,
+                                pending = container.pendingDictations,
+                                requestDrain = { container.syncScope.launch { runCatching { container.drainPendingDictations() } } },
+                            )
+                        }
+                    },
+                )
+                VoiceScreen(
+                    viewModel = vm,
+                    // Dos toques rápidos en ✕/Listo no sacan también la pantalla de abajo.
+                    onClose = { if (navController.currentDestination?.route == Routes.VOICE) navController.popBackStack() },
+                    onWriteInstead = { navController.navigate(Routes.activityForm()) },
+                )
+            }
             composable(Routes.ROUTINE) {
                 val container = LocalContext.current.container
                 val vm: RoutineViewModel = viewModel(
@@ -141,6 +171,9 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                                 calendarSource = container.calendarSource,
                                 syncScope = container.syncScope,
                                 reconcileGoogle = { container.reconcileGoogleCopies() },
+                                claudeKeyStore = container.claudeKeyStore,
+                                claudeGateway = container.claudeGateway,
+                                onKeySaved = { container.syncScope.launch { runCatching { container.drainPendingDictations() } } },
                             )
                         }
                     },

@@ -7,7 +7,6 @@ import app.brujula.activities.ActivityRepository
 import app.brujula.activities.Occurrence
 import app.brujula.activities.WorkStatus
 import app.brujula.activities.freeSlots
-import app.brujula.activities.occurrencesOn
 import app.brujula.activities.workMinutes
 import app.brujula.activities.workStatus
 import app.brujula.calendar.CalendarSource
@@ -51,7 +50,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalDateTime
-import java.time.LocalTime
 
 data class HabitChip(val habitId: Long, val name: String, val icon: HabitIcon, val count: Int, val target: Int)
 
@@ -90,7 +88,6 @@ data class TodayUiState(
 
 private const val MAX_VISIBLE_HABITS = 2
 private const val TICK_MS = 30_000L
-private val LOGICAL_DAY_START: LocalTime = LocalTime.of(4, 0)
 
 class TodayViewModel(
     private val clock: Clock,
@@ -100,6 +97,8 @@ class TodayViewModel(
     private val readPermissions: () -> PermissionStatus,
     private val calendarSource: CalendarSource = NoCalendarSource,
     private val classifications: WorkClassificationRepository? = null,
+    /** Clasifica con Claude los títulos desconocidos de hoy (una vez por clave); nulo en pruebas que no lo usan. */
+    private val autoClassifier: app.brujula.claude.AutoClassifier? = null,
     scopeOverride: CoroutineScope? = null,
     private val tickMs: Long = TICK_MS,
 ) : ViewModel() {
@@ -127,12 +126,7 @@ class TodayViewModel(
         .mapLatest { (day, ids) ->
             withContext(Dispatchers.IO) {
                 runCatching {
-                    if (ids.isNullOrEmpty() || !calendarSource.hasReadPermission()) {
-                        emptyList()
-                    } else {
-                        val from = day.atTime(LOGICAL_DAY_START).minusDays(1)
-                        calendarSource.events(ids, from, day.atTime(LOGICAL_DAY_START).plusDays(2))
-                    }
+                    calendarSource.eventsAroundLogicalDay(ids, day)
                 }.getOrDefault(emptyList())
             }
         }
@@ -169,6 +163,25 @@ class TodayViewModel(
         }
         .stateIn(scope, SharingStarted.Eagerly, initial())
 
+    @Volatile private var lastMarkKeys: Set<String> = emptySet()
+
+    private fun titlesOf(s: TodayUiState): Map<String, String> =
+        (s.timeline.filterIsInstance<TimelineBlock.External>().map { it.event } + s.allDay)
+            .associate { classificationKey(it) to it.title }
+
+    init {
+        val auto = autoClassifier
+        if (auto != null) {
+            // Solo los títulos de los eventos del día lógico; el AutoClassifier decide qué falta y corre fuera del hilo principal.
+            scope.launch {
+                combine(state, classificationMap) { s, marks ->
+                    lastMarkKeys = marks.keys
+                    titlesOf(s) to marks.keys
+                }.distinctUntilChanged().collect { (titles, known) -> auto.request(titles, known) }
+            }
+        }
+    }
+
     private fun initial(): TodayUiState {
         val day = logicalDay(clock.now())
         val type = dayTypeOf(day)
@@ -196,10 +209,8 @@ class TodayViewModel(
         val window = routine.awakeWindow(day)
         // Dia logico: todo lo que empieza en el (04:00 a 03:59), ya sea por fecha de calendario de ayer, hoy o manana,
         // mas lo de ayer que aun cruza la vigilia de hoy.
-        val logical = (-1L..1L).flatMap { occurrencesOn(day.plusDays(it), activities, done) }
-            .filter { logicalDay(it.span.start) == day }
-        val spill = occurrencesOn(day.minusDays(1), activities, done)
-            .filter { logicalDay(it.span.start) != day && it.span.overlaps(window) }
+        val logical = logicalOccurrences(day, activities, done)
+        val spill = spillOccurrences(day, activities, done, window)
         val ownBlocks = (spill + logical).map { TimelineBlock.Own(it, now in it.span) }
         val external = eventsOnLogicalDay(day, rawExternal, window)
         val timed = external.filter { !it.allDay }
@@ -255,6 +266,9 @@ class TodayViewModel(
     /** Vuelve a leer los calendarios del teléfono (al volver a la pantalla). */
     fun refreshExternal() {
         reloadExternal.value += 1
+        // Al volver a la pantalla (p. ej. tras poner la clave o recuperar la red) se reintentan las claves liberadas;
+        // el conjunto de intentadas del AutoClassifier acota las llamadas.
+        autoClassifier?.request(titlesOf(state.value), lastMarkKeys)
     }
 
     fun refreshPermissions() {

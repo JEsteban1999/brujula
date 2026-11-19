@@ -5,6 +5,9 @@ import androidx.lifecycle.viewModelScope
 import app.brujula.calendar.CalendarSource
 import app.brujula.calendar.DeviceCalendar
 import app.brujula.calendar.sourceLabel
+import app.brujula.claude.ClaudeGateway
+import app.brujula.claude.ClaudeKeyStore
+import app.brujula.claude.KeyTestResult
 import app.brujula.core.theme.ThemeMode
 import app.brujula.reminders.ReminderResync
 import app.brujula.routine.Routine
@@ -21,6 +24,15 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
+
+enum class ClaudeStatus { IDLE, TESTING, CONNECTED, INVALID, NETWORK, ERROR }
+
+/** Estado de la seccion Claude; [lastFour] solo existe tras guardar en esta sesion (la clave nunca se muestra). */
+data class ClaudeSectionState(
+    val hasKey: Boolean = false,
+    val status: ClaudeStatus = ClaudeStatus.IDLE,
+    val lastFour: String? = null,
+)
 
 data class CalendarItem(val calendar: DeviceCalendar, val selected: Boolean)
 
@@ -47,6 +59,10 @@ class RoutineViewModel(
     /** Ambito de la app: la reconciliacion de copias a Google sigue aunque se cierre la pantalla. */
     private val syncScope: CoroutineScope? = null,
     private val reconcileGoogle: suspend () -> Unit = { },
+    private val claudeKeyStore: ClaudeKeyStore? = null,
+    private val claudeGateway: ClaudeGateway? = null,
+    /** Tras guardar una clave nueva (producción: procesar los dictados pendientes en `syncScope`). */
+    private val onKeySaved: () -> Unit = {},
 ) : ViewModel() {
     private val scope: CoroutineScope = scopeOverride ?: viewModelScope
 
@@ -141,6 +157,64 @@ class RoutineViewModel(
             refreshCalendars().join()
             if (granted) launchReconcile().join()
         }
+    }
+
+    private val claudeState = MutableStateFlow(ClaudeSectionState())
+    val claude: StateFlow<ClaudeSectionState> = claudeState.asStateFlow()
+
+    init {
+        val store = claudeKeyStore
+        if (store != null) scope.launch {
+            store.hasKey.catch { emit(false) }.collect { has ->
+                claudeState.value = if (has) claudeState.value.copy(hasKey = true) else ClaudeSectionState()
+            }
+        }
+    }
+
+    /** Sube al guardar o borrar la clave: un resultado de "Probar" iniciado antes ya no aplica. */
+    private var keyGeneration = 0
+
+    /** Guarda la clave sin espacios; vacia = borrar. Nunca se registra ni se muestra completa. */
+    fun saveClaudeKey(key: String): Job = scope.launch {
+        val store = claudeKeyStore ?: return@launch
+        val clean = key.trim()
+        try {
+            if (clean.isEmpty()) store.clear() else store.save(clean)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.w("RoutineViewModel", "No se pudo guardar la clave de Claude")
+            return@launch
+        }
+        keyGeneration++
+        claudeState.value = if (clean.isEmpty()) ClaudeSectionState()
+        else ClaudeSectionState(hasKey = true, lastFour = clean.takeLast(4))
+        if (clean.isNotEmpty()) runCatching { onKeySaved() }
+    }
+
+    /** Prueba la clave guardada con una peticion minima. */
+    fun testClaudeKey(): Job = scope.launch {
+        val gateway = claudeGateway ?: return@launch
+        if (!claudeState.value.hasKey) return@launch
+        claudeState.value = claudeState.value.copy(status = ClaudeStatus.TESTING)
+        val generation = keyGeneration
+        val result = try {
+            gateway.testKey()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            KeyTestResult.ERROR
+        }
+        // La clave cambió mientras se probaba: este resultado es de la anterior.
+        if (generation != keyGeneration) return@launch
+        claudeState.value = claudeState.value.copy(
+            status = when (result) {
+                KeyTestResult.OK -> ClaudeStatus.CONNECTED
+                KeyTestResult.INVALID -> ClaudeStatus.INVALID
+                KeyTestResult.NETWORK -> ClaudeStatus.NETWORK
+                KeyTestResult.ERROR -> ClaudeStatus.ERROR
+            },
+        )
     }
 
     private fun change(resyncAfter: Boolean = false, transform: (Routine) -> Routine): Job =

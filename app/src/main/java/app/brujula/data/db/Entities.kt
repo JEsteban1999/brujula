@@ -71,7 +71,14 @@ data class HabitLogEntity(
 data class WorkClassificationEntity(
     @PrimaryKey val key: String,
     val isWork: Boolean,
-)
+    /** `USER` (marca manual, siempre gana) o `AUTO` (clasificada por Claude). */
+    @ColumnInfo(defaultValue = "USER") val source: String = SOURCE_USER,
+) {
+    companion object {
+        const val SOURCE_USER = "USER"
+        const val SOURCE_AUTO = "AUTO"
+    }
+}
 
 data class HabitCountRow(val habitId: Long, val count: Int)
 
