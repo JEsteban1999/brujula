@@ -64,6 +64,35 @@ class VoiceViewModelTest {
         assertEquals(listOf("mañana ejercicio"), r.interp.texts)
     }
 
+    private val friday = java.time.LocalDate.of(2026, 11, 20)
+
+    @Test fun planOnlyOpensProposalWithoutApplying() = runTest {
+        val r = rig(outcomes = arrayOf(InterpretOutcome.Ok(listOf(Validated.PlanRequest(friday, "hoy no voy a entrenar")), "Te armo una propuesta")))
+        r.vm.submitText("hoy no voy a entrenar")
+        runCurrent()
+        assertEquals(VoiceState.OpenProposal(friday, "hoy no voy a entrenar"), r.vm.state.value)
+        assertTrue("Nada se aplica por voz", r.exec.applied.isEmpty())
+        assertTrue(r.pending.all().isEmpty())
+        r.vm.undo() // sin nada que deshacer
+        runCurrent()
+        assertTrue(r.exec.undone.isEmpty())
+    }
+
+    @Test fun mixedAppliesCreatesAndOffersProposal() = runTest {
+        val plan = Validated.PlanRequest(friday, "agenda dentista y pasa el gym a la tarde")
+        val r = rig(outcomes = arrayOf(InterpretOutcome.Ok(listOf(activity("Dentista"), plan), "Listo")))
+        r.vm.submitText("agenda dentista y pasa el gym a la tarde")
+        runCurrent()
+        val s = r.vm.state.value as VoiceState.Result
+        assertEquals(listOf("Dentista"), s.created)
+        assertEquals(plan, s.proposal)
+        assertTrue(s.undoAvailable)
+        assertEquals(1, r.exec.applied.flatten().filterIsInstance<Validated.Activity>().size)
+        r.vm.undo()
+        runCurrent()
+        assertEquals(VoiceState.Undone, r.vm.state.value)
+    }
+
     @Test fun needMoreInfoThenAnswerIsSentAsOneDictation() = runTest {
         val r = rig(outcomes = arrayOf(
             InterpretOutcome.Ok(listOf(Validated.Question("¿Qué te recuerdo llevar?")), "Te cortaste"),

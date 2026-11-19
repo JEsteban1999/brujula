@@ -26,6 +26,11 @@ class SchemasTest {
         val expected = schemaOf(derived.rawOutputConfig)
         assertTrue("El derivado no debe venir vacío", expected.path("properties").size() == 2)
         assertEquals(expected, schemaOf(handWritten))
+        // El tipo plan_request y el día afectado viajan en ambos schemas, con la misma descripción.
+        val props = expected.path("properties").path("actions").path("items").path("properties")
+        assertTrue(props.path("type").path("description").asText().contains("plan_request"))
+        assertTrue(props.path("date").path("description").asText().contains("plan_request: el día lógico afectado"))
+        assertEquals(props, schemaOf(handWritten).path("properties").path("actions").path("items").path("properties"))
     }
 
     @Test fun classificationSchemaMatchesTheSdkDerivedOne() {

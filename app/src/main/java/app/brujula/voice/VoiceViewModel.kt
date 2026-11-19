@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 
 object VoiceCopy {
     const val LISTENING = "Escuchando…"
@@ -27,6 +28,7 @@ object VoiceCopy {
     const val UNDONE = "Deshecho"
     const val UNDO = "Deshacer"
     const val DONE = "Listo"
+    const val VIEW_PROPOSAL = "Ver propuesta"
     const val RETRY = "Reintentar"
     const val STOP_TALKING = "Terminar de hablar"
     const val PREFER_WRITING = "Prefiero escribir"
@@ -54,7 +56,11 @@ sealed interface VoiceState {
         /** Pendientes que el validador rechazó, preguntas y avisos: se muestran junto a la respuesta de Claude. */
         val messages: List<String>,
         val undoAvailable: Boolean,
+        /** Además de lo agendado, el dictado pidió cambiar o armar un día: lleva a la Propuesta (no se aplicó nada de eso). */
+        val proposal: Validated.PlanRequest? = null,
     ) : VoiceState
+    /** El dictado solo pidió un cambio o armar un día: no se aplica nada, la pantalla pasa a la Propuesta de [day]. */
+    data class OpenProposal(val day: LocalDate, val request: String) : VoiceState
     data object Undone : VoiceState
     data class NeedsMore(val question: String) : VoiceState
     data class Error(val message: String, val retry: Boolean) : VoiceState
@@ -238,6 +244,15 @@ class VoiceViewModel(
     private suspend fun applyOk(outcome: InterpretOutcome.Ok, full: String, back: String) {
         val creatable = outcome.items.any { it is Validated.Activity || it is Validated.Habit }
         val question = outcome.items.filterIsInstance<Validated.Question>().firstOrNull()
+        val plan = outcome.items.filterIsInstance<Validated.PlanRequest>().firstOrNull()
+        if (!creatable && plan != null) {
+            // Nada se aplica: la propuesta la genera y la acepta el usuario en su pantalla.
+            base = null
+            lastText = null
+            undoToken = null
+            _state.value = VoiceState.OpenProposal(plan.day, plan.text.ifBlank { full })
+            return
+        }
         if (!creatable && question != null) {
             base = full
             _state.value = VoiceState.NeedsMore(question.text)
@@ -263,6 +278,7 @@ class VoiceViewModel(
             reply = outcome.reply,
             messages = result.messages,
             undoAvailable = result.undo != null,
+            proposal = plan?.let { it.copy(text = it.text.ifBlank { full }) },
         )
     }
 

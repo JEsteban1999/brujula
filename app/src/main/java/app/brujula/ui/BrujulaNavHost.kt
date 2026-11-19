@@ -240,6 +240,14 @@ fun BrujulaNavHost(
                     // Dos toques rápidos en ✕/Listo no sacan también la pantalla de abajo.
                     onClose = { if (navController.currentDestination?.route == Routes.VOICE) navController.popBackStack() },
                     onWriteInstead = { navController.navigate(Routes.activityForm()) },
+                    onOpenProposal = { day, request ->
+                        if (navController.currentDestination?.route == Routes.VOICE) {
+                            navController.navigate(Routes.proposal(day, request.take(DeepLinks.MAX_REQUEST))) {
+                                popUpTo(Routes.VOICE) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
+                    },
                 )
             }
             composable(Routes.ROUTINE) {
@@ -294,6 +302,15 @@ fun BrujulaNavHost(
                     onClose = { navController.popBackStack() },
                     onHabit = {
                         navController.navigate(Routes.habitForm()) { popUpTo(entry.destination.id) { inclusive = true } }
+                    },
+                    onDictate = {
+                        navController.navigate(Routes.VOICE) { popUpTo(entry.destination.id) { inclusive = true }; launchSingleTop = true }
+                    },
+                    onAskClaude = { day, request ->
+                        navController.navigate(Routes.proposal(day, request.take(DeepLinks.MAX_REQUEST))) {
+                            popUpTo(entry.destination.id) { inclusive = true }
+                            launchSingleTop = true
+                        }
                     },
                 )
             }

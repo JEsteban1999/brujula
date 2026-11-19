@@ -43,7 +43,7 @@ class DictationInterpreter(
             return InterpretOutcome.Failed(UNAVAILABLE, retryable = true)
         }
         return when (val r = gateway.interpret(PromptBuilder.system(), PromptBuilder.user(ctx, clean))) {
-            is GatewayResult.Ok -> InterpretOutcome.Ok(r.value.actions.map { ActionValidator.validate(it, ctx) }, r.value.reply.trim())
+            is GatewayResult.Ok -> InterpretOutcome.Ok(r.value.actions.map { ActionValidator.validate(it, ctx, clean) }, r.value.reply.trim())
             GatewayResult.Refused -> InterpretOutcome.Refused(REFUSED)
             GatewayResult.NoKey -> InterpretOutcome.NoKey
             GatewayResult.InvalidKey -> InterpretOutcome.InvalidKey

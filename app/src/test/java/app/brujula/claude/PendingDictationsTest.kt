@@ -62,6 +62,31 @@ class PendingDictationsTest {
         assertTrue(notes.dropped.isEmpty())
     }
 
+    private val friday = java.time.LocalDate.of(2026, 11, 20)
+
+    @Test fun planRequestNotifiesAndLeavesQueue() = runTest {
+        val p = store()
+        p.add("hoy no voy a entrenar", 1)
+        val exec = FakeExecutor()
+        p.drain(FakeInterpreter(InterpretOutcome.Ok(listOf(Validated.PlanRequest(friday, "hoy no voy a entrenar")), "Propuesta")), exec)
+        assertTrue("Nunca se aplica solo", exec.applied.isEmpty())
+        assertTrue(p.all().isEmpty())
+        assertEquals(listOf(friday to "hoy no voy a entrenar"), notes.plans)
+        assertTrue(notes.dropped.isEmpty())
+        assertTrue(notes.scheduled.isEmpty())
+    }
+
+    @Test fun mixedSchedulesAndNotifiesPlan() = runTest {
+        val p = store()
+        p.add("dentista y pasa el gym", 1)
+        val plan = Validated.PlanRequest(friday, "dentista y pasa el gym")
+        p.drain(FakeInterpreter(InterpretOutcome.Ok(listOf(activity("Dentista"), plan), "Listo")), FakeExecutor())
+        assertTrue(p.all().isEmpty())
+        assertEquals(listOf(listOf("Dentista") to emptyList<String>()), notes.scheduled)
+        assertEquals(listOf(friday to "dentista y pasa el gym"), notes.plans)
+        assertTrue(notes.dropped.isEmpty())
+    }
+
     @Test fun drainStopsAtFirstFailureKeepsTheRestAndCountsOneAttempt() = runTest {
         val p = store()
         p.add("a", 1); p.add("b", 2); p.add("c", 3)

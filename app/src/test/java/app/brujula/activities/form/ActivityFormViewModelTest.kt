@@ -102,6 +102,43 @@ class ActivityFormViewModelTest {
         assertNull(vm.state.value.conflictMessage)
     }
 
+    private suspend fun TestScope.conflictingVm(): ActivityFormViewModel {
+        val vm = newVm(); vm.setTitle("Lectura"); vm.setDateChoice(DateChoice.TOMORROW); vm.shiftStart(495); vm.setDuration(60)
+        vm.state.first { it.conflict != null }
+        return vm
+    }
+
+    @Test fun askClaudeNullWithoutConflict() = runTest {
+        val vm = newVm()
+        vm.state.first { it.ready }
+        assertNull(vm.askClaudeRequest())
+    }
+
+    @Test fun askClaudeNullWhenEditingOrRepeating() = runTest {
+        val vm = conflictingVm()
+        vm.setRepeat(app.brujula.activities.Repeat.DAILY)
+        assertNull(vm.askClaudeRequest())
+        // Editando una existente que choca, tampoco.
+        val other = repo.upsert(Activity(title = "Cine", type = ActivityType.PERSONAL, date = tomorrow, start = LocalTime.of(19, 30), durationMin = 60))
+        val edit = newVm(id = other)
+        edit.state.first { it.isEdit && it.conflict != null }
+        assertNull(edit.askClaudeRequest())
+    }
+
+    @Test fun askClaudeNullOutsideSevenDays() = runTest {
+        val vm = conflictingVm()
+        vm.setDate(today.plusDays(7)) // sin choque ahí
+        assertNull(vm.askClaudeRequest())
+    }
+
+    @Test fun askClaudeRequestMentionsTitleConflictAndTime() = runTest {
+        val vm = conflictingVm()
+        assertEquals(
+            tomorrow to "Agenda «Lectura» (personal, 1 h) el jueves 19. A las 19:00 choca con «Ejercicio en casa»; búscale otro horario.",
+            vm.askClaudeRequest(),
+        )
+    }
+
     @Test fun noConflictWhenFree() = runTest {
         val vm = newVm(); vm.setDateChoice(DateChoice.TOMORROW); vm.shiftStart(495) // 19:00: choca
         vm.state.first { it.conflict != null } // prueba que el VM ya observa la lista del repositorio

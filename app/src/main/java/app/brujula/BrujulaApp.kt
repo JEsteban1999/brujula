@@ -61,6 +61,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import app.brujula.routine.logicalDay
+import app.brujula.ui.DeepLinks
+import app.brujula.ui.Routes
 import java.time.LocalDate
 
 private val Context.routineDataStore by preferencesDataStore(name = "routine")
@@ -167,6 +169,13 @@ class AppContainer(val context: Context) {
                 }
                 override fun needsKey(count: Int) {
                     Notifications.showText(app, KEY_NOTICE_ID, "Dictados pendientes", PendingCopy.keyNotice(count))
+                }
+                override fun planRequested(day: LocalDate, text: String) {
+                    val request = text.take(DeepLinks.MAX_REQUEST)
+                    Notifications.showText(
+                        app, id(), PendingCopy.PLAN_TITLE, PendingCopy.planText(request),
+                        DeepLinks.intent(app, Routes.proposal(day, request)),
+                    )
                 }
                 override fun dropped(text: String, reason: String) {
                     Notifications.showText(app, id(), "Dictado sin agendar", "No pude agendar «$text»: $reason")

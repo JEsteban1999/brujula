@@ -146,6 +146,9 @@ class ActionExecutorTest {
     @Test fun nonActionItemsCreateNothingAndPassMessages() = run {
         val r = executor.apply(listOf(Validated.Question("¿A qué hora?"), Validated.Unsupported("No puedo mover cosas."), Validated.Invalid("«X»: fecha ya pasó.")))
         assertEquals(listOf("¿A qué hora?", "No puedo mover cosas.", "«X»: fecha ya pasó."), r.messages)
+        // Un pedido de plan no crea nada ni da mensaje: se atiende en la Propuesta.
+        val plan = executor.apply(listOf(Validated.PlanRequest(java.time.LocalDate.of(2026, 11, 19), "hoy no entreno")))
+        assertTrue(plan.created.isEmpty() && plan.messages.isEmpty() && plan.undo == null)
         assertTrue(r.created.isEmpty())
         assertNull(r.undo)
         assertEquals(0, resyncs)

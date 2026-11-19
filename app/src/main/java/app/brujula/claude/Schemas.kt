@@ -35,10 +35,10 @@ internal object Schemas {
     private val ACTION = obj(
         "Una acción. Solo se llenan los campos que aplican a su tipo; los demás van en null.",
         mapOf(
-            "type" to prop("string", "create_activity | create_habit | need_more_info | unsupported"),
+            "type" to prop("string", "create_activity | create_habit | need_more_info | plan_request | unsupported"),
             "title" to nullable("string", "Nombre corto de la actividad o del hábito, sin fecha ni hora. Ej.: \"Dentista\", \"Tomar agua\"."),
             "activityType" to nullable("string", "Solo create_activity: WORK | EXERCISE | APPOINTMENT | PERSONAL"),
-            "date" to nullable("string", "Solo create_activity: fecha de calendario del inicio, yyyy-MM-dd."),
+            "date" to nullable("string", "create_activity: fecha de calendario del inicio, yyyy-MM-dd. plan_request: el día lógico afectado, yyyy-MM-dd."),
             "start" to nullable("string", "Solo create_activity: hora de inicio en 24 h, HH:mm."),
             "durationMin" to nullable("integer", "Solo create_activity: duración en minutos (5 a 720)."),
             "repeat" to nullable("string", "Solo create_activity: NONE | DAILY | WEEKDAYS | WORKDAYS | WEEKLY"),

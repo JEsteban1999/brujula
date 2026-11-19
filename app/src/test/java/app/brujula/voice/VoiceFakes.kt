@@ -86,6 +86,8 @@ class RecordingNotifier : app.brujula.claude.PendingNotifier {
     val dropped = mutableListOf<Pair<String, String>>()
     val needsKey = mutableListOf<Int>()
     val configStalled = mutableListOf<Int>()
+    val plans = mutableListOf<Pair<LocalDate, String>>()
+    override fun planRequested(day: LocalDate, text: String) { plans += day to text }
     override fun configStalled(count: Int) { configStalled += count }
     override fun needsKey(count: Int) { needsKey += count }
     override fun scheduled(labels: List<String>, problems: List<String>) { scheduled += labels to problems }

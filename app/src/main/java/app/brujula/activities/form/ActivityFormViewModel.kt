@@ -17,7 +17,9 @@ import app.brujula.calendar.GoogleCopyJournal
 import app.brujula.calendar.GoogleCopyStatus
 import app.brujula.calendar.GoogleCopySync
 import app.brujula.calendar.NoCalendarSource
+import app.brujula.claude.PromptBuilder
 import app.brujula.core.time.Clock
+import app.brujula.core.time.formatMinutes
 import app.brujula.core.time.TimeSpan
 import app.brujula.reminders.ReminderResync
 import app.brujula.routine.logicalDay
@@ -88,6 +90,7 @@ data class ActivityFormState(
 const val REMIND_BEFORE_MIN = 15
 const val MIN_DURATION = 1
 const val MAX_DURATION = 720
+private const val ASK_DAYS_AHEAD = 6L
 private val LOGICAL_DAY_START: LocalTime = LocalTime.of(4, 0)
 
 class ActivityFormViewModel(
@@ -268,6 +271,22 @@ class ActivityFormViewModel(
     fun setRemind(on: Boolean) = edit { it.copy(remind = on) }
 
     fun setCopyToGoogle(on: Boolean) = edit { it.copy(copyToGoogle = on, copyToGoogleTouched = true) }
+
+    /**
+     * Pedido para Claude cuando la hora elegida choca: `(día lógico, texto)` para abrir la Propuesta, o `null` si no aplica
+     * (sin choque, editando, repetida —la Propuesta solo mueve una vez— o fuera de hoy..hoy+6). No guarda nada.
+     */
+    fun askClaudeRequest(): Pair<LocalDate, String>? {
+        val s = _state.value
+        if (editingId != null || s.isEdit || s.repeat != Repeat.NONE) return null
+        val clash = s.conflict?.activity?.title ?: s.externalConflict?.title?.ifBlank { "un evento sin título" } ?: return null
+        val day = logicalDay(s.date.atTime(s.start))
+        if (day < today || day > today.plusDays(ASK_DAYS_AHEAD)) return null
+        val title = PromptBuilder.sanitize(s.title).ifBlank { "Actividad" }
+        val text = "Agenda «$title» (${s.type.labelEs.lowercase()}, ${formatMinutes(s.durationMin)}) el ${PromptBuilder.shortDay(day)}. " +
+            "A las ${PromptBuilder.hm(s.start)} choca con «${PromptBuilder.sanitize(clash)}»; búscale otro horario."
+        return day to text
+    }
 
     fun save() {
         val s = _state.value
