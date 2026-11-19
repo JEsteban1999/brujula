@@ -15,8 +15,11 @@
 ## Global Constraints
 
 - Todo lo de las fases anteriores sigue vigente (incluida la Fase 2A: eventos externos de solo lectura).
-- **Modelo:** `claude-opus-5-5`. Pensamiento: no enviar `thinking` (siempre activo en este modelo; `disabled` da 400). Esfuerzo: `OutputConfig.Effort.LOW` para dictado y clasificación (respuestas cortas, latencia baja). `maxTokens` 4096. Sin prefill. Sin `temperature`.
-- **Fallbacks ante rechazo:** si la versión del SDK expone el parámetro `fallbacks` del endpoint beta (beta `server-side-fallback-2026-07-01`, forma `"default"`), usarlo; si no, tratar `stopReason == REFUSAL` mostrando `No pude interpretar eso. Prueba diciéndolo de otra forma.` Nunca leer el contenido sin revisar `stopReason`.
+- **Modelos (elegidos por el usuario: "el más adecuado" para cada tarea):**
+  - Dictado → `claude-opus-5-5` (la precisión con fechas y horas es lo crítico; pocas llamadas). No enviar `thinking` (siempre activo; `disabled` da 400). Esfuerzo `OutputConfig.Effort.LOW`.
+  - Clasificación de eventos importados → `claude-haiku-5-5` (sí/no en lote, barato y rápido; un error se corrige con un toque). Esfuerzo `LOW` (su predeterminado es `medium`). Haiku 5.5 no tiene fallback del lado del servidor: un rechazo se trata como "sin clasificar".
+  - Ambos: `maxTokens` 4096, sin prefill, sin `temperature`. Los ids de modelo van en una sola constante por uso (`ClaudeModels.DICTATION`, `ClaudeModels.CLASSIFICATION`).
+- **Fallbacks ante rechazo (dictado con Opus 5.5):** si la versión del SDK expone el parámetro `fallbacks` del endpoint beta (beta `server-side-fallback-2026-07-01`, forma `"default"`), usarlo; si no, tratar `stopReason == REFUSAL` mostrando `No pude interpretar eso. Prueba diciéndolo de otra forma.` Nunca leer el contenido sin revisar `stopReason`.
 - **La clave nunca va en el código, en git ni en logs.** Se guarda cifrada (Keystore) y solo se descifra para construir el cliente.
 - **Datos que se envían a Claude:** el texto dictado, la fecha/hora local y zona, tipo de día de hoy y mañana, rutina (horas), títulos y horas de lo ocupado hoy y mañana (propio y externo), nombres de hábitos. Nada más.
 - Acciones que Claude puede devolver en esta fase: `create_activity`, `create_habit`, `need_more_info`, `unsupported`. Reorganizar el día o mover cosas existentes es Fase 3 → `unsupported` con mensaje.
@@ -76,7 +79,7 @@
 
 **Files:** Modify `data/db/Entities.kt` (+ `source TEXT NOT NULL DEFAULT 'USER'` en `work_classifications`), `data/db/BrujulaDatabase.kt` (v4, AutoMigration 3→4), `calendar/WorkClassificationRepository.kt`, `today/TodayViewModel.kt` (disparar clasificación de claves desconocidas, como máximo una vez por clave). Create `claude/EventClassifier.kt`. Test: `data/MigrationTest.kt` (3→4), `claude/EventClassifierTest.kt`.
 
-**Interfaces:** `class EventClassifier(gateway) { suspend fun classify(titles: List<String>): Map<String, Boolean> }` (una llamada para hasta 30 títulos, salida estructurada `List<{title, isWork}>`, esfuerzo bajo). `WorkClassificationRepository.setAuto(key, isWork)` solo escribe si no existe una entrada `USER`; `set(...)` (usuario) siempre gana y marca `USER`. Sin clave o sin red: no hace nada (los eventos siguen como "no trabajo" hasta clasificarse).
+**Interfaces:** `class EventClassifier(gateway) { suspend fun classify(titles: List<String>): Map<String, Boolean> }` (una llamada con `claude-haiku-5-5` para hasta 30 títulos, salida estructurada `List<{title, isWork}>`, esfuerzo bajo). `WorkClassificationRepository.setAuto(key, isWork)` solo escribe si no existe una entrada `USER`; `set(...)` (usuario) siempre gana y marca `USER`. Sin clave o sin red: no hace nada (los eventos siguen como "no trabajo" hasta clasificarse).
 - [ ] Pruebas que fallan: migración 3→4 conserva datos y `source = USER` en filas previas; `setAuto` no pisa `USER`; el clasificador manda solo claves desconocidas y guarda el resultado; un fallo del gateway no lanza.
 - [ ] FAIL → implementar → suite PASS → commit `feat: auto-classify imported events as work with Claude`.
 
