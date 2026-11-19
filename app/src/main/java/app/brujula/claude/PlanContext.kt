@@ -9,6 +9,7 @@ import app.brujula.habits.HabitRepository
 import app.brujula.planning.DaySnapshotProvider
 import app.brujula.planning.DaySummary
 import app.brujula.planning.firstFixedStart
+import app.brujula.planning.suggestBedtimeForDay
 import app.brujula.routine.DayType
 import app.brujula.routine.Routine
 import app.brujula.routine.RoutineRepository
@@ -66,6 +67,8 @@ data class PlanContext(
      * propias (APPOINTMENT). Los bloques de rutina, trabajo, ejercicio y personales no cuentan. Entrada de [app.brujula.planning.suggestBedtime].
      */
     val nextDayFirstFixedStart: LocalDateTime?,
+    /** Hora sugerida para dormir la noche del día a armar (la de la vista previa, [app.brujula.planning.suggestBedtimeForDay]). */
+    val suggestedBedtime: LocalDateTime,
     val habitNames: List<String>,
     /** Cómo va hoy (día lógico del reloj), aunque se arme otro día. */
     val today: DaySummary,
@@ -146,6 +149,8 @@ class PlanContextProvider(
         val nextDay = day.plusDays(1)
         val nextStarts = next.own.map { it.span.start } + next.external.map { it.event.span.start }
 
+        val nextFixed = firstFixedStart(next)
+
         return PlanContext(
             now = now,
             zone = zone(),
@@ -157,7 +162,8 @@ class PlanContextProvider(
             lunch = routine.lunchWindow(day),
             items = (own + external).sortedBy { it.span.start },
             nextDayFirstStart = nextStarts.filter { logicalDay(it) == nextDay }.minOrNull(),
-            nextDayFirstFixedStart = firstFixedStart(next),
+            nextDayFirstFixedStart = nextFixed,
+            suggestedBedtime = suggestBedtimeForDay(day, today, now, routine, nextFixed).bedtime,
             habitNames = habitRepository.observeHabits().first().filter { it.active }.map { it.name },
             today = todaySummary,
         )

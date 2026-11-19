@@ -55,7 +55,8 @@ object PlanFixtures {
     ) = PlanContext(
         now = now, zone = ZoneId.of("America/Bogota"), logicalToday = logicalDay(now), day = day, dayType = dayTypeOf(day),
         routine = routine, awake = routine.awakeWindow(day), lunch = routine.lunchWindow(day), items = items.sortedBy { it.span.start },
-        nextDayFirstStart = nextDayFirstStart, nextDayFirstFixedStart = nextDayFirstFixedStart, habitNames = listOf("Tomar agua"),
+        nextDayFirstStart = nextDayFirstStart, nextDayFirstFixedStart = nextDayFirstFixedStart,
+        suggestedBedtime = suggestBedtimeForDay(day, logicalDay(now), now, routine, nextDayFirstFixedStart).bedtime, habitNames = listOf("Tomar agua"),
         today = DaySummary(270, 360..420, 3, 8, ExerciseState.PENDING),
     )
 

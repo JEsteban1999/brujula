@@ -56,7 +56,7 @@ REGLAS DEL DÍA
 - En un ajuste, parte de la propuesta anterior: conserva los cambios que el ajuste no toca y devuelve la lista completa de cambios de la nueva propuesta, no solo la diferencia.
 
 RESUMEN (summary)
-En español colombiano, tuteando, en 1 a 3 frases, sin emojis ni formato. Di qué cambiaste y por qué (por ejemplo, que así llegas a la meta de trabajo o que el gimnasio chocaba con la reunión), con las horas en 12 horas ("3:00 p. m."). Si algo de lo pedido no se pudo, dilo; si convendría mover un evento externo, sugiérelo aquí.
+En español colombiano, tuteando, en 1 a 3 frases, sin emojis ni formato. Di qué cambiaste y por qué (por ejemplo, que así llegas a la meta de trabajo o que el gimnasio chocaba con la reunión), con las horas en 12 horas ("3:00 p. m."). Si mencionas la hora de acostarse, usa la "hora sugerida para dormir" del contexto, no la de la rutina. Si algo de lo pedido no se pudo, dilo; si convendría mover un evento externo, sugiérelo aquí.
 """.trim()
 
     fun system(): String = SYSTEM
@@ -78,6 +78,7 @@ En español colombiano, tuteando, en 1 a 3 frases, sin emojis ni formato. Di qu�
             appendLine("RUTINA DE ESE DÍA")
             appendLine("- Se levanta a las ${at(ctx.awake.start, day)} y se acuesta a las ${at(ctx.awake.end, day)}; eso es su vigilia.")
             appendLine("- Días laborales: se levanta a las ${hm(r.wake)} y se acuesta a las ${hm(r.bed)}. Fines de semana y festivos: ${hm(r.restWake)} y ${hm(r.restBed)}.")
+            appendLine("- Hora sugerida para dormir esa noche: ${at(ctx.suggestedBedtime, day)} (la calcula la app para dormir 8 h).")
             val blocks = r.workBlocks.joinToString(", ") { (s, e) -> "${hm(s)}–${hm(e)}" }.ifEmpty { "ninguno" }
             appendLine("- Bloques de trabajo en días laborales: $blocks" + if (r.flexibleWork) " (horario flexible)." else " (horario fijo).")
             if (ctx.dayType.isRest) {

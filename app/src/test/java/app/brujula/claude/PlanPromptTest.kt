@@ -5,6 +5,7 @@ import app.brujula.activities.ActivityType
 import app.brujula.core.time.TimeSpan
 import app.brujula.planning.DaySummary
 import app.brujula.planning.ExerciseState
+import app.brujula.planning.suggestBedtimeForDay
 import app.brujula.routine.Routine
 import app.brujula.routine.awakeWindow
 import app.brujula.routine.dayTypeOf
@@ -43,11 +44,12 @@ class PlanPromptTest {
         routine: Routine = Routine(),
         today: DaySummary = DaySummary(270, 360..420, 3, 8, ExerciseState.PENDING),
         nextDayFirstStart: LocalDateTime? = null,
+        suggestedBedtime: LocalDateTime = suggestBedtimeForDay(day, logicalDay(now), now, routine, nextDayFirstStart).bedtime,
         habitNames: List<String> = listOf("Tomar agua"),
     ) = PlanContext(
         now = now, zone = ZoneId.of("America/Bogota"), logicalToday = logicalDay(now), day = day, dayType = dayTypeOf(day),
         routine = routine, awake = routine.awakeWindow(day), lunch = routine.lunchWindow(day), items = items,
-        nextDayFirstStart = nextDayFirstStart, nextDayFirstFixedStart = nextDayFirstStart, habitNames = habitNames, today = today,
+        nextDayFirstStart = nextDayFirstStart, nextDayFirstFixedStart = nextDayFirstStart, suggestedBedtime = suggestedBedtime, habitNames = habitNames, today = today,
     )
 
     private val thursdayItems = listOf(
@@ -55,6 +57,24 @@ class PlanPromptTest {
         ext(1, "Reunión de equipo", thu.atTime(9, 0), thu.atTime(10, 0), work = true),
         own(7, "Gimnasio", thu.atTime(18, 30), thu.atTime(19, 30), ActivityType.EXERCISE, movable = false, done = true),
     )
+
+    @Test fun userPromptTellsTheSuggestedBedtimeNotTheRoutineOne() {
+        // Rutina: acostarse 00:30; la app sugiere 00:15 (levantarse más temprano mañana).
+        val p = PlanPrompt.user(
+            ctx(wed.atTime(21, 0), wed, suggestedBedtime = thu.atTime(0, 15)), null, null, null,
+        )
+        p.has("se acuesta a las 00:30 del jueves 19")
+        p.has("- Hora sugerida para dormir esa noche: 00:15 del jueves 19 (la calcula la app para dormir 8 h).")
+    }
+
+    @Test fun suggestedBedtimeOnTheSameCalendarDayHasNoDate() {
+        val p = PlanPrompt.user(ctx(wed.atTime(9, 0), wed, suggestedBedtime = wed.atTime(23, 45)), null, null, null)
+        p.has("- Hora sugerida para dormir esa noche: 23:45 (la calcula la app")
+    }
+
+    @Test fun systemPromptTellsToUseTheSuggestedBedtime() {
+        PlanPrompt.system().has("Si mencionas la hora de acostarse, usa la \"hora sugerida para dormir\" del contexto, no la de la rutina.")
+    }
 
     @Test fun dayRefsLunchAndTodaySummaryLines() {
         val p = PlanPrompt.user(

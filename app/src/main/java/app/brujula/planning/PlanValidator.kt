@@ -128,7 +128,7 @@ object PlanValidator {
 
     /** D12 para el día armado (solo lo fijo de mañana mueve la hora de levantarse); si es hoy, nunca antes de ahora. */
     private fun bedtimeFor(ctx: PlanContext): BedtimeSuggestion =
-        suggestBedtime(ctx.day, ctx.routine, ctx.nextDayFirstFixedStart, notBefore = ctx.now.takeIf { ctx.day == ctx.logicalToday })
+        suggestBedtimeForDay(ctx.day, ctx.logicalToday, ctx.now, ctx.routine, ctx.nextDayFirstFixedStart)
 
     private fun minutesWithin(span: TimeSpan, within: TimeSpan): Int {
         val start = maxOf(span.start, within.start)

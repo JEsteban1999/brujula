@@ -141,6 +141,16 @@ class PlanContextProviderTest {
         assertEquals("Outlook", external.first().sourceLabel)
     }
 
+    @Test fun suggestedBedtimeMatchesTheValidatorBedtime() = runTest {
+        calendar.eventList = listOf(ext(1, "Vuelo", sat.atTime(6, 0), sat.atTime(7, 0)))
+        val p = provider(thu.atTime(21, 0))
+        listOf(thu, fri).forEach { d ->
+            val ctx = p.forDay(d)
+            assertEquals(PlanValidator.totals(ctx, emptyList()).bedtime, ctx.suggestedBedtime)
+        }
+        assertEquals("El vuelo adelanta la hora de dormir", sat.atTime(6, 0).minusMinutes(30).minusHours(8), p.forDay(fri).suggestedBedtime)
+    }
+
     @Test fun lunchOnThursdayAndNoneOnSaturday() = runTest {
         val p = provider(wed.atTime(21, 0))
         val thuCtx = p.forDay(thu)

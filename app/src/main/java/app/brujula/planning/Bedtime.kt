@@ -49,6 +49,19 @@ fun suggestBedtime(
 }
 
 /**
+ * D12 para un día armado: lo único que mueve la hora de levantarse es lo fijo de mañana ([nextDayFirstFixedStart]); si [day]
+ * es hoy ([logicalToday]), nunca antes de [now]. Lo usan la vista previa y el prompt, para que nunca difieran.
+ */
+fun suggestBedtimeForDay(
+    day: LocalDate,
+    logicalToday: LocalDate,
+    now: LocalDateTime,
+    routine: Routine,
+    nextDayFirstFixedStart: LocalDateTime?,
+): BedtimeSuggestion =
+    suggestBedtime(day, routine, nextDayFirstFixedStart, notBefore = now.takeIf { day == logicalToday })
+
+/**
  * Inicio de lo primero fijo del día lógico de [snapshot] (D12): eventos externos con hora (la foto ya quita los de todo el
  * día y las copias de Brújula) y citas propias. Rutina, trabajo, ejercicio y personales no mueven la hora de levantarse.
  */
