@@ -39,6 +39,20 @@ class AlarmReminderScheduler(
         futureSnoozes.forEach { set(it) }
         saveAlarms(retained + snoozeTimes + wanted)
         prefs.edit().putStringSet(SNOOZES, snoozes.map { encode(it) }.toSet()).apply()
+        scheduleWakeUp(now)
+    }
+
+    /**
+     * Alarma silenciosa ~12 h despues: el horizonte de avisos es de 24 h y, si ninguno cae dentro, nada mas
+     * volveria a reprogramar. Su identidad (URI "wake") es aparte y no entra en el mapa de claves, asi que
+     * replaceAll no la cancela; al sonar, ReminderReceiver solo resincroniza.
+     */
+    private fun scheduleWakeUp(now: Long) {
+        val intent = Intent(context, ReminderReceiver::class.java).setData(Uri.parse("brujula://wake"))
+        val pi = PendingIntent.getBroadcast(
+            context, WAKE_REQUEST_CODE, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        ) ?: return
+        alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, now + WAKE_DELAY_MS, pi)
     }
 
     @Synchronized
@@ -115,5 +129,7 @@ class AlarmReminderScheduler(
         const val ALARMS = "alarms"
         const val OVERDUE_KEEP_MS = 6 * 60 * 60 * 1000L
         const val SNOOZES = "snoozes"
+        const val WAKE_DELAY_MS = 12 * 60 * 60 * 1000L
+        const val WAKE_REQUEST_CODE = 0x57414b45
     }
 }

@@ -7,6 +7,7 @@ import app.brujula.container
 
 class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        // Sin extras (alarma silenciosa "wake" de reprogramacion): no muestra nada y solo resincroniza.
         val reminder = ReminderExtras.read(intent)
         // Mostrar primero y de forma sincrona: lo critico es que suene a su hora.
         if (reminder != null) {

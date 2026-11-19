@@ -137,6 +137,12 @@ class ReceiversTest {
         assertEquals(listOf("Hecho", "En 15 min", "Saltar"), n.actions.map { it.title.toString() })
     }
 
+    @Test fun wakeUpIntentShowsNothingAndOnlyResyncs() {
+        ReminderReceiver().onReceive(ctx, Intent(ctx, ReminderReceiver::class.java).setData(android.net.Uri.parse("brujula://wake")))
+        awaitCalls(1)
+        assertTrue(shadowOf(nm).allNotifications.isEmpty())
+    }
+
     private class ThrowingSync : ReminderResync {
         val calls = AtomicInteger()
         override suspend fun resync() { calls.incrementAndGet(); throw IllegalStateException("boom") }

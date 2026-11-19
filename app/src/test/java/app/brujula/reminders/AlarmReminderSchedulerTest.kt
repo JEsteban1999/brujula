@@ -34,8 +34,25 @@ class AlarmReminderSchedulerTest {
     private fun r(key: String, min: Long) =
         Reminder(key, at(min), ReminderKind.HABIT, "t", "b", habitId = 1, day = LocalDate.of(2026, 11, 18))
 
-    private fun triggers() = shadowOf(alarms).scheduledAlarms.map { it.triggerAtMs }.sorted()
+    private fun isWake(a: org.robolectric.shadows.ShadowAlarmManager.ScheduledAlarm) =
+        shadowOf(a.operation!!).savedIntent.data?.host == "wake"
+
+    /** Horas de los avisos reales (sin la alarma silenciosa de reprogramacion). */
+    private fun triggers() = shadowOf(alarms).scheduledAlarms.filterNot(::isWake).map { it.triggerAtMs }.sorted()
     private fun ms(min: Long) = nowMs + min * 60_000
+
+    @Test fun replaceAllAlsoArmsOneSilentWakeUpIn12HoursThatIsNeverCancelled() {
+        scheduler.replaceAll(emptyList())
+        val wake = shadowOf(alarms).scheduledAlarms.filter(::isWake)
+        assertEquals(listOf(ms(12 * 60)), wake.map { it.triggerAtMs })
+        assertTrue(wake.single().allowWhileIdle)
+        // Un replaceAll posterior (otros avisos, mas tarde) la reemplaza sin duplicarla ni cancelarla.
+        nowMs += 60 * 60_000
+        scheduler.replaceAll(listOf(r("habit:1:a", 30)))
+        val again = shadowOf(alarms).scheduledAlarms.filter(::isWake)
+        assertEquals(listOf(ms(0) + 12 * 3_600_000L), again.map { it.triggerAtMs })
+        assertEquals(listOf(ms(30)), triggers())
+    }
 
     @Test fun replaceAllSchedulesAlarmsWhenAllowed() {
         scheduler.replaceAll(listOf(r("habit:1:a", 30), r("habit:1:b", 60)))
