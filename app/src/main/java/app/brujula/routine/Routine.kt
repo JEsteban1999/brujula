@@ -9,6 +9,8 @@ import java.time.LocalTime
 data class Routine(
     val wake: LocalTime = LocalTime.of(8, 15),
     val bed: LocalTime = LocalTime.of(0, 30),
+    val restWake: LocalTime = LocalTime.of(10, 0),
+    val restBed: LocalTime = LocalTime.of(1, 0),
     val workBlocks: List<Pair<LocalTime, LocalTime>> = listOf(
         LocalTime.of(8, 0) to LocalTime.of(12, 0),
         LocalTime.of(14, 0) to LocalTime.of(18, 0),
@@ -20,10 +22,17 @@ data class Routine(
 
 /** Vigilia del día [day]: de levantarse a acostarse (acostarse puede ser del día siguiente). */
 fun Routine.awakeWindow(day: LocalDate): TimeSpan {
-    val start = day.atTime(wake)
-    val endDay = if (bed <= wake) day.plusDays(1) else day
-    return TimeSpan(start, endDay.atTime(bed))
+    val w = wakeFor(day)
+    val b = bedFor(day)
+    val endDay = if (b <= w) day.plusDays(1) else day
+    return TimeSpan(day.atTime(w), endDay.atTime(b))
 }
+
+/** Hora de levantarse de [day]: la de descanso en fines de semana y festivos. */
+fun Routine.wakeFor(day: LocalDate): LocalTime = if (dayTypeOf(day).isRest) restWake else wake
+
+/** Hora de acostarse de [day]: la de descanso en fines de semana y festivos. */
+fun Routine.bedFor(day: LocalDate): LocalTime = if (dayTypeOf(day).isRest) restBed else bed
 
 fun Routine.isAwake(at: LocalDateTime): Boolean {
     val day = at.toLocalDate()

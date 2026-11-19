@@ -2,6 +2,8 @@ package app.brujula.core.theme
 
 import app.brujula.core.time.Clock
 import app.brujula.routine.Routine
+import app.brujula.routine.logicalDay
+import app.brujula.routine.wakeFor
 import android.util.Log
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -58,5 +60,5 @@ fun darkFlow(
                 emit(Unit)
                 delay(tickMs)
             }
-        }.map { resolveDark(r.themeMode, clock.now().toLocalTime(), r.wake) }
+        }.map { resolveDark(r.themeMode, clock.now().toLocalTime(), r.wakeFor(logicalDay(clock.now()))) }
     }.distinctUntilChanged()

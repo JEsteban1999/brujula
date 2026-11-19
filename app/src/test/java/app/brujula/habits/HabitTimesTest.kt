@@ -27,14 +27,14 @@ class HabitTimesTest {
     @Test fun balmFixedTimes() {
         val balm = Habit(2, "Bálsamo labial", HabitIcon.LIP_BALM, HabitSchedule.AtTimes(listOf(9, 13, 17, 21).map { LocalTime.of(it, 0) }), 4)
         assertEquals(listOf(9, 13, 17, 21), balm.timesFor(d, Routine()).map { it.hour })
-        assertEquals(listOf(13, 17, 21), balm.timesFor(d, Routine(wake = LocalTime.of(10, 0))).map { it.hour })
+        assertEquals(listOf(10, 13, 17, 21), balm.timesFor(d, Routine(wake = LocalTime.of(10, 0))).map { it.hour })
     }
 
     @Test fun atTimeAfterMidnightBeforeBedFallsOnNextCalendarDay() {
         val r = Routine(bed = LocalTime.of(0, 30))
         val h = Habit(3, "Tarde", HabitIcon.GENERIC, HabitSchedule.AtTimes(listOf(LocalTime.of(0, 15), LocalTime.of(9, 0), LocalTime.of(2, 0))), 3)
         // 00:15 cae dentro de la vigilia (bed 00:30) del dia siguiente natural; 02:00 esta dormido
-        assertEquals(listOf(d.atTime(9, 0), d.plusDays(1).atTime(0, 15)), h.timesFor(d, r))
+        assertEquals(listOf(d.atTime(8, 15), d.atTime(9, 0), d.plusDays(1).atTime(0, 15)), h.timesFor(d, r))
     }
 
     @Test fun respectsDaysAndActive() {
@@ -43,5 +43,21 @@ class HabitTimesTest {
         assertTrue(mondayOnly.timesFor(d, Routine()).isEmpty())
         assertTrue(mondayOnly.timesFor(d.minusDays(2), Routine()).isNotEmpty())
         assertTrue(water.copy(active = false).timesFor(d, Routine()).isEmpty())
+    }
+
+    private val sat = LocalDate.of(2026, 11, 21)
+    private fun balm(vararg h: Int) = Habit(2, "Bálsamo", HabitIcon.LIP_BALM, HabitSchedule.AtTimes(h.map { LocalTime.of(it, 0) }), 4)
+
+    @Test fun restDayBalmShiftsTo1000() {
+        assertEquals(listOf(10, 13, 17, 21), balm(9, 13, 17, 21).timesFor(sat, Routine()).map { it.hour })
+        val t = balm(9, 10).timesFor(sat, Routine())
+        assertEquals(listOf(sat.atTime(10, 0)), t)
+    }
+
+    @Test fun restDayWater() {
+        val t = water.copy(schedule = HabitSchedule.Every(90)).timesFor(sat, Routine())
+        assertEquals(sat.atTime(11, 30), t.first())
+        assertEquals(sat.atTime(23, 30), t.last())
+        assertEquals(9, t.size)
     }
 }

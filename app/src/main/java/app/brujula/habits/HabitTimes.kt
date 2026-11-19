@@ -2,6 +2,8 @@ package app.brujula.habits
 
 import app.brujula.routine.Routine
 import app.brujula.routine.awakeWindow
+import app.brujula.routine.bedFor
+import app.brujula.routine.wakeFor
 import java.time.LocalDate
 import java.time.LocalDateTime
 
@@ -16,9 +18,18 @@ fun Habit.timesFor(day: LocalDate, routine: Routine): List<LocalDateTime> {
                 it.plusMinutes(s.intervalMin.toLong())
             }.takeWhile { it < window.end }.toList()
         }
-        is HabitSchedule.AtTimes ->
-            // Con acostarse pasada la medianoche, una hora anterior a levantarse cae en la madrugada del dia siguiente.
-            s.times.map { if (window.end.toLocalDate() > day && it < routine.wake) day.plusDays(1).atTime(it) else day.atTime(it) }
-                .filter { it in window }.sorted()
+        is HabitSchedule.AtTimes -> {
+            val w = routine.wakeFor(day)
+            val b = routine.bedFor(day)
+            val crossesMidnight = b <= w
+            // Antes de acostarse (pasada la medianoche) cae en la madrugada siguiente; antes de levantarse se corre a levantarse.
+            s.times.map {
+                when {
+                    crossesMidnight && it < b -> day.plusDays(1).atTime(it)
+                    it < w -> day.atTime(w)
+                    else -> day.atTime(it)
+                }
+            }.filter { it in window }.distinct().sorted()
+        }
     }
 }

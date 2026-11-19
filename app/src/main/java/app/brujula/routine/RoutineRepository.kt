@@ -17,6 +17,8 @@ class RoutineRepository(private val dataStore: DataStore<Preferences>) {
     private object Keys {
         val wake = stringPreferencesKey("wake")
         val bed = stringPreferencesKey("bed")
+        val restWake = stringPreferencesKey("rest_wake")
+        val restBed = stringPreferencesKey("rest_bed")
         val workBlocks = stringPreferencesKey("work_blocks")
         val flexible = booleanPreferencesKey("flexible_work")
         val goalMin = intPreferencesKey("work_goal_min")
@@ -39,6 +41,8 @@ class RoutineRepository(private val dataStore: DataStore<Preferences>) {
             val r = transform(read(p))
             p[Keys.wake] = r.wake.toString()
             p[Keys.bed] = r.bed.toString()
+            p[Keys.restWake] = r.restWake.toString()
+            p[Keys.restBed] = r.restBed.toString()
             p[Keys.workBlocks] = r.workBlocks.joinToString(",") { "${it.first}-${it.second}" }
             p[Keys.flexible] = r.flexibleWork
             p[Keys.goalMin] = r.workGoalMin.first
@@ -52,6 +56,8 @@ class RoutineRepository(private val dataStore: DataStore<Preferences>) {
         return Routine(
             wake = p[Keys.wake]?.let(LocalTime::parse) ?: d.wake,
             bed = p[Keys.bed]?.let(LocalTime::parse) ?: d.bed,
+            restWake = p[Keys.restWake]?.let { runCatching { LocalTime.parse(it) }.getOrNull() } ?: d.restWake,
+            restBed = p[Keys.restBed]?.let { runCatching { LocalTime.parse(it) }.getOrNull() } ?: d.restBed,
             workBlocks = p[Keys.workBlocks]?.let(::decodeBlocks) ?: d.workBlocks,
             flexibleWork = p[Keys.flexible] ?: d.flexibleWork,
             workGoalMin = (p[Keys.goalMin] ?: d.workGoalMin.first)..(p[Keys.goalMax] ?: d.workGoalMin.last),
