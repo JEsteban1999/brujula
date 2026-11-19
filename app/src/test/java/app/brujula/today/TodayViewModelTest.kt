@@ -103,12 +103,12 @@ class TodayViewModelTest {
         val id = activities.upsert(act("Ejercicio", ActivityType.EXERCISE, "18:30", 30, repeat = Repeat.DAILY))
         val vm = vm()
         vm.state.first { it.timeline.isNotEmpty() }
-        vm.toggleDone(id)
+        vm.toggleDone(id, day)
         vm.state.first { it.timeline.single().occurrence.done }
         val keys = activities.observeDoneKeys().first()
         assertTrue((id to day) in keys)
         assertFalse((id to day.plusDays(1)) in keys)
-        vm.toggleDone(id)
+        vm.toggleDone(id, day)
         vm.state.first { !it.timeline.single().occurrence.done }
         assertTrue(activities.observeDoneKeys().first().isEmpty())
     }
@@ -146,6 +146,23 @@ class TodayViewModelTest {
         assertEquals(day.atTime(9, 0), s.freeSlots.first().start)
         // no cuenta como trabajo de hoy
         assertEquals(60, s.workMinutes)
+    }
+
+    @Test fun toggleDoneTargetsTheGivenOccurrenceOfOvernightRepeat() = runTest {
+        // DAILY 23:30 + 10 h: la de ayer termina 09:30 (cruza la vigilia) y la de hoy empieza 23:30
+        val id = activities.upsert(act("Guardia", ActivityType.PERSONAL, "23:30", 600, date = day.minusDays(1), repeat = Repeat.DAILY))
+        val yesterday = day.minusDays(1)
+        activities.setDone(id, yesterday, true)
+        val vm = vm()
+        val s = vm.state.first { it.timeline.size == 2 }
+        assertEquals(listOf(yesterday, day), s.timeline.map { it.occurrence.day })
+        assertEquals(listOf(true, false), s.timeline.map { it.occurrence.done })
+        vm.toggleDone(id, day)
+        vm.state.first { st -> st.timeline.size == 2 && st.timeline.all { it.occurrence.done } }
+        assertEquals(setOf(id to yesterday, id to day), activities.observeDoneKeys().first())
+        vm.toggleDone(id, day)
+        vm.state.first { st -> st.timeline.map { it.occurrence.done } == listOf(true, false) }
+        assertEquals(setOf(id to yesterday), activities.observeDoneKeys().first())
     }
 
     @Test fun missingPermissionsAreExposed() = runTest {

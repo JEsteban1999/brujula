@@ -70,6 +70,7 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
             composable(Routes.TODAY) {
                 val context = LocalContext.current
                 val container = context.container
+                val appContext = context.applicationContext
                 val vm: TodayViewModel = viewModel(
                     factory = viewModelFactory {
                         initializer {
@@ -78,7 +79,7 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                                 routineRepository = container.routineRepository,
                                 activityRepository = container.activityRepository,
                                 habitRepository = container.habitRepository,
-                                readPermissions = { readPermissionStatus(context.applicationContext) },
+                                readPermissions = { readPermissionStatus(appContext) },
                             )
                         }
                     },

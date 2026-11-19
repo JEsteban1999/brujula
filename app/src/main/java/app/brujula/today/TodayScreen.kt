@@ -65,7 +65,7 @@ fun TodayScreen(
             when (val r = rows[i]) {
                 is Row.Block -> TimelineBlock(
                     entry = r.entry, index = i, reduced = reduced,
-                    onToggleDone = { viewModel.toggleDone(r.entry.occurrence.activity.id) },
+                    onToggleDone = { viewModel.toggleDone(r.entry.occurrence.activity.id, r.entry.occurrence.day) },
                     onOpen = { onEditActivity(r.entry.occurrence.activity.id) },
                 )
                 is Row.Free -> FreeSlotRow(r.slot, i, reduced) { onAddAt(r.slot.start) }

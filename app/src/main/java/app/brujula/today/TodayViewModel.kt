@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
@@ -140,14 +141,13 @@ class TodayViewModel(
 
     fun addHabit(habitId: Long) {
         scope.launch { habitRepository.logDone(habitId, clock.now()) }
-    }
 
-    fun toggleDone(activityId: Long) {
+    }
+    /** Alterna hecho para la ocurrencia de [day] (el dia de inicio de esa ocurrencia). */
+    fun toggleDone(activityId: Long, day: LocalDate) {
         scope.launch {
-            val entry = state.value.timeline.firstOrNull { it.occurrence.activity.id == activityId }
-            val occ = entry?.occurrence
-            val day = occ?.day ?: logicalDay(clock.now())
-            activityRepository.setDone(activityId, day, !(occ?.done ?: false))
+            val done = activityRepository.observeDoneKeys().first().contains(activityId to day)
+            activityRepository.setDone(activityId, day, !done)
         }
     }
 
