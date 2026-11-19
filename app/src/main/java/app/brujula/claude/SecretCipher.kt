@@ -17,6 +17,7 @@ interface SecretCipher {
 
 /** AES/GCM con una clave del Android Keystore; el IV aleatorio va delante y todo en Base64. */
 class KeystoreSecretCipher : SecretCipher {
+    @Synchronized
     private fun key(): SecretKey {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (ks.getKey(ALIAS, null) as? SecretKey)?.let { return it }

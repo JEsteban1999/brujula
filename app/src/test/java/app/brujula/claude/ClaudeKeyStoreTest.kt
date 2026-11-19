@@ -58,3 +58,12 @@ class ClaudeKeyStoreTest {
         assertFalse(s.hasKey.first())
     }
 }
+
+@RunWith(RobolectricTestRunner::class)
+class ManifestPermissionsTest {
+    @Test fun requestsInternet() {
+        val ctx = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val info = ctx.packageManager.getPackageInfo(ctx.packageName, android.content.pm.PackageManager.GET_PERMISSIONS)
+        assertTrue(info.requestedPermissions.orEmpty().contains("android.permission.INTERNET"))
+    }
+}

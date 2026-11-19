@@ -158,15 +158,14 @@ class RoutineViewModel(
     }
 
     private val claudeState = MutableStateFlow(ClaudeSectionState())
-    /** Una accion del usuario manda sobre la lectura inicial. */
-    private var claudeTouched = false
     val claude: StateFlow<ClaudeSectionState> = claudeState.asStateFlow()
 
     init {
         val store = claudeKeyStore
         if (store != null) scope.launch {
-            val has = try { store.hasKey.first() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { false }
-            if (!claudeTouched) claudeState.value = claudeState.value.copy(hasKey = has)
+            store.hasKey.catch { emit(false) }.collect { has ->
+                claudeState.value = if (has) claudeState.value.copy(hasKey = true) else ClaudeSectionState()
+            }
         }
     }
 
@@ -174,7 +173,6 @@ class RoutineViewModel(
     fun saveClaudeKey(key: String): Job = scope.launch {
         val store = claudeKeyStore ?: return@launch
         val clean = key.trim()
-        claudeTouched = true
         try {
             if (clean.isEmpty()) store.clear() else store.save(clean)
         } catch (e: kotlinx.coroutines.CancellationException) {

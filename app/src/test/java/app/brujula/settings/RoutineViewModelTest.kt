@@ -290,4 +290,14 @@ class RoutineViewModelTest {
         e.vm.saveClaudeKey("sk-ant-test-1111").join()
         assertEquals(ClaudeStatus.IDLE, e.vm.claude.value.status)
     }
+
+    @Test fun claudeStateFollowsStoreWhenKeyIsWipedElsewhere() = runTest {
+        val e = claudeEnv()
+        e.vm.saveClaudeKey("sk-ant-test-0000").join()
+        e.keys.clear()
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            kotlinx.coroutines.withTimeout(5_000) { e.vm.claude.first { !it.hasKey } }
+        }
+        assertFalse(e.vm.claude.value.hasKey)
+    }
 }
