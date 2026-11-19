@@ -1,5 +1,6 @@
 package app.brujula.activities.form
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.brujula.activities.Activity
@@ -9,11 +10,27 @@ import app.brujula.activities.Occurrence
 import app.brujula.activities.Repeat
 import app.brujula.activities.findConflict
 import app.brujula.activities.occurrencesOn
+import app.brujula.calendar.CalendarSource
+import app.brujula.calendar.ExternalEvent
+import app.brujula.calendar.GoogleCopyStatus
+import app.brujula.calendar.GoogleCopySync
+import app.brujula.calendar.NoCalendarSource
 import app.brujula.core.time.Clock
 import app.brujula.core.time.TimeSpan
 import app.brujula.reminders.ReminderResync
 import app.brujula.routine.logicalDay
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,15 +54,33 @@ data class ActivityFormState(
     val copyToGoogle: Boolean = false,
     val copyToGoogleTouched: Boolean = false,
     val conflict: Occurrence? = null,
+    /** Evento importado (solo lectura) con el que choca; solo si no choca con una actividad propia. */
+    val externalConflict: ExternalEvent? = null,
     val titleError: String? = null,
     val isEdit: Boolean = false,
     val saved: Boolean = false,
+    /** Resultado de la copia a Google del ultimo guardado. */
+    val googleStatus: GoogleCopyStatus = GoogleCopyStatus.NOT_REQUESTED,
     /** Un guardado en curso: ignora toques repetidos. */
     val saving: Boolean = false,
     /** En edición, falso hasta que la actividad termina de cargar. */
     val ready: Boolean = true,
 ) {
     val end: LocalTime get() = start.plusMinutes(durationMin.toLong())
+
+    /** Aviso si la copia a Google no se pudo hacer; null si no hay nada que avisar. */
+    val googleNotice: String?
+        get() = when (googleStatus) {
+            GoogleCopyStatus.NO_PERMISSION -> "No se pudo copiar: falta el permiso de calendario. Actívalo en Tu rutina."
+            GoogleCopyStatus.NO_GOOGLE_ACCOUNT -> "No hay una cuenta de Google en el teléfono"
+            GoogleCopyStatus.FAILED -> "No se pudo copiar a Google Calendar"
+            else -> null
+        }
+
+    /** Texto del choque, o null si la hora esta libre. */
+    val conflictMessage: String?
+        get() = conflict?.let { "Choca con ${it.activity.title}." }
+            ?: externalConflict?.let { "Choca con ${it.title.ifBlank { "un evento sin título" }} (${it.source})." }
 }
 
 const val REMIND_BEFORE_MIN = 15
@@ -59,6 +94,13 @@ class ActivityFormViewModel(
     private val clock: Clock,
     private val activityRepository: ActivityRepository,
     private val resync: ReminderResync = ReminderResync { },
+    private val calendarSource: CalendarSource = NoCalendarSource,
+    selectedCalendarIds: Flow<Set<Long>?> = flowOf(null),
+    private val googleCopy: GoogleCopySync? = null,
+    private val noticeMillis: Long = 1800,
+    /** Ambito de la aplicacion: la copia a Google sigue aunque se cierre el formulario. */
+    private val googleScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    private val googleTimeoutMillis: Long = 4_000,
     scopeOverride: CoroutineScope? = null,
 ) : ViewModel() {
     /** "Hoy" del usuario: el día lógico (cambia a las 04:00). */
@@ -67,6 +109,11 @@ class ActivityFormViewModel(
     private val scope = scopeOverride ?: viewModelScope
     private var editingId: Long? = null
     private var all: List<Activity> = emptyList()
+    private var external: List<ExternalEvent> = emptyList()
+    private var externalDate: LocalDate? = null
+    private var selectedIds: Set<Long>? = null
+    private var linkedEventIds: Set<Long> = emptySet()
+    private var externalJob: Job? = null
 
     private val _state = MutableStateFlow(initialState(prefillStart).copy(ready = activityId == null))
     val state: StateFlow<ActivityFormState> = _state.asStateFlow()
@@ -76,6 +123,19 @@ class ActivityFormViewModel(
             activityRepository.observeAll().collect { list ->
                 all = list
                 _state.update(::withConflict)
+            }
+        }
+        scope.launch {
+            // Copias de Brujula: nunca cuentan como choque externo, aunque pierdan la marca customAppPackage.
+            activityRepository.observeGoogleEventIds().collect { ids ->
+                linkedEventIds = ids
+                _state.update(::withConflict)
+            }
+        }
+        scope.launch {
+            selectedCalendarIds.catch { Log.w("ActivityForm", "No se pudo leer los calendarios elegidos", it); emit(null) }.collect { ids ->
+                selectedIds = ids
+                reloadExternal(_state.value.date)
             }
         }
         if (activityId != null) {
@@ -96,6 +156,7 @@ class ActivityFormViewModel(
                         ),
                     )
                 }
+                if (a.date != externalDate) reloadExternal(a.date)
             }
         }
     }
@@ -134,11 +195,32 @@ class ActivityFormViewModel(
         val begin = s.date.atTime(s.start)
         val candidate = TimeSpan(begin, begin.plusMinutes(s.durationMin.toLong()))
         val busy = (-1L..1L).flatMap { occurrencesOn(s.date.plusDays(it), all, emptySet()) }
-        return s.copy(conflict = findConflict(candidate, busy, editingId))
+        val own = findConflict(candidate, busy, editingId)
+        val outside = if (own == null) external.firstOrNull { !it.allDay && it.eventId !in linkedEventIds && it.span.overlaps(candidate) } else null
+        return s.copy(conflict = own, externalConflict = outside)
+    }
+
+    /** Eventos importados de día−1/día/día+1 de [date]; la consulta al proveedor va fuera del hilo principal. */
+    private fun reloadExternal(date: LocalDate) {
+        externalJob?.cancel()
+        externalJob = scope.launch {
+            val ids = selectedIds
+            val loaded = withContext(Dispatchers.IO) {
+                runCatching {
+                    if (ids.isNullOrEmpty() || !calendarSource.hasReadPermission()) emptyList()
+                    else calendarSource.events(ids, date.minusDays(1).atStartOfDay(), date.plusDays(2).atStartOfDay())
+                }.getOrDefault(emptyList())
+            }
+            external = loaded
+            externalDate = date
+            _state.update(::withConflict)
+        }
     }
 
     private fun edit(block: (ActivityFormState) -> ActivityFormState) {
         _state.update { withConflict(block(it).copy(saved = false)) }
+        val date = _state.value.date
+        if (date != externalDate) reloadExternal(date)
     }
 
     fun setTitle(s: String) = edit { it.copy(title = s, titleError = null) }
@@ -186,7 +268,7 @@ class ActivityFormViewModel(
         }
         _state.update { it.copy(saving = true) }
         scope.launch {
-            activityRepository.upsert(
+            val id = activityRepository.upsert(
                 Activity(
                     id = editingId ?: 0L, title = title, type = s.type, date = s.date, start = s.start,
                     durationMin = s.durationMin.coerceIn(MIN_DURATION, MAX_DURATION), repeat = s.repeat,
@@ -194,15 +276,40 @@ class ActivityFormViewModel(
                 ),
             )
             runCatching { resync.resync() }
-            _state.update { it.copy(saved = true) }
+            // La actividad ya esta guardada. La copia corre en el ambito de la app (no se cancela al cerrar) y el
+            // formulario espera poco: si tarda, se cierra sin aviso y la copia termina sola.
+            val status = googleCopy?.let { sync ->
+                val job = googleScope.async { sync.afterSave(activityRepository.get(id) ?: return@async GoogleCopyStatus.NOT_REQUESTED) }
+                try {
+                    // Reloj real (Default): el timeout no depende del reloj virtual de las pruebas.
+                    withContext(Dispatchers.Default) { withTimeoutOrNull(googleTimeoutMillis) { job.await() } }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    GoogleCopyStatus.FAILED
+                }
+            } ?: GoogleCopyStatus.NOT_REQUESTED
+            // El aviso (y la espera para leerlo) solo aplica si el usuario ya conecto calendarios alguna vez;
+            // si no, el formulario se cierra enseguida y sin aviso, como antes de la Fase 2A.
+            val needsNotice = status != GoogleCopyStatus.NOT_REQUESTED && status != GoogleCopyStatus.COPIED
+            val showNotice = needsNotice && selectedIds != null
+            if (showNotice) {
+                _state.update { it.copy(googleStatus = status) }
+                delay(noticeMillis)
+            }
+            _state.update { it.copy(googleStatus = if (needsNotice && !showNotice) GoogleCopyStatus.NOT_REQUESTED else status, saved = true) }
         }
     }
 
     fun delete() {
         val id = editingId ?: return
         scope.launch {
+            val before = activityRepository.get(id)
             activityRepository.delete(id)
             runCatching { resync.resync() }
+            if (before != null) {
+                googleCopy?.let { sync -> googleScope.launch { sync.afterDelete(before) } }
+            }
             _state.update { it.copy(saved = true) }
         }
     }

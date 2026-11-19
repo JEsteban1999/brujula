@@ -4,6 +4,12 @@ import android.app.Application
 import android.content.Context
 import androidx.datastore.preferences.preferencesDataStore
 import app.brujula.activities.ActivityRepository
+import app.brujula.calendar.CalendarSource
+import app.brujula.calendar.WorkClassificationRepository
+import app.brujula.calendar.DeviceCalendarSource
+import app.brujula.calendar.DeviceGoogleCalendarWriter
+import app.brujula.calendar.GoogleCalendarWriter
+import app.brujula.calendar.GoogleCopySync
 import app.brujula.core.time.Clock
 import app.brujula.core.time.SystemClock
 import app.brujula.reminders.AlarmReminderScheduler
@@ -22,7 +28,9 @@ import app.brujula.routine.RoutineRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import app.brujula.routine.logicalDay
 import java.time.LocalDate
 
 private val Context.routineDataStore by preferencesDataStore(name = "routine")
@@ -32,7 +40,34 @@ class AppContainer(val context: Context) {
     val database: BrujulaDatabase by lazy { BrujulaDatabase.create(context) }
     val activityRepository: ActivityRepository by lazy { ActivityRepository(database.activityDao()) }
     val habitRepository: HabitRepository by lazy { HabitRepository(database.habitDao()) }
+    val workClassificationRepository: WorkClassificationRepository by lazy {
+        WorkClassificationRepository(database.workClassificationDao())
+    }
     val routineRepository: RoutineRepository by lazy { RoutineRepository(context.applicationContext.routineDataStore) }
+
+    /** Calendarios del telefono (solo lectura); las pruebas lo sustituyen por uno falso. */
+    var calendarSource: CalendarSource = DeviceCalendarSource(context.applicationContext)
+
+    /** Escritura en el Google Calendar principal; las pruebas lo sustituyen por uno falso. */
+    var googleCalendarWriter: GoogleCalendarWriter = DeviceGoogleCalendarWriter(context.applicationContext, DeviceCalendarSource(context.applicationContext))
+
+    /** Ambito de la app para la copia a Google: sobrevive al formulario (SupervisorJob + IO). */
+    val syncScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> Log.e("AppContainer", "Fallo en la copia a Google", e) },
+    )
+
+    private var googleSyncOverride: GoogleCopySync? = null
+    private val defaultGoogleSync: GoogleCopySync by lazy {
+        GoogleCopySync(googleCalendarWriter, activityRepository) { routineRepository.calendarPrefs.copyToGoogleEnabled.first() }
+    }
+
+    /** Crea las copias a Google que falten (idempotente); se lanza en [syncScope]. */
+    suspend fun reconcileGoogleCopies() = googleCopySync.reconcile(logicalDay(clock.now()))
+
+    /** Un solo GoogleCopySync (su Mutex serializa); sustituible en pruebas. */
+    var googleCopySync: GoogleCopySync
+        get() = googleSyncOverride ?: defaultGoogleSync
+        set(value) { googleSyncOverride = value }
 
     /** Reloj de los receptores; las pruebas lo sustituyen. */
     var clock: Clock = SystemClock
@@ -76,6 +111,8 @@ open class BrujulaApp : Application() {
             runCatching { Migrations.exerciseToWorkdays(container.database, container.routineRepository) }
                 .onFailure { Log.e("BrujulaApp", "Fallo al migrar el ejercicio", it) }
         }
+        // Copias a Google pendientes (citas guardadas sin permiso, o con la copia apagada); idempotente.
+        container.syncScope.launch { container.reconcileGoogleCopies() }
         launchReminderResync()
     }
 

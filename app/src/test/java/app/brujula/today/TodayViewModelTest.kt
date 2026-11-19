@@ -8,6 +8,10 @@ import app.brujula.activities.Activity
 import app.brujula.activities.ActivityRepository
 import app.brujula.activities.ActivityType
 import app.brujula.activities.Repeat
+import app.brujula.calendar.ExternalEvent
+import app.brujula.calendar.FakeCalendarSource
+import app.brujula.calendar.WorkClassificationRepository
+import app.brujula.calendar.classificationKey
 import app.brujula.core.time.FixedClock
 import app.brujula.core.time.TimeSpan
 import app.brujula.data.db.BrujulaDatabase
@@ -35,6 +39,8 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 
+private data class OwnView(val occurrence: app.brujula.activities.Occurrence, val isNow: Boolean)
+
 @RunWith(RobolectricTestRunner::class)
 class TodayViewModelTest {
     @get:Rule val tmp = TemporaryFolder()
@@ -50,18 +56,27 @@ class TodayViewModelTest {
             .allowMainThreadQueries().build()
         activities = ActivityRepository(db.activityDao())
         habits = HabitRepository(db.habitDao())
+        classifications = WorkClassificationRepository(db.workClassificationDao())
     }
 
     @After fun tearDown() { db.close() }
 
-    private fun TestScope.vm() = TodayViewModel(
+    private val calendar = FakeCalendarSource()
+    private lateinit var classifications: WorkClassificationRepository
+    private val TodayUiState.own get() = timeline.filterIsInstance<TimelineBlock.Own>().map { OwnView(it.occurrence, it.isNow) }
+
+    private fun TestScope.routineRepo(file: String = "r.preferences_pb") = RoutineRepository(
+        PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, file) },
+    )
+
+    private fun TestScope.vm(routine: RoutineRepository = routineRepo()) = TodayViewModel(
         clock = clock,
-        routineRepository = RoutineRepository(
-            PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "r.preferences_pb") },
-        ),
+        routineRepository = routine,
         activityRepository = activities,
         habitRepository = habits,
         readPermissions = { perms },
+        calendarSource = calendar,
+        classifications = classifications,
         scopeOverride = backgroundScope,
         tickMs = 0,
     )
@@ -79,11 +94,11 @@ class TodayViewModelTest {
 
     @Test fun nowEntryAndWorkMinutes() = runTest {
         seedDay()
-        val s = vm().state.first { it.timeline.isNotEmpty() }
-        assertTrue(s.timeline.single { it.isNow }.occurrence.activity.type == ActivityType.EXERCISE)
+        val s = vm().state.first { it.own.isNotEmpty() }
+        assertTrue(s.own.single { it.isNow }.occurrence.activity.type == ActivityType.EXERCISE)
         assertEquals(240, s.workMinutes) // 150 + 90
         assertEquals("Miércoles 18 de noviembre", s.dayLabel)
-        assertTrue(s.timeline.first().occurrence.done)
+        assertTrue(s.own.first().occurrence.done)
     }
 
     @Test fun addHabitIncrementsCount() = runTest {
@@ -102,21 +117,21 @@ class TodayViewModelTest {
     @Test fun toggleDoneMarksOnlyToday() = runTest {
         val id = activities.upsert(act("Ejercicio", ActivityType.EXERCISE, "18:30", 30, repeat = Repeat.DAILY))
         val vm = vm()
-        vm.state.first { it.timeline.isNotEmpty() }
+        vm.state.first { it.own.isNotEmpty() }
         vm.toggleDone(id, day)
-        vm.state.first { it.timeline.single().occurrence.done }
+        vm.state.first { it.own.single().occurrence.done }
         val keys = activities.observeDoneKeys().first()
         assertTrue((id to day) in keys)
         assertFalse((id to day.plusDays(1)) in keys)
         vm.toggleDone(id, day)
-        vm.state.first { !it.timeline.single().occurrence.done }
+        vm.state.first { !it.own.single().occurrence.done }
         assertTrue(activities.observeDoneKeys().first().isEmpty())
     }
 
     @Test fun freeSlotsInsideAwakeWindow() = runTest {
         seedDay()
         activities.upsert(act("Ejercicio", ActivityType.EXERCISE, "18:30", 30))
-        val s = vm().state.first { it.timeline.size == 4 }
+        val s = vm().state.first { it.own.size == 4 }
         val at = { h: Int, m: Int -> day.atTime(h, m) }
         assertTrue(s.freeSlots.contains(TimeSpan(at(12, 30), at(18, 30))))
         assertTrue(s.freeSlots.none { it.start < at(8, 15) })
@@ -129,18 +144,18 @@ class TodayViewModelTest {
         // ayer 23:30 + 90 min termina 01:00 de hoy: antes de levantarse (08:15), no entra en la vigilia de hoy
         activities.upsert(act("Película", ActivityType.PERSONAL, "23:30", 90, date = day.minusDays(1)))
         activities.upsert(act("Trabajo", ActivityType.WORK, "09:00", 60))
-        val s = vm().state.first { it.timeline.isNotEmpty() }
-        assertEquals(listOf("Trabajo"), s.timeline.map { it.occurrence.activity.title })
+        val s = vm().state.first { it.own.isNotEmpty() }
+        assertEquals(listOf("Trabajo"), s.own.map { it.occurrence.activity.title })
     }
 
     @Test fun overnightIntersectingAwakeWindowAppearsOnceAtTop() = runTest {
         // una vez, el día anterior, 23:30 -> 09:00 de hoy: cruza la vigilia (08:15)
         activities.upsert(act("Guardia", ActivityType.PERSONAL, "23:30", 570, date = day.minusDays(1)))
         activities.upsert(act("Trabajo", ActivityType.WORK, "09:30", 60))
-        val s = vm().state.first { it.timeline.isNotEmpty() }
-        assertEquals(listOf("Guardia", "Trabajo"), s.timeline.map { it.occurrence.activity.title })
-        assertEquals(day.minusDays(1), s.timeline.first().occurrence.day)
-        assertEquals(1, s.timeline.count { it.occurrence.activity.title == "Guardia" })
+        val s = vm().state.first { it.own.isNotEmpty() }
+        assertEquals(listOf("Guardia", "Trabajo"), s.own.map { it.occurrence.activity.title })
+        assertEquals(day.minusDays(1), s.own.first().occurrence.day)
+        assertEquals(1, s.own.count { it.occurrence.activity.title == "Guardia" })
         // el hueco libre empieza cuando acaba (09:00), no a las 08:15
         assertTrue(s.freeSlots.none { it.start < day.atTime(9, 0) })
         assertEquals(day.atTime(9, 0), s.freeSlots.first().start)
@@ -154,14 +169,15 @@ class TodayViewModelTest {
             PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, file) },
         ),
         activityRepository = activities, habitRepository = habits,
-        readPermissions = { perms }, scopeOverride = backgroundScope, tickMs = tick,
+        readPermissions = { perms }, calendarSource = calendar, classifications = classifications,
+        scopeOverride = backgroundScope, tickMs = tick,
     )
 
     @Test fun activityBeforeWakeIsShownInOrder() = runTest {
         activities.upsert(act("Trabajo", ActivityType.WORK, "09:00", 60))
         activities.upsert(act("Dentista", ActivityType.APPOINTMENT, "07:00", 45))
-        val s = vm().state.first { it.timeline.size == 2 }
-        assertEquals(listOf("Dentista", "Trabajo"), s.timeline.map { it.occurrence.activity.title })
+        val s = vm().state.first { it.own.size == 2 }
+        assertEquals(listOf("Dentista", "Trabajo"), s.own.map { it.occurrence.activity.title })
         assertEquals(60, s.workMinutes)
     }
 
@@ -170,13 +186,13 @@ class TodayViewModelTest {
         // "Hoy 00:15" se guarda con la fecha natural siguiente
         activities.upsert(act("Llamada", ActivityType.PERSONAL, "00:15", 30, date = day.plusDays(1)))
         activities.upsert(act("Trabajo", ActivityType.WORK, "09:00", 60))
-        val s = vm().state.first { it.timeline.size == 2 }
-        assertEquals(listOf("Trabajo", "Llamada"), s.timeline.map { it.occurrence.activity.title })
-        assertEquals(day.plusDays(1), s.timeline.last().occurrence.day)
+        val s = vm().state.first { it.own.size == 2 }
+        assertEquals(listOf("Trabajo", "Llamada"), s.own.map { it.occurrence.activity.title })
+        assertEquals(day.plusDays(1), s.own.last().occurrence.day)
         // el dia logico siguiente (a las 10:00) no la repite
         clock.current = day.plusDays(1).atTime(10, 0)
         val n = vmFor("r2.preferences_pb").state.first { it.day == day.plusDays(1) }
-        assertTrue(n.timeline.none { it.occurrence.activity.title == "Llamada" })
+        assertTrue(n.own.none { it.occurrence.activity.title == "Llamada" })
     }
 
     @Test fun nowMovesAndDayRollsOverWithTicker() = runTest {
@@ -195,14 +211,14 @@ class TodayViewModelTest {
             }
             error("estado esperado no alcanzado: ${vm.state.value}")
         }
-        val first = await { it.timeline.size == 2 && it.timeline.any { e -> e.isNow } }
-        assertEquals("Ejercicio", first.timeline.single { it.isNow }.occurrence.activity.title)
+        val first = await { it.own.size == 2 && it.own.any { e -> e.isNow } }
+        assertEquals("Ejercicio", first.own.single { it.isNow }.occurrence.activity.title)
         clock.current = day.atTime(11, 40)
-        val second = await { st -> st.timeline.any { it.isNow && it.occurrence.activity.title == "Lectura" } }
-        assertEquals("Lectura", second.timeline.single { it.isNow }.occurrence.activity.title)
+        val second = await { st -> st.own.any { it.isNow && it.occurrence.activity.title == "Lectura" } }
+        assertEquals("Lectura", second.own.single { it.isNow }.occurrence.activity.title)
         // 03:59 sigue siendo el dia logico; 04:00 rueda al siguiente
         clock.current = day.plusDays(1).atTime(3, 59)
-        assertEquals(day, await { it.day == day && it.timeline.none { e -> e.isNow } }.day)
+        assertEquals(day, await { it.day == day && it.own.none { e -> e.isNow } }.day)
         clock.current = day.plusDays(1).atTime(4, 0)
         assertEquals(day.plusDays(1), await { it.day == day.plusDays(1) }.day)
     }
@@ -213,15 +229,70 @@ class TodayViewModelTest {
         val yesterday = day.minusDays(1)
         activities.setDone(id, yesterday, true)
         val vm = vm()
-        val s = vm.state.first { it.timeline.size == 2 }
-        assertEquals(listOf(yesterday, day), s.timeline.map { it.occurrence.day })
-        assertEquals(listOf(true, false), s.timeline.map { it.occurrence.done })
+        val s = vm.state.first { it.own.size == 2 }
+        assertEquals(listOf(yesterday, day), s.own.map { it.occurrence.day })
+        assertEquals(listOf(true, false), s.own.map { it.occurrence.done })
         vm.toggleDone(id, day)
-        vm.state.first { st -> st.timeline.size == 2 && st.timeline.all { it.occurrence.done } }
+        vm.state.first { st -> st.own.size == 2 && st.own.all { it.occurrence.done } }
         assertEquals(setOf(id to yesterday, id to day), activities.observeDoneKeys().first())
         vm.toggleDone(id, day)
-        vm.state.first { st -> st.timeline.map { it.occurrence.done } == listOf(true, false) }
+        vm.state.first { st -> st.own.map { it.occurrence.done } == listOf(true, false) }
         assertEquals(setOf(id to yesterday), activities.observeDoneKeys().first())
+    }
+
+    private fun lateNightAt(at: LocalDateTime) = runTest {
+        clock.current = at
+        // se espera al estado cargado (no al inicial): una actividad sembrada debe aparecer en la línea de tiempo
+        activities.upsert(act("Trabajo", ActivityType.WORK, "09:00", 60, date = logicalDayOf(at)))
+        val s = vm().state.first { it.own.isNotEmpty() }
+        lateNightResult = s
+    }
+
+    private var lateNightResult: TodayUiState? = null
+    private fun logicalDayOf(at: LocalDateTime) = app.brujula.routine.logicalDay(at)
+
+    @Test fun thursday0030IsLateNightOfWednesday() {
+        lateNightAt(LocalDateTime.of(2026, 11, 19, 0, 30))
+        assertEquals(LocalDate.of(2026, 11, 18), lateNightResult!!.day)
+        assertTrue(lateNightResult!!.isLateNight)
+    }
+
+    @Test fun thursday0359IsStillLateNight() {
+        lateNightAt(LocalDateTime.of(2026, 11, 19, 3, 59))
+        assertEquals(LocalDate.of(2026, 11, 18), lateNightResult!!.day)
+        assertTrue(lateNightResult!!.isLateNight)
+    }
+
+    @Test fun thursday0400IsNotLateNight() {
+        lateNightAt(LocalDateTime.of(2026, 11, 19, 4, 0))
+        assertEquals(LocalDate.of(2026, 11, 19), lateNightResult!!.day)
+        assertFalse(lateNightResult!!.isLateNight)
+    }
+
+    @Test fun wednesday2330IsNotLateNight() {
+        lateNightAt(LocalDateTime.of(2026, 11, 18, 23, 30))
+        assertEquals(LocalDate.of(2026, 11, 18), lateNightResult!!.day)
+        assertFalse(lateNightResult!!.isLateNight)
+    }
+
+    @Test fun lateNightFlagFollowsTheTicker() = runTest {
+        clock.current = LocalDateTime.of(2026, 11, 18, 23, 59)
+        val vm = vmFor("r4.preferences_pb", tick = 1000)
+        fun TestScope.await(cond: (TodayUiState) -> Boolean): TodayUiState {
+            testScheduler.advanceTimeBy(1000)
+            repeat(500) {
+                testScheduler.runCurrent()
+                if (cond(vm.state.value)) return vm.state.value
+                Thread.sleep(10)
+            }
+            error("estado esperado no alcanzado: ${vm.state.value}")
+        }
+        activities.upsert(act("Trabajo", ActivityType.WORK, "09:00", 60))
+        assertFalse(await { it.own.isNotEmpty() }.isLateNight)
+        clock.current = LocalDateTime.of(2026, 11, 19, 0, 0)
+        assertTrue(await { it.isLateNight }.isLateNight)
+        clock.current = LocalDateTime.of(2026, 11, 19, 4, 0)
+        assertFalse(await { !it.isLateNight && it.day == LocalDate.of(2026, 11, 19) }.isLateNight)
     }
 
     @Test fun missingPermissionsAreExposed() = runTest {
@@ -240,7 +311,7 @@ class TodayViewModelTest {
         val s = vm().state.first { it.day == sat && it.dayType.kind == app.brujula.routine.DayKind.WEEKEND && it.freeSlots.isNotEmpty() }
         assertEquals(null, s.workGoal)
         assertEquals(null, s.workStatus)
-        assertTrue(s.timeline.none { it.occurrence.activity.title == "Ejercicio" })
+        assertTrue(s.own.none { it.occurrence.activity.title == "Ejercicio" })
         assertEquals(sat.atTime(10, 0), s.freeSlots.first().start)
     }
 
@@ -268,5 +339,122 @@ class TodayViewModelTest {
         habits.upsert(Habit(name = "Bálsamo", icon = HabitIcon.LIP_BALM, schedule = HabitSchedule.AtTimes(listOf(LocalTime.of(9, 0))), dailyTarget = 1))
         val s = vm().state.first { it.habits.isNotEmpty() }
         assertEquals(listOf("Agua", "Bálsamo"), s.habits.map { it.name })
+    }
+
+    private fun ext(id: Long, title: String, s: LocalDateTime, e: LocalDateTime, allDay: Boolean = false) =
+        ExternalEvent(id, 0, 1, "Personal", "Google", title, TimeSpan(s, e), allDay, null)
+
+    private suspend fun TestScope.vmWithCalendar(events: List<ExternalEvent>): TodayViewModel {
+        calendar.eventList = events
+        val routine = routineRepo("rx.preferences_pb")
+        routine.calendarPrefs.setSelectedCalendarIds(setOf(1L))
+        return vm(routine)
+    }
+
+    @Test fun externalEventLinkedToAnActivityIsNotShown() = runTest {
+        val id = activities.upsert(act("Copia", ActivityType.APPOINTMENT, "15:00", 60))
+        activities.setGoogleEventId(id, 1L)
+        val vm = vmWithCalendar(
+            listOf(
+                ext(1, "Copia", day.atTime(15, 0), day.atTime(16, 0)),
+                ext(2, "Ajena", day.atTime(17, 0), day.atTime(18, 0)),
+            ),
+        )
+        val s = vm.state.first { st -> st.timeline.any { it is TimelineBlock.External } }
+        assertEquals(listOf("Ajena"), s.timeline.filterIsInstance<TimelineBlock.External>().map { it.event.title })
+    }
+
+    @Test fun externalEventAppearsSplitsFreeSlotAndHasNoDone() = runTest {
+        activities.upsert(act("Trabajo", ActivityType.WORK, "09:00", 60))
+        val vm = vmWithCalendar(listOf(ext(1, "Dentista", day.atTime(15, 0), day.atTime(16, 0))))
+        val s = vm.state.first { st -> st.timeline.any { it is TimelineBlock.External } }
+        val e = s.timeline.filterIsInstance<TimelineBlock.External>().single()
+        assertEquals("Dentista", e.event.title)
+        assertEquals(listOf("Trabajo", "Dentista"), s.timeline.map { b ->
+            when (b) { is TimelineBlock.Own -> b.occurrence.activity.title; is TimelineBlock.External -> b.event.title }
+        })
+        assertTrue(s.freeSlots.any { it.end == day.atTime(15, 0) })
+        assertTrue(s.freeSlots.any { it.start == day.atTime(16, 0) })
+        assertTrue(s.freeSlots.none { it.overlaps(TimeSpan(day.atTime(15, 0), day.atTime(16, 0))) })
+        assertFalse(e.countsAsWork)
+        assertEquals(60, s.workMinutes)
+    }
+
+    @Test fun multiDayWorkEventIsClippedToTheLogicalDay() = runTest {
+        // Dia mostrado: miercoles 18; el evento va de lunes 09:00 a viernes 18:00 y cuenta como trabajo.
+        val ev = ext(7, "Congreso", day.minusDays(2).atTime(9, 0), day.plusDays(2).atTime(18, 0))
+        classifications.set(classificationKey(ev), true)
+        val vm = vmWithCalendar(listOf(ev))
+        val s = vm.state.first { st -> st.timeline.any { it is TimelineBlock.External } }
+        assertEquals(1, s.timeline.size)
+        assertEquals(24 * 60, s.workMinutes)
+        assertTrue(s.freeSlots.isEmpty())
+    }
+
+    @Test fun allDayEventGoesToAllDayAndKeepsSlots() = runTest {
+        val vm = vmWithCalendar(listOf(ext(2, "Festivo", day.atStartOfDay(), day.plusDays(1).atStartOfDay(), allDay = true)))
+        val s = vm.state.first { it.allDay.isNotEmpty() }
+        assertEquals("Festivo", s.allDay.single().title)
+        assertTrue(s.timeline.isEmpty())
+        assertEquals(day.atTime(8, 15), s.freeSlots.first().start)
+        assertEquals(0, s.workMinutes)
+    }
+
+    @Test fun markingAsWorkAddsMinutes() = runTest {
+        val ev = ext(3, "Reunión de equipo", day.atTime(15, 0), day.atTime(16, 0))
+        val vm = vmWithCalendar(listOf(ev))
+        vm.state.first { st -> st.timeline.any { it is TimelineBlock.External } }
+        classifications.set(classificationKey(ev), true)
+        val s = vm.state.first { it.workMinutes == 60 }
+        assertTrue((s.timeline.single() as TimelineBlock.External).countsAsWork)
+    }
+
+    @Test fun untitledEventNeverCountsAsWork() = runTest {
+        val ev = ext(4, "  ", day.atTime(15, 0), day.atTime(16, 0))
+        val vm = vmWithCalendar(listOf(ev))
+        classifications.set(classificationKey(ev), true)
+        val s = vm.state.first { st -> st.timeline.any { it is TimelineBlock.External } }
+        assertEquals(0, s.workMinutes)
+        assertFalse((s.timeline.single() as TimelineBlock.External).countsAsWork)
+    }
+
+    @Test fun eventCrossingMidnightFromYesterdayAppearsOnce() = runTest {
+        // ayer 23:00 -> hoy 09:00: cruza la vigilia de hoy (08:15) y la consulta lo devuelve duplicado
+        val ev = ext(5, "Guardia", day.minusDays(1).atTime(23, 0), day.atTime(9, 0))
+        val vm = vmWithCalendar(listOf(ev, ev.copy()))
+        val s = vm.state.first { st -> st.timeline.any { it is TimelineBlock.External } }
+        assertEquals(1, s.timeline.count { it is TimelineBlock.External })
+        assertEquals(day.atTime(9, 0), s.freeSlots.first().start)
+        assertEquals(0, s.workMinutes)
+    }
+
+    @Test fun providerIsQueriedOffTheMainThread() = runTest {
+        val vm = vmWithCalendar(listOf(ext(6, "X", day.atTime(15, 0), day.atTime(16, 0))))
+        vm.state.first { st -> st.timeline.any { it is TimelineBlock.External } }
+        assertTrue(calendar.lastQueryThread !== Thread.currentThread())
+    }
+
+    @Test fun refreshExternalRequeries() = runTest {
+        val vm = vmWithCalendar(emptyList())
+        vm.state.first { it.day == day }
+        calendar.eventList = listOf(ext(7, "Nuevo", day.atTime(15, 0), day.atTime(16, 0)))
+        vm.refreshExternal()
+        vm.state.first { st -> st.timeline.any { it is TimelineBlock.External } }
+    }
+
+    @Test fun mappedUntitledEventNeverCountsAsWorkAndSetIsNoOp() = runTest {
+        val begin = day.atTime(15, 0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val cursor = android.database.MatrixCursor(app.brujula.calendar.INSTANCE_PROJECTION)
+        cursor.addRow(arrayOf<Any?>(8L, begin, begin + 3_600_000, "", 0, 1L, "Personal", null, null, null, null, 0))
+        val ev = app.brujula.calendar.mapInstances(cursor, java.time.ZoneId.systemDefault()) { "Google" }.single()
+        val vm = vmWithCalendar(listOf(ev))
+        vm.setCountsAsWork(ev, true)
+        val other = ev.copy(eventId = 9, title = "  ")
+        vm.setCountsAsWork(other, true)
+        val s = vm.state.first { st -> st.timeline.any { it is TimelineBlock.External } }
+        assertFalse((s.timeline.single() as TimelineBlock.External).countsAsWork)
+        assertEquals(0, s.workMinutes)
+        Thread.sleep(200)
+        assertTrue(classifications.observe().first().isEmpty())
     }
 }

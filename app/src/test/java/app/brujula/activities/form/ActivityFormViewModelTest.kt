@@ -6,11 +6,16 @@ import androidx.test.core.app.ApplicationProvider
 import app.brujula.activities.Activity
 import app.brujula.activities.ActivityRepository
 import app.brujula.activities.ActivityType
+import app.brujula.calendar.ExternalEvent
+import app.brujula.calendar.FakeCalendarSource
 import app.brujula.core.time.FixedClock
+import app.brujula.core.time.TimeSpan
 import app.brujula.data.db.BrujulaDatabase
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -33,6 +38,7 @@ class ActivityFormViewModelTest {
     private val tomorrow = today.plusDays(1)
     private val clock = FixedClock(LocalDateTime.of(2026, 11, 18, 10, 40))
     private var resyncs = 0
+    private val calendar = FakeCalendarSource()
 
     @Before fun setUp() {
         db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), BrujulaDatabase::class.java)
@@ -57,6 +63,8 @@ class ActivityFormViewModelTest {
         clock = clock,
         activityRepository = repo,
         resync = { resyncs++ },
+        calendarSource = calendar,
+        selectedCalendarIds = flowOf(setOf(1L)),
         scopeOverride = backgroundScope,
     )
 
@@ -77,6 +85,21 @@ class ActivityFormViewModelTest {
     @Test fun liveConflict() = runTest {
         val vm = newVm(); vm.setDateChoice(DateChoice.TOMORROW); vm.shiftStart(495); vm.setDuration(60)
         assertEquals("Ejercicio en casa", vm.state.first { it.conflict != null }.conflict!!.activity.title)
+    }
+
+    @Test fun conflictsWithExternalEventNamingItsSource() = runTest {
+        calendar.eventList = listOf(
+            ExternalEvent(1, 0, 1, "Personal", "Google", "Dentista", TimeSpan(today.atTime(15, 0), today.atTime(16, 0)), false, null),
+            ExternalEvent(2, 0, 1, "Personal", "Google", "Festivo", TimeSpan(today.atStartOfDay(), tomorrow.atStartOfDay()), true, null),
+        )
+        val vm = newVm(prefill = today.atTime(15, 30))
+        val s = vm.state.first { it.externalConflict != null }
+        assertEquals("Choca con Dentista (Google).", s.conflictMessage)
+        vm.shiftStart(-60) // 14:30-15:30 aun solapa
+        assertEquals("Dentista", vm.state.value.externalConflict?.title)
+        vm.shiftStart(-60) // 13:30-14:30 libre; el de todo el dia no choca
+        assertNull(vm.state.value.externalConflict)
+        assertNull(vm.state.value.conflictMessage)
     }
 
     @Test fun noConflictWhenFree() = runTest {
@@ -217,5 +240,121 @@ class ActivityFormViewModelTest {
         assertFalse(vm.state.value.saving)
         vm.state.first { it.ready }
         assertEquals(1, repo.observeAll().first().size)
+    }
+
+    @Test fun failingCalendarPrefsDoNotBreakTheForm() = runTest {
+        val vm = ActivityFormViewModel(
+            activityId = null, prefillStart = null, clock = clock, activityRepository = repo,
+            resync = { resyncs++ }, calendarSource = calendar,
+            selectedCalendarIds = kotlinx.coroutines.flow.flow { throw java.io.IOException("datastore") },
+            scopeOverride = backgroundScope,
+        )
+        vm.setTitle("Leer")
+        vm.save()
+        vm.state.first { it.saved }
+        assertTrue(repo.observeAll().first().any { it.title == "Leer" })
+    }
+
+    private val realScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+
+    /** Espera en reloj real (Room corre en hilos reales, no en el planificador de la prueba). */
+    private suspend fun awaitReal(cond: suspend () -> Boolean) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+        kotlinx.coroutines.withTimeout(10_000) { while (!cond()) kotlinx.coroutines.delay(25) }
+    }
+
+    @Test fun copyWithoutPermissionSavesAndExposesStatus() = runTest {
+        val writer = app.brujula.calendar.FakeGoogleCalendarWriter(permission = false)
+        val vm = ActivityFormViewModel(
+            activityId = null, prefillStart = null, clock = clock, activityRepository = repo,
+            resync = { resyncs++ }, calendarSource = calendar, selectedCalendarIds = flowOf(setOf(1L)),
+            googleCopy = app.brujula.calendar.GoogleCopySync(writer, repo), noticeMillis = 10, googleScope = realScope,
+            scopeOverride = backgroundScope,
+        )
+        vm.setTitle("Dentista"); vm.setType(ActivityType.APPOINTMENT)
+        vm.save()
+        val s = vm.state.first { it.saved }
+        assertEquals(app.brujula.calendar.GoogleCopyStatus.NO_PERMISSION, s.googleStatus)
+        assertEquals(0, writer.inserts)
+        assertTrue(repo.observeAll().first().any { it.title == "Dentista" })
+    }
+
+    @Test fun copyWithPermissionStoresLinkAndDeleteRemovesCopy() = runTest {
+        val writer = app.brujula.calendar.FakeGoogleCalendarWriter()
+        fun vm(id: Long? = null) = ActivityFormViewModel(
+            activityId = id, prefillStart = null, clock = clock, activityRepository = repo,
+            resync = { resyncs++ }, calendarSource = calendar, selectedCalendarIds = flowOf(setOf(1L)),
+            googleCopy = app.brujula.calendar.GoogleCopySync(writer, repo), noticeMillis = 10, googleScope = realScope,
+            scopeOverride = backgroundScope,
+        )
+        val v = vm()
+        v.setTitle("Dentista"); v.setType(ActivityType.APPOINTMENT); v.save()
+        v.state.first { it.saved }
+        val saved = repo.observeAll().first().first { it.title == "Dentista" }
+        assertEquals(100L, saved.googleEventId)
+        val e = vm(saved.id)
+        e.state.first { it.ready }
+        e.delete()
+        e.state.first { it.saved }
+        awaitReal { writer.events.isEmpty() }
+        assertTrue(writer.events.isEmpty())
+    }
+
+    @Test fun slowGoogleWriteClosesFormAndFinishesInBackground() = runTest {
+        val writer = app.brujula.calendar.FakeGoogleCalendarWriter().apply { insertDelayMs = 1_500 }
+        val vm = ActivityFormViewModel(
+            activityId = null, prefillStart = null, clock = clock, activityRepository = repo,
+            resync = { resyncs++ }, calendarSource = calendar, selectedCalendarIds = flowOf(setOf(1L)),
+            googleCopy = app.brujula.calendar.GoogleCopySync(writer, repo), noticeMillis = 10,
+            googleScope = realScope, googleTimeoutMillis = 200, scopeOverride = backgroundScope,
+        )
+        vm.setTitle("Dentista"); vm.setType(ActivityType.APPOINTMENT); vm.save()
+        val s = vm.state.first { it.saved }
+        assertNull(s.googleNotice)
+        assertNull(repo.observeAll().first().first { it.title == "Dentista" }.googleEventId)
+        awaitReal { repo.observeAll().first().first { it.title == "Dentista" }.googleEventId == 100L }
+        assertEquals(1, writer.inserts)
+    }
+
+    @Test fun linkedExternalEventIsNotAConflict() = runTest {
+        val id = repo.upsert(
+            Activity(title = "Copia", type = ActivityType.APPOINTMENT, date = tomorrow, start = LocalTime.of(9, 0), durationMin = 30),
+        )
+        repo.setGoogleEventId(id, 9L)
+        val span = TimeSpan(tomorrow.atTime(14, 0), tomorrow.atTime(15, 0))
+        calendar.eventList = listOf(
+            ExternalEvent(9L, 0, 1, "Personal", "Google", "Copia", span, false, null),
+            ExternalEvent(10L, 0, 1, "Personal", "Google", "Ajena", span, false, null),
+        )
+        val vm = newVm(prefill = tomorrow.atTime(14, 0))
+        assertEquals("Ajena", vm.state.first { it.externalConflict?.title == "Ajena" }.externalConflict?.title)
+    }
+
+    private fun TestScope.vmNoPermission(selected: kotlinx.coroutines.flow.Flow<Set<Long>?>, writer: app.brujula.calendar.FakeGoogleCalendarWriter, sync: app.brujula.calendar.GoogleCopySync) =
+        ActivityFormViewModel(
+            activityId = null, prefillStart = null, clock = clock, activityRepository = repo,
+            resync = { resyncs++ }, calendarSource = calendar, selectedCalendarIds = selected,
+            googleCopy = sync, noticeMillis = 5_000, googleScope = realScope, scopeOverride = backgroundScope,
+        )
+
+    @Test fun noticeIsShownAndHeldOnlyWhenCalendarsWereConnected() = runTest {
+        val writer = app.brujula.calendar.FakeGoogleCalendarWriter(permission = false)
+        val vm = vmNoPermission(flowOf(setOf(1L)), writer, app.brujula.calendar.GoogleCopySync(writer, repo))
+        vm.setTitle("Dentista"); vm.setType(ActivityType.APPOINTMENT)
+        vm.save()
+        val s = vm.state.first { it.googleStatus == app.brujula.calendar.GoogleCopyStatus.NO_PERMISSION }
+        assertEquals("No se pudo copiar: falta el permiso de calendario. Actívalo en Tu rutina.", s.googleNotice)
+        vm.state.first { it.saved }
+        assertTrue(testScheduler.currentTime >= 5_000)
+    }
+
+    @Test fun noNoticeAndNoHoldWhenCalendarsWereNeverConnected() = runTest {
+        val writer = app.brujula.calendar.FakeGoogleCalendarWriter(permission = false)
+        val vm = vmNoPermission(flowOf(null), writer, app.brujula.calendar.GoogleCopySync(writer, repo))
+        vm.setTitle("Dentista"); vm.setType(ActivityType.APPOINTMENT)
+        vm.save()
+        val s = vm.state.first { it.saved }
+        assertNull(s.googleNotice)
+        assertTrue(testScheduler.currentTime < 5_000)
+        assertTrue(repo.observeAll().first().any { it.title == "Dentista" })
     }
 }

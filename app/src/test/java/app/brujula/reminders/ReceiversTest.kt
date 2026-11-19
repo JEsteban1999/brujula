@@ -353,6 +353,52 @@ class ReceiversTest {
         assertEquals("No encontré un hueco libre hoy para ejercicio.", n.extras.getCharSequence(android.app.Notification.EXTRA_TITLE).toString())
     }
 
+    private fun meeting(id: Long, s: LocalDateTime, e: LocalDateTime, allDay: Boolean = false) =
+        app.brujula.calendar.ExternalEvent(id, 0, 1, "Personal", "Google", "Reunion $id", app.brujula.core.time.TimeSpan(s, e), allDay, null)
+
+    private fun connectCalendar(vararg events: app.brujula.calendar.ExternalEvent) {
+        ctx.container.calendarSource = app.brujula.calendar.FakeCalendarSource(eventList = events.toList())
+        runBlocking { ctx.container.routineRepository.calendarPrefs.setSelectedCalendarIds(setOf(1L)) }
+    }
+
+    @Test fun exerciseYesAvoidsCalendarMeeting() {
+        saturday(7)
+        setNow(sat.atTime(12, 0))
+        connectCalendar(meeting(1, sat.atTime(12, 0), sat.atTime(13, 0)))
+        NotificationActionReceiver().onReceive(ctx, promptIntent(NotificationActionReceiver.ACTION_EXERCISE_YES))
+        awaitCalls(1)
+        assertEquals(java.time.LocalTime.of(13, 0), exercises().single().start)
+    }
+
+    @Test fun exerciseYesIgnoresAllDayAndLinkedCopies() {
+        saturday(8)
+        setNow(sat.atTime(12, 0))
+        val linked = busy(sat, 18, 0, 30, "Copia")
+        runBlocking { ctx.container.activityRepository.setGoogleEventId(linked, 2L) }
+        connectCalendar(
+            meeting(1, sat.atStartOfDay(), sat.plusDays(1).atStartOfDay(), allDay = true),
+            meeting(2, sat.atTime(12, 0), sat.atTime(13, 0)),
+        )
+        NotificationActionReceiver().onReceive(ctx, promptIntent(NotificationActionReceiver.ACTION_EXERCISE_YES))
+        awaitCalls(1)
+        assertEquals(java.time.LocalTime.of(12, 0), exercises().single().start)
+    }
+
+    @Test fun exerciseYesWorksWhenCalendarReadFails() {
+        saturday(9)
+        setNow(sat.atTime(12, 0))
+        ctx.container.calendarSource = object : app.brujula.calendar.CalendarSource {
+            override fun hasReadPermission() = true
+            override suspend fun calendars() = emptyList<app.brujula.calendar.DeviceCalendar>()
+            override suspend fun events(calendarIds: Set<Long>, from: LocalDateTime, to: LocalDateTime): List<app.brujula.calendar.ExternalEvent> =
+                throw IllegalStateException("boom")
+        }
+        runBlocking { ctx.container.routineRepository.calendarPrefs.setSelectedCalendarIds(setOf(1L)) }
+        NotificationActionReceiver().onReceive(ctx, promptIntent(NotificationActionReceiver.ACTION_EXERCISE_YES))
+        awaitCalls(1)
+        assertEquals(java.time.LocalTime.of(12, 0), exercises().single().start)
+    }
+
     @Test fun groupedReminderNotificationCarriesFullBodyAsBigText() {
         val body = "Mira algo lejano 20 segundos. · Párate y camina 2 minutos. · Estira cuello, espalda y muñecas. · Endereza la espalda y relaja los hombros."
         val g = Reminder("wellness:202611181300", now, ReminderKind.HABIT, "Pausa", body, habitId = 1, habitIds = listOf(1, 2, 3, 4), day = now.toLocalDate())

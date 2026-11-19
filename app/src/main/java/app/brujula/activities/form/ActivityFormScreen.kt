@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -166,6 +167,15 @@ fun ActivityFormScreen(
                     if (state.type == ActivityType.APPOINTMENT) "Las citas se copian por defecto"
                     else "Los bloques de rutina se quedan en Brújula",
                     state.copyToGoogle, viewModel::setCopyToGoogle,
+                )
+            }
+
+            state.googleNotice?.let { notice ->
+                Text(
+                    notice, color = c.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.soft2)
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .semantics { this.liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
                 )
             }
 
@@ -419,9 +429,9 @@ private fun CustomDuration(current: Int, onChange: (Int) -> Unit) {
 @Composable
 private fun ConflictStatus(state: ActivityFormState) {
     val dark = BrujulaTheme.colors.bg.luminance() < 0.5f
-    val conflict = state.conflict
-    val bg = if (conflict != null) BrujulaTheme.colors.soft2 else if (dark) Color(0xFF13332A) else Color(0xFFDDF3E8)
-    val dot = if (conflict != null) BrujulaTheme.colors.accent2Text else okColor()
+    val message = state.conflictMessage
+    val bg = if (message != null) BrujulaTheme.colors.soft2 else if (dark) Color(0xFF13332A) else Color(0xFFDDF3E8)
+    val dot = if (message != null) BrujulaTheme.colors.accent2Text else okColor()
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(bg).padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -429,12 +439,12 @@ private fun ConflictStatus(state: ActivityFormState) {
     ) {
         Box(Modifier.size(22.dp).clip(CircleShape).background(dot), contentAlignment = Alignment.Center) {
             Text(
-                if (conflict != null) "!" else "✓", color = BrujulaTheme.colors.bg,
+                if (message != null) "!" else "✓", color = BrujulaTheme.colors.bg,
                 fontSize = 12.sp, fontWeight = FontWeight.ExtraBold,
             )
         }
         Text(
-            if (conflict != null) "Choca con ${conflict.activity.title}." else "Libre a esa hora. No choca con nada.",
+            message ?: "Libre a esa hora. No choca con nada.",
             color = BrujulaTheme.colors.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
         )
     }

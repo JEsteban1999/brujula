@@ -72,7 +72,11 @@ fun TodayHeader(state: TodayUiState, reduced: Boolean) {
     val c = BrujulaTheme.colors
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(state.dayLabel, color = c.textMuted, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(
+                headerDateText(state), color = c.textMuted, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false).semantics { contentDescription = headerDateDescription(state) },
+            )
             dayTypeLabel(state.dayType)?.let { DayTypePill(it, Modifier.weight(1f, fill = false)) }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
@@ -84,6 +88,14 @@ fun TodayHeader(state: TodayUiState, reduced: Boolean) {
         }
     }
 }
+
+/** Línea de fecha del encabezado; de madrugada (00:00-03:59) añade " · noche". */
+internal fun headerDateText(state: TodayUiState): String =
+    if (state.isLateNight) "${state.dayLabel} · noche" else state.dayLabel
+
+/** Para TalkBack: sin el punto medio, que se leería como símbolo. */
+internal fun headerDateDescription(state: TodayUiState): String =
+    if (state.isLateNight) "${state.dayLabel}, noche" else state.dayLabel
 
 internal fun dayTypeLabel(type: DayType): String? = when (type.kind) {
     DayKind.WORKDAY -> null

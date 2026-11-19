@@ -24,6 +24,7 @@ data class Activity(
     val repeat: Repeat = Repeat.NONE,
     val remindBeforeMin: Int? = 15,
     val copyToGoogle: Boolean = type == ActivityType.APPOINTMENT,
+    val googleEventId: Long? = null,
 )
 
 fun Activity.occursOn(day: LocalDate): Boolean {

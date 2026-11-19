@@ -97,6 +97,8 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                                 activityRepository = container.activityRepository,
                                 habitRepository = container.habitRepository,
                                 readPermissions = { readPermissionStatus(appContext) },
+                                calendarSource = container.calendarSource,
+                                classifications = container.workClassificationRepository,
                             )
                         }
                     },
@@ -133,7 +135,14 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                 val container = LocalContext.current.container
                 val vm: RoutineViewModel = viewModel(
                     factory = viewModelFactory {
-                        initializer { RoutineViewModel(container.routineRepository, container.reminderSync) }
+                        initializer {
+                            RoutineViewModel(
+                                container.routineRepository, container.reminderSync,
+                                calendarSource = container.calendarSource,
+                                syncScope = container.syncScope,
+                                reconcileGoogle = { container.reconcileGoogleCopies() },
+                            )
+                        }
                     },
                 )
                 RoutineScreen(viewModel = vm)
@@ -157,6 +166,10 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                                 clock = container.clock,
                                 activityRepository = container.activityRepository,
                                 resync = container.reminderSync,
+                                calendarSource = container.calendarSource,
+                                selectedCalendarIds = container.routineRepository.calendarPrefs.selectedCalendarIds,
+                                googleCopy = container.googleCopySync,
+                                googleScope = container.syncScope,
                             )
                         }
                     },

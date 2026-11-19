@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import app.brujula.calendar.CalendarPrefs
 import app.brujula.core.theme.ThemeMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -32,6 +33,9 @@ class RoutineRepository(private val dataStore: DataStore<Preferences>) {
     }
 
     val routine: Flow<Routine> = dataStore.data.map(::read)
+
+    /** Calendarios del telefono elegidos, en el mismo DataStore. */
+    val calendarPrefs = CalendarPrefs(dataStore)
 
     /** Marca de primer arranque: los datos por defecto ya se sembraron una vez. */
     suspend fun isSeeded(): Boolean = dataStore.data.first()[Keys.seeded] ?: false
