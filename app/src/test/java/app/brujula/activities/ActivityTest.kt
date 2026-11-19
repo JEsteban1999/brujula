@@ -17,6 +17,12 @@ class ActivityTest {
         assertTrue(act(Repeat.WEEKLY).occursOn(wed.plusDays(7))); assertFalse(act(Repeat.WEEKLY).occursOn(wed.plusDays(6)))
         assertFalse(act(Repeat.DAILY).occursOn(wed.minusDays(1))) // no antes de su fecha
     }
+    @Test fun workdaysSkipWeekendsAndHolidays() {
+        assertTrue(act(Repeat.WORKDAYS).occursOn(wed))
+        assertFalse(act(Repeat.WORKDAYS).occursOn(LocalDate.of(2026, 11, 21))) // sábado
+        assertFalse(act(Repeat.WORKDAYS).occursOn(LocalDate.of(2026, 12, 8))) // festivo entre semana
+        assertFalse(act(Repeat.WORKDAYS).occursOn(wed.minusDays(1)))
+    }
     @Test fun occurrenceCrossingMidnightStaysOnItsDay() {
         val late = Activity(2, "Película", ActivityType.PERSONAL, wed, LocalTime.of(23, 30), 60)
         val occ = occurrencesOn(wed, listOf(late), emptySet()).single()
@@ -39,6 +45,6 @@ class ActivityTest {
     }
     @Test fun labels() {
         assertEquals(listOf("Trabajo", "Ejercicio", "Cita", "Personal"), ActivityType.values().map { it.labelEs })
-        assertEquals(listOf("No se repite", "Todos los días", "Lunes a viernes", "Cada semana"), Repeat.values().map { it.labelEs })
+        assertEquals(listOf("No se repite", "Todos los días", "Lunes a viernes", "Días laborales (sin festivos)", "Cada semana"), Repeat.values().map { it.labelEs })
     }
 }

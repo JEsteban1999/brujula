@@ -76,4 +76,16 @@ class ThemeStateTest {
         clock.current = LocalDateTime.of(2026, 11, 18, 21, 30)
         flow.test { assertEquals(true, awaitItem()); cancelAndIgnoreRemainingEvents() }
     }
+
+    @Test fun autoOnSaturdayWaitsForRestWake() = runTest {
+        val clock = FixedClock(LocalDateTime.of(2026, 11, 21, 9, 30))
+        val routine = MutableStateFlow(Routine(themeMode = ThemeMode.AUTO))
+        darkFlow(routine, clock, tickMs = 60_000).test {
+            assertEquals(true, awaitItem())
+            clock.current = LocalDateTime.of(2026, 11, 21, 10, 0)
+            advanceTimeBy(60_001)
+            assertEquals(false, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
 }

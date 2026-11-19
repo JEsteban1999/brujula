@@ -46,4 +46,13 @@ class RoutineRepositoryTest {
         r.update { it.copy(workBlocks = emptyList()) }
         assertEquals(emptyList<Pair<LocalTime, LocalTime>>(), r.routine.first().workBlocks)
     }
+
+    @Test fun restHoursDefaultAndPersist() = runTest {
+        val r = repo()
+        assertEquals(LocalTime.of(10, 0), r.routine.first().restWake)
+        assertEquals(LocalTime.of(1, 0), r.routine.first().restBed)
+        r.update { it.copy(restWake = LocalTime.of(11, 0), restBed = LocalTime.of(2, 0)) }
+        assertEquals(LocalTime.of(11, 0), r.routine.first().restWake)
+        assertEquals(LocalTime.of(2, 0), r.routine.first().restBed)
+    }
 }

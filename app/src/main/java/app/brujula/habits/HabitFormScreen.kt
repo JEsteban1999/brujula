@@ -21,9 +21,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -51,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.brujula.core.theme.BrujulaTheme
 import app.brujula.core.time.formatTime
+import app.brujula.ui.StepperRow
 import app.brujula.ui.pressScale
 import app.brujula.ui.rememberReducedMotion
 import java.time.DayOfWeek
@@ -59,6 +63,11 @@ import java.time.LocalTime
 private val ICONS = listOf(
     HabitIcon.WATER to "Agua", HabitIcon.LIP_BALM to "Bálsamo",
     HabitIcon.STRETCH to "Estirar", HabitIcon.GENERIC to "Otro",
+)
+private val WELLNESS_ICONS = listOf(
+    HabitIcon.EYE to "Ojos", HabitIcon.WALK to "Caminar", HabitIcon.STRETCH to "Estirar", HabitIcon.POSTURE to "Postura",
+    HabitIcon.FOOD to "Comida", HabitIcon.SCREEN_OFF to "Pantallas", HabitIcon.PILL to "Pastilla", HabitIcon.SUN to "Sol",
+    HabitIcon.BOOK to "Lectura", HabitIcon.GENERIC to "Otro",
 )
 private val DAY_LABELS = listOf(
     DayOfWeek.MONDAY to "L", DayOfWeek.TUESDAY to "M", DayOfWeek.WEDNESDAY to "X", DayOfWeek.THURSDAY to "J",
@@ -111,27 +120,36 @@ fun HabitFormScreen(viewModel: HabitFormViewModel, onClose: () -> Unit, modifier
             Field("Ícono") {
                 @OptIn(ExperimentalLayoutApi::class)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ICONS.forEach { (icon, label) ->
+                    val base = if (state.group == HabitGroup.WELLNESS) WELLNESS_ICONS else ICONS
+                    val options = if (base.any { it.first == state.icon }) base else base + (state.icon to state.icon.name.lowercase().replaceFirstChar { it.uppercase() })
+                    options.forEach { (icon, label) ->
                         Chip(label, state.icon == icon, reduced) { viewModel.setIcon(icon) }
                     }
                 }
             }
 
             Field("Cuándo avisar") {
-                Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.surface2).padding(4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Segment("Cada cierto tiempo", state.mode == HabitMode.EVERY, reduced, Modifier.weight(1f)) {
-                        viewModel.setMode(HabitMode.EVERY)
-                    }
-                    Segment("A horas fijas", state.mode == HabitMode.AT_TIMES, reduced, Modifier.weight(1f)) {
-                        viewModel.setMode(HabitMode.AT_TIMES)
-                    }
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Chip("Cada cierto tiempo", state.mode == HabitMode.EVERY, reduced) { viewModel.setMode(HabitMode.EVERY) }
+                    Chip("A horas fijas", state.mode == HabitMode.AT_TIMES, reduced) { viewModel.setMode(HabitMode.AT_TIMES) }
+                    Chip("Antes de dormir", state.mode == HabitMode.BEFORE_BED, reduced) { viewModel.setMode(HabitMode.BEFORE_BED) }
                 }
             }
 
-            if (state.mode == HabitMode.EVERY) {
+            if (state.mode == HabitMode.BEFORE_BED) {
+                Card {
+                    StepperRow(
+                        "Antes de dormir", "${state.beforeBedMin} min", "15 minutos menos", "15 minutos más", reduced,
+                        onMinus = { viewModel.setBeforeBedMin(state.beforeBedMin - INTERVAL_STEP) },
+                        onPlus = { viewModel.setBeforeBedMin(state.beforeBedMin + INTERVAL_STEP) },
+                    )
+                    Text(
+                        "Un aviso al día, de $MIN_BEFORE_BED_MIN a $MAX_BEFORE_BED_MIN minutos antes de tu hora de dormir.",
+                        color = c.textMuted, fontSize = 12.sp,
+                    )
+                }
+            } else if (state.mode == HabitMode.EVERY) {
                 Card {
                     StepperRow(
                         "Cada", "${state.intervalMin} min", "15 minutos menos", "15 minutos más", reduced,
@@ -148,6 +166,12 @@ fun HabitFormScreen(viewModel: HabitFormViewModel, onClose: () -> Unit, modifier
                 TimesCard(state, viewModel, reduced)
             }
 
+            if (state.mode != HabitMode.BEFORE_BED) {
+                Card {
+                    WorkOnlyRow(state.workOnly) { viewModel.setWorkOnly(it) }
+                }
+            }
+
             Card {
                 if (state.mode == HabitMode.EVERY) {
                     StepperRow(
@@ -159,6 +183,9 @@ fun HabitFormScreen(viewModel: HabitFormViewModel, onClose: () -> Unit, modifier
                         "Al llegar a la meta, se pausan los avisos del día.",
                         color = c.textMuted, fontSize = 12.sp,
                     )
+                } else if (state.mode == HabitMode.BEFORE_BED) {
+                    Text("Meta del día: 1", color = c.text, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("Una vez al día.", color = c.textMuted, fontSize = 12.sp)
                 } else {
                     // A horas fijas la meta es una por cada hora: no se edita.
                     Text(
@@ -294,24 +321,6 @@ private fun Chip(label: String, selected: Boolean, reduced: Boolean, onClick: ()
 }
 
 @Composable
-private fun Segment(label: String, selected: Boolean, reduced: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    val c = BrujulaTheme.colors
-    val source = remember { MutableInteractionSource() }
-    Box(
-        modifier.height(48.dp).pressScale(source, reduced).clip(RoundedCornerShape(11.dp))
-            .background(if (selected) c.surface else Color.Transparent)
-            .clickable(interactionSource = source, indication = null, role = Role.Button, onClick = onClick)
-            .semantics { this.selected = selected },
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            label, color = if (selected) c.text else c.textMuted, fontSize = 13.sp, fontWeight = FontWeight.Bold,
-            maxLines = 1, textAlign = TextAlign.Center,
-        )
-    }
-}
-
-@Composable
 private fun DayChip(label: String, name: String, on: Boolean, reduced: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val c = BrujulaTheme.colors
     val source = remember { MutableInteractionSource() }
@@ -322,35 +331,6 @@ private fun DayChip(label: String, name: String, on: Boolean, reduced: Boolean, 
             .semantics { this.selected = on; contentDescription = name },
         contentAlignment = Alignment.Center,
     ) { Text(label, color = if (on) c.onAccent else c.text, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
-}
-
-@Composable
-private fun SquareButton(symbol: String, description: String, reduced: Boolean, onClick: () -> Unit) {
-    val c = BrujulaTheme.colors
-    val source = remember { MutableInteractionSource() }
-    Box(
-        Modifier.size(48.dp).pressScale(source, reduced).clip(RoundedCornerShape(12.dp)).background(c.surface2)
-            .clickable(interactionSource = source, indication = null, role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = description },
-        contentAlignment = Alignment.Center,
-    ) { Text(symbol, color = c.text, fontSize = 20.sp, fontWeight = FontWeight.Bold) }
-}
-
-@Composable
-private fun StepperRow(
-    label: String, value: String, minusDesc: String, plusDesc: String, reduced: Boolean,
-    onMinus: () -> Unit, onPlus: () -> Unit,
-) {
-    val c = BrujulaTheme.colors
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(label, Modifier.weight(1f), color = c.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-        SquareButton("−", minusDesc, reduced, onMinus)
-        Text(
-            value, Modifier.width(64.dp), textAlign = TextAlign.Center, color = c.text,
-            fontFamily = BrujulaTheme.type.display, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp,
-        )
-        SquareButton("+", plusDesc, reduced, onPlus)
-    }
 }
 
 @Composable
@@ -389,5 +369,28 @@ private fun TimesCard(state: HabitFormState, vm: HabitFormViewModel, reduced: Bo
             Text("Agregar ${formatTime(candidate)}", color = c.accentText, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
         }
         ErrorText(state.timesError)
+    }
+}
+
+@Composable
+private fun WorkOnlyRow(checked: Boolean, onChange: (Boolean) -> Unit) {
+    val c = BrujulaTheme.colors
+    Row(
+        Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp)
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onChange),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Solo en horario de trabajo", color = c.text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text("Solo en días laborales y dentro de tus bloques de trabajo.", color = c.textMuted, fontSize = 12.sp)
+        }
+        Switch(
+            checked = checked, onCheckedChange = null,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = c.onAccent, checkedTrackColor = c.accent,
+                uncheckedThumbColor = c.textMuted, uncheckedTrackColor = c.surface2, uncheckedBorderColor = c.line,
+            ),
+        )
     }
 }

@@ -35,8 +35,8 @@ class HabitFormViewModelTest {
 
     @After fun tearDown() { db.close() }
 
-    private fun TestScope.vm(id: Long? = null) = HabitFormViewModel(
-        habitId = id, habitRepository = habits, resync = { resyncs++ }, scopeOverride = backgroundScope,
+    private fun TestScope.vm(id: Long? = null, group: HabitGroup = HabitGroup.ESSENTIAL) = HabitFormViewModel(
+        habitId = id, group = group, habitRepository = habits, resync = { resyncs++ }, scopeOverride = backgroundScope,
     )
 
     @Test fun validations() = runTest {
@@ -176,5 +176,100 @@ class HabitFormViewModelTest {
         assertEquals(90, loaded.intervalMin)
         assertEquals(8, loaded.dailyTarget)
         assertEquals("Agua", habits.observeHabits().first().single().name)
+    }
+
+    @Test fun editingWellnessWorkHabitKeepsGroupWindowAndSchedule() = runTest {
+        val id = habits.upsert(
+            Habit(name = "Ojos", icon = HabitIcon.EYE, schedule = HabitSchedule.Every(30), dailyTarget = 14,
+                group = HabitGroup.WELLNESS, window = HabitWindow.WORK),
+        )
+        val vm = vm(id)
+        vm.state.first { it.ready }
+        vm.setName("Descanso de ojos")
+        vm.save()
+        vm.state.first { it.saved }
+        val h = habits.observeHabits().first().single()
+        assertEquals("Descanso de ojos", h.name)
+        assertEquals(HabitGroup.WELLNESS, h.group)
+        assertEquals(HabitWindow.WORK, h.window)
+        assertEquals(HabitSchedule.Every(30), h.schedule)
+    }
+
+    @Test fun editingBeforeBedHabitKeepsSchedule() = runTest {
+        val id = habits.upsert(
+            Habit(name = "Pantallas", icon = HabitIcon.SCREEN_OFF, schedule = HabitSchedule.BeforeBed(45), dailyTarget = 1,
+                group = HabitGroup.WELLNESS),
+        )
+        val vm = vm(id)
+        vm.state.first { it.ready }
+        vm.setName("Sin pantallas")
+        vm.save()
+        vm.state.first { it.saved }
+        val h = habits.observeHabits().first().single()
+        assertEquals("Sin pantallas", h.name)
+        assertEquals(HabitSchedule.BeforeBed(45), h.schedule)
+        assertEquals(HabitGroup.WELLNESS, h.group)
+        assertEquals(1, h.dailyTarget)
+    }
+
+    @Test fun createsWellnessWorkBeforeBedHabit() = runTest {
+        val vm = vm(group = HabitGroup.WELLNESS)
+        vm.setName("Sin pantallas")
+        vm.setMode(HabitMode.BEFORE_BED)
+        vm.setBeforeBedMin(60)
+        vm.save()
+        vm.state.first { it.saved }
+        val h = habits.observeHabits().first().single()
+        assertEquals(HabitGroup.WELLNESS, h.group)
+        assertEquals(HabitSchedule.BeforeBed(60), h.schedule)
+        assertEquals(HabitWindow.AWAKE, h.window)
+        assertEquals(1, h.dailyTarget)
+    }
+
+    @Test fun createsWellnessWorkEveryHabit() = runTest {
+        val vm = vm(group = HabitGroup.WELLNESS)
+        vm.setName("Ojos")
+        vm.setWorkOnly(true)
+        vm.save()
+        vm.state.first { it.saved }
+        val h = habits.observeHabits().first().single()
+        assertEquals(HabitGroup.WELLNESS, h.group)
+        assertEquals(HabitWindow.WORK, h.window)
+    }
+
+    @Test fun beforeBedModeForcesAwakeWindowAndClampsMinutes() = runTest {
+        val vm = vm(group = HabitGroup.WELLNESS)
+        vm.setWorkOnly(true)
+        vm.setMode(HabitMode.BEFORE_BED)
+        assertFalse(vm.state.value.workOnly)
+        vm.setBeforeBedMin(500)
+        assertEquals(180, vm.state.value.beforeBedMin)
+        vm.setBeforeBedMin(0)
+        assertEquals(15, vm.state.value.beforeBedMin)
+    }
+
+    @Test fun loadedBeforeBedOpensInThatModeAndCanSwitchAway() = runTest {
+        val id = habits.upsert(
+            Habit(name = "Pantallas", icon = HabitIcon.SCREEN_OFF, schedule = HabitSchedule.BeforeBed(45), dailyTarget = 1,
+                group = HabitGroup.WELLNESS),
+        )
+        val vm = vm(id)
+        val s = vm.state.first { it.ready }
+        assertEquals(HabitMode.BEFORE_BED, s.mode)
+        assertEquals(45, s.beforeBedMin)
+        vm.setMode(HabitMode.AT_TIMES)
+        vm.addTime(LocalTime.of(21, 0))
+        vm.save()
+        vm.state.first { it.saved }
+        assertEquals(HabitSchedule.AtTimes(listOf(LocalTime.of(21, 0))), habits.observeHabits().first().single().schedule)
+    }
+
+    @Test fun workOnlyEveryRecomputesAutoTarget() = runTest {
+        val vm = vm()
+        vm.setIntervalMin(30)
+        vm.setWorkOnly(true)
+        assertEquals(14, vm.state.value.dailyTarget)
+        vm.setWorkOnly(false)
+        assertTrue(vm.state.value.dailyTarget > 14)
     }
 }

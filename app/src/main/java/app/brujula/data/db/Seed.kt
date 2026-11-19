@@ -36,10 +36,11 @@ object Seed {
             activities.upsert(
                 Activity(
                     title = "Ejercicio en casa", type = ActivityType.EXERCISE, date = today,
-                    start = LocalTime.of(18, 30), durationMin = 30, repeat = Repeat.DAILY,
+                    start = LocalTime.of(18, 30), durationMin = 30, repeat = Repeat.WORKDAYS,
                 ),
             )
         }
         routine.markSeeded()
+        Migrations.seedWellness(db, routine)
     }
 }

@@ -15,11 +15,13 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
 
-enum class HabitMode { EVERY, AT_TIMES }
+enum class HabitMode { EVERY, AT_TIMES, BEFORE_BED }
 
 const val MIN_INTERVAL_MIN = 15
 const val MAX_INTERVAL_MIN = 480
 const val MAX_DAILY_TARGET = 99
+const val MIN_BEFORE_BED_MIN = 15
+const val MAX_BEFORE_BED_MIN = 180
 private val REFERENCE_DAY: LocalDate = LocalDate.of(2000, 1, 3)
 
 data class HabitFormState(
@@ -32,6 +34,11 @@ data class HabitFormState(
     /** Falso mientras la meta sea la calculada; al tocarla el usuario deja de recalcularse. */
     val targetTouched: Boolean = false,
     val days: Set<DayOfWeek> = DayOfWeek.entries.toSet(),
+    /** Minutos antes de dormir para el modo "Antes de dormir". */
+    val beforeBedMin: Int = 45,
+    /** "Solo en horario de trabajo" (ventana WORK); no aplica a "Antes de dormir". */
+    val workOnly: Boolean = false,
+    val group: HabitGroup = HabitGroup.ESSENTIAL,
     val nameError: String? = null,
     val intervalError: String? = null,
     val timesError: String? = null,
@@ -48,6 +55,7 @@ data class HabitFormState(
 
 class HabitFormViewModel(
     habitId: Long?,
+    group: HabitGroup = HabitGroup.ESSENTIAL,
     private val habitRepository: HabitRepository,
     private val resync: ReminderResync = ReminderResync { },
     /** Rutina para calcular la meta por defecto de los habitos "cada cierto tiempo". */
@@ -58,7 +66,7 @@ class HabitFormViewModel(
     private var editing: Habit? = null
     private var routine = Routine()
 
-    private val _state = MutableStateFlow(autoTarget(HabitFormState(ready = habitId == null)))
+    private val _state = MutableStateFlow(autoTarget(HabitFormState(ready = habitId == null, group = group)))
     val state: StateFlow<HabitFormState> = _state.asStateFlow()
 
     init {
@@ -79,7 +87,13 @@ class HabitFormViewModel(
                 _state.update {
                     it.copy(
                         name = h.name, icon = h.icon, dailyTarget = h.dailyTarget, targetTouched = true, days = h.days, isEdit = true, ready = true,
-                        mode = if (h.schedule is HabitSchedule.AtTimes) HabitMode.AT_TIMES else HabitMode.EVERY,
+                        group = h.group, workOnly = h.window == HabitWindow.WORK,
+                        mode = when (h.schedule) {
+                            is HabitSchedule.AtTimes -> HabitMode.AT_TIMES
+                            is HabitSchedule.BeforeBed -> HabitMode.BEFORE_BED
+                            is HabitSchedule.Every -> HabitMode.EVERY
+                        },
+                        beforeBedMin = (h.schedule as? HabitSchedule.BeforeBed)?.minutes ?: it.beforeBedMin,
                         intervalMin = (h.schedule as? HabitSchedule.Every)?.intervalMin ?: it.intervalMin,
                         times = (h.schedule as? HabitSchedule.AtTimes)?.times ?: it.times,
                     )
@@ -95,7 +109,11 @@ class HabitFormViewModel(
 
     fun setName(v: String) = edit { it.copy(name = v, nameError = null) }
     fun setIcon(v: HabitIcon) = edit { it.copy(icon = v) }
-    fun setMode(v: HabitMode) = edit { autoTarget(it.copy(mode = v, intervalError = null, timesError = null)) }
+    fun setMode(v: HabitMode) = edit {
+        autoTarget(it.copy(mode = v, intervalError = null, timesError = null, workOnly = it.workOnly && v != HabitMode.BEFORE_BED))
+    }
+    fun setBeforeBedMin(v: Int) = edit { it.copy(beforeBedMin = v.coerceIn(MIN_BEFORE_BED_MIN, MAX_BEFORE_BED_MIN)) }
+    fun setWorkOnly(v: Boolean) = edit { autoTarget(it.copy(workOnly = v && it.mode != HabitMode.BEFORE_BED)) }
     fun setIntervalMin(v: Int) = edit { autoTarget(it.copy(intervalMin = v, intervalError = null)) }
     fun setTimes(v: List<LocalTime>) = edit { it.copy(times = v, timesError = null) }
     fun addTime(t: LocalTime) = edit { it.copy(times = (it.times + t).distinct().sorted(), timesError = null) }
@@ -105,8 +123,10 @@ class HabitFormViewModel(
     /** Meta calculada: tantos avisos como caben en la vigilia mientras el usuario no la toque. */
     private fun autoTarget(s: HabitFormState): HabitFormState {
         if (s.targetTouched || s.mode != HabitMode.EVERY || s.intervalMin !in MIN_INTERVAL_MIN..MAX_INTERVAL_MIN) return s
-        val slots = Habit(name = "", icon = HabitIcon.GENERIC, schedule = HabitSchedule.Every(s.intervalMin), dailyTarget = 1)
-            .timesFor(REFERENCE_DAY, routine).size
+        val slots = Habit(
+            name = "", icon = HabitIcon.GENERIC, schedule = HabitSchedule.Every(s.intervalMin), dailyTarget = 1,
+            window = if (s.workOnly) HabitWindow.WORK else HabitWindow.AWAKE,
+        ).timesFor(REFERENCE_DAY, routine).size
         return s.copy(dailyTarget = slots.coerceIn(1, MAX_DAILY_TARGET))
     }
     fun setDays(v: Set<DayOfWeek>) = edit { it.copy(days = v, daysError = null) }
@@ -136,17 +156,24 @@ class HabitFormViewModel(
         _state.update {
             it.copy(saving = true, nameError = null, intervalError = null, timesError = null, daysError = null)
         }
+        val beforeBed = s.mode == HabitMode.BEFORE_BED
         val schedule = when (s.mode) {
             HabitMode.EVERY -> HabitSchedule.Every(s.intervalMin)
             HabitMode.AT_TIMES -> HabitSchedule.AtTimes(s.times.distinct().sorted())
+            HabitMode.BEFORE_BED -> HabitSchedule.BeforeBed(s.beforeBedMin)
         }
-        // A horas fijas: la meta es una por cada hora, asi nunca se pausan los avisos restantes.
-        val target = if (s.mode == HabitMode.AT_TIMES) s.times.distinct().size else s.dailyTarget
+        // A horas fijas la meta es una por cada hora; antes de dormir, una vez al día.
+        val target = when (s.mode) {
+            HabitMode.AT_TIMES -> s.times.distinct().size
+            HabitMode.BEFORE_BED -> 1
+            HabitMode.EVERY -> s.dailyTarget
+        }
         scope.launch {
             habitRepository.upsert(
                 Habit(
                     id = editing?.id ?: 0L, name = name, icon = s.icon, schedule = schedule,
                     dailyTarget = target, days = s.days, active = editing?.active ?: true,
+                    group = s.group, window = if (s.workOnly && !beforeBed) HabitWindow.WORK else HabitWindow.AWAKE,
                 ),
             )
             runCatching { resync.resync() }

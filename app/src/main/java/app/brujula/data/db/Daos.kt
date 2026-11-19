@@ -42,7 +42,13 @@ interface HabitDao {
     @Query("SELECT COUNT(*) FROM habits")
     suspend fun count(): Int
 
+    @Query("SELECT COUNT(*) FROM habits WHERE groupName = 'WELLNESS'")
+    suspend fun countWellness(): Int
+
     @Upsert suspend fun upsert(e: HabitEntity): Long
+
+    @Query("UPDATE habits SET active = :active WHERE id = :id")
+    suspend fun setActive(id: Long, active: Boolean)
 
     @Query("DELETE FROM habits WHERE id = :id")
     suspend fun delete(id: Long)

@@ -35,6 +35,10 @@ android {
     testOptions {
         unitTests.isIncludeAndroidResources = true
     }
+    sourceSets {
+        // Solo debug: Robolectric toma los assets de la variante debug, y MigrationTestHelper necesita los esquemas exportados.
+        getByName("debug").assets.srcDir("$projectDir/schemas")
+    }
 }
 
 ksp {

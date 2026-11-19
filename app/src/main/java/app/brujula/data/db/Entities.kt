@@ -1,5 +1,6 @@
 package app.brujula.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -8,7 +9,9 @@ import app.brujula.activities.Activity
 import app.brujula.activities.ActivityType
 import app.brujula.activities.Repeat
 import app.brujula.habits.Habit
+import app.brujula.habits.HabitGroup
 import app.brujula.habits.HabitIcon
+import app.brujula.habits.HabitWindow
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -45,6 +48,8 @@ data class HabitEntity(
     val dailyTarget: Int,
     val days: String,
     val active: Boolean,
+    @ColumnInfo(defaultValue = "ESSENTIAL") val groupName: String = "ESSENTIAL",
+    @ColumnInfo(defaultValue = "AWAKE") val window: String = "AWAKE",
 )
 
 @Entity(
@@ -69,6 +74,12 @@ fun ActivityEntity.toModel() = Activity(
     id, title, ActivityType.valueOf(type), date, start, durationMin, Repeat.valueOf(repeat), remindBeforeMin, copyToGoogle,
 )
 
-fun Habit.toEntity() = HabitEntity(id, name, icon.name, schedule.encode(), dailyTarget, days.encodeDays(), active)
+fun Habit.toEntity() = HabitEntity(id, name, icon.name, schedule.encode(), dailyTarget, days.encodeDays(), active, group.name, window.name)
 
-fun HabitEntity.toModel() = Habit(id, name, HabitIcon.valueOf(icon), decodeSchedule(schedule), dailyTarget, decodeDays(days), active)
+fun HabitEntity.toModel() = Habit(
+    id, name, habitIconOf(icon), decodeSchedule(schedule), dailyTarget, decodeDays(days), active,
+    runCatching { HabitGroup.valueOf(groupName) }.getOrDefault(HabitGroup.ESSENTIAL),
+    runCatching { HabitWindow.valueOf(window) }.getOrDefault(HabitWindow.AWAKE),
+)
+
+private fun habitIconOf(name: String): HabitIcon = runCatching { HabitIcon.valueOf(name) }.getOrDefault(HabitIcon.GENERIC)

@@ -80,7 +80,8 @@ class AlarmReminderScheduler(
     private fun encode(r: Reminder): String = JSONObject()
         .put("key", r.key).put("at", r.at.toString()).put("kind", r.kind.name)
         .put("title", r.title).put("body", r.body).put("day", r.day.toString())
-        .put("habit", r.habitId ?: -1L).put("act", r.activityId ?: -1L).toString()
+        .put("habit", r.habitId ?: -1L).put("act", r.activityId ?: -1L)
+        .put("habitIds", org.json.JSONArray(r.habitIds)).put("wellness", r.wellness).toString()
 
     private fun loadSnoozes(): List<Reminder> =
         prefs.getStringSet(SNOOZES, emptySet()).orEmpty().mapNotNull {
@@ -91,6 +92,8 @@ class AlarmReminderScheduler(
                     kind = ReminderKind.valueOf(j.getString("kind")),
                     title = j.getString("title"), body = j.getString("body"),
                     habitId = j.getLong("habit").takeIf { id -> id >= 0 },
+                    habitIds = j.optJSONArray("habitIds")?.let { a -> (0 until a.length()).map { i -> a.getLong(i) } }.orEmpty(),
+                    wellness = j.optBoolean("wellness", false),
                     activityId = j.getLong("act").takeIf { id -> id >= 0 },
                     day = LocalDate.parse(j.getString("day")),
                 )

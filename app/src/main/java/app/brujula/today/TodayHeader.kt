@@ -25,6 +25,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.automirrored.outlined.DirectionsWalk
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.outlined.AccessibilityNew
+import androidx.compose.material.icons.outlined.Medication
+import androidx.compose.material.icons.outlined.PhonelinkOff
+import androidx.compose.material.icons.outlined.Restaurant
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.WbSunny
 import androidx.compose.material.icons.outlined.NotificationsOff
 import androidx.compose.material.icons.outlined.Spa
 import androidx.compose.material.icons.outlined.SelfImprovement
@@ -53,6 +61,8 @@ import app.brujula.core.theme.BrujulaTheme
 import app.brujula.core.time.formatMinutes
 import app.brujula.habits.HabitIcon
 import app.brujula.reminders.PermissionStatus
+import app.brujula.routine.DayKind
+import app.brujula.routine.DayType
 import app.brujula.ui.pressScale
 
 private val CardShape = RoundedCornerShape(24.dp)
@@ -60,23 +70,53 @@ private val CardShape = RoundedCornerShape(24.dp)
 @Composable
 fun TodayHeader(state: TodayUiState, reduced: Boolean) {
     val c = BrujulaTheme.colors
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(state.dayLabel, color = c.textMuted, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(state.dayLabel, color = c.textMuted, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            dayTypeLabel(state.dayType)?.let { DayTypePill(it, Modifier.weight(1f, fill = false)) }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
             Text(
                 "Hoy", color = c.text, fontFamily = BrujulaTheme.type.display, fontWeight = FontWeight.ExtraBold,
                 fontSize = 42.sp, letterSpacing = (-1.2).sp, lineHeight = 42.sp,
             )
+            WorkSummary(state, reduced)
         }
-        WorkSummary(state, reduced)
     }
+}
+
+internal fun dayTypeLabel(type: DayType): String? = when (type.kind) {
+    DayKind.WORKDAY -> null
+    DayKind.WEEKEND -> "Descanso"
+    DayKind.HOLIDAY -> type.holidayName?.let { "Festivo · $it" } ?: "Festivo"
+}
+
+@Composable
+private fun DayTypePill(text: String, modifier: Modifier) {
+    val c = BrujulaTheme.colors
+    Text(
+        text, color = c.accent2Text, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+        maxLines = 1, overflow = TextOverflow.Ellipsis,
+        modifier = modifier.clip(RoundedCornerShape(50)).background(c.soft2).padding(horizontal = 10.dp, vertical = 3.dp),
+    )
 }
 
 @Composable
 private fun WorkSummary(state: TodayUiState, reduced: Boolean) {
     val c = BrujulaTheme.colors
-    val goal = "${state.workGoal.first / 60}–${state.workGoal.last / 60} h"
-    val fraction = (state.workMinutes.toFloat() / state.workGoal.last).coerceIn(0f, 1f)
+    val goalRange = state.workGoal
+    if (goalRange == null) {
+        // Descanso: sin meta ni barra; solo se muestra si hubo trabajo.
+        if (state.workMinutes > 0) {
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Trabajo hoy", color = c.textMuted, fontSize = 12.sp)
+                Text(formatMinutes(state.workMinutes), color = c.text, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        return
+    }
+    val goal = "${goalRange.first / 60}–${goalRange.last / 60} h"
+    val fraction = (state.workMinutes.toFloat() / goalRange.last).coerceIn(0f, 1f)
     Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("Trabajo hoy", color = c.textMuted, fontSize = 12.sp)
         Text(
@@ -132,11 +172,19 @@ internal fun openPermissionSettings(context: Context, permissions: PermissionSta
     runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 }
 
-private fun HabitIcon.vector(): ImageVector = when (this) {
+internal fun HabitIcon.vector(): ImageVector = when (this) {
     HabitIcon.WATER -> Icons.Outlined.WaterDrop
     HabitIcon.LIP_BALM -> Icons.Outlined.Spa
     HabitIcon.STRETCH -> Icons.Outlined.SelfImprovement
     HabitIcon.GENERIC -> Icons.Outlined.TaskAlt
+    HabitIcon.EYE -> Icons.Outlined.Visibility
+    HabitIcon.WALK -> Icons.AutoMirrored.Outlined.DirectionsWalk
+    HabitIcon.POSTURE -> Icons.Outlined.AccessibilityNew
+    HabitIcon.FOOD -> Icons.Outlined.Restaurant
+    HabitIcon.SCREEN_OFF -> Icons.Outlined.PhonelinkOff
+    HabitIcon.PILL -> Icons.Outlined.Medication
+    HabitIcon.SUN -> Icons.Outlined.WbSunny
+    HabitIcon.BOOK -> Icons.AutoMirrored.Outlined.MenuBook
 }
 
 @Composable

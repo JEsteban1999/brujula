@@ -23,8 +23,10 @@ import app.brujula.activities.form.ActivityFormViewModel
 import app.brujula.container
 import app.brujula.core.theme.BrujulaTheme
 import app.brujula.habits.HabitFormScreen
+import app.brujula.habits.HabitGroup
 import app.brujula.habits.HabitFormViewModel
 import app.brujula.habits.HabitsScreen
+import app.brujula.habits.parseHabitGroup
 import app.brujula.habits.HabitsViewModel
 import app.brujula.reminders.readPermissionStatus
 import app.brujula.settings.RoutineScreen
@@ -39,7 +41,7 @@ object Routes {
     const val HABITS = "habits"
     const val ROUTINE = "routine"
     const val ACTIVITY_FORM = "activity?id={id}&start={start}"
-    const val HABIT_FORM = "habit?id={id}"
+    const val HABIT_FORM = "habit?id={id}&group={group}"
 
     /** `start` es un LocalDateTime ISO; ambos son opcionales. */
     fun activityForm(id: Long? = null, start: LocalDateTime? = null): String {
@@ -50,7 +52,13 @@ object Routes {
         return if (args.isEmpty()) "activity" else "activity?" + args.joinToString("&")
     }
 
-    fun habitForm(id: Long? = null): String = if (id == null) "habit" else "habit?id=$id"
+    fun habitForm(id: Long? = null, group: HabitGroup = HabitGroup.ESSENTIAL): String {
+        val args = listOfNotNull(
+            id?.let { "id=$it" },
+            "group=${group.name}".takeIf { group != HabitGroup.ESSENTIAL },
+        )
+        return if (args.isEmpty()) "habit" else "habit?" + args.joinToString("&")
+    }
 }
 
 private val TopLevel = setOf(Routes.TODAY, Routes.HABITS, Routes.ROUTINE)
@@ -117,6 +125,7 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                 HabitsScreen(
                     viewModel = vm,
                     onNewHabit = { navController.navigate(Routes.habitForm()) },
+                    onNewWellness = { navController.navigate(Routes.habitForm(group = HabitGroup.WELLNESS)) },
                     onEditHabit = { navController.navigate(Routes.habitForm(it)) },
                 )
             }
@@ -162,15 +171,20 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
             }
             composable(
                 Routes.HABIT_FORM,
-                arguments = listOf(navArgument("id") { type = NavType.LongType; defaultValue = -1L }),
+                arguments = listOf(
+                    navArgument("id") { type = NavType.LongType; defaultValue = -1L },
+                    navArgument("group") { type = NavType.StringType; defaultValue = HabitGroup.ESSENTIAL.name },
+                ),
             ) { entry ->
                 val container = LocalContext.current.container
                 val id = entry.arguments?.getLong("id")?.takeIf { it >= 0 }
+                val group = parseHabitGroup(entry.arguments?.getString("group"))
                 val vm: HabitFormViewModel = viewModel(
                     factory = viewModelFactory {
                         initializer {
                             HabitFormViewModel(
                                 habitId = id,
+                                group = group,
                                 habitRepository = container.habitRepository,
                                 resync = container.reminderSync,
                                 routineProvider = { container.routineRepository.routine.first() },

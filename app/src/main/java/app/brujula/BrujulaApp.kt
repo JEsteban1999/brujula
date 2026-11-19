@@ -15,6 +15,7 @@ import app.brujula.reminders.reminderChanges
 import app.brujula.reminders.startReminderResync
 import kotlinx.coroutines.CoroutineExceptionHandler
 import app.brujula.data.db.BrujulaDatabase
+import app.brujula.data.db.Migrations
 import app.brujula.data.db.Seed
 import app.brujula.habits.HabitRepository
 import app.brujula.routine.RoutineRepository
@@ -68,7 +69,12 @@ open class BrujulaApp : Application() {
     /** Trabajo de arranque en segundo plano; las pruebas lo anulan. */
     protected open fun startBackgroundWork() {
         appScope.launch {
-            Seed.ensureDefaults(container.database, container.routineRepository, LocalDate.now())
+            runCatching { Seed.ensureDefaults(container.database, container.routineRepository, LocalDate.now()) }
+                .onFailure { Log.e("BrujulaApp", "Fallo al sembrar valores por defecto", it) }
+            runCatching { Migrations.seedWellness(container.database, container.routineRepository) }
+                .onFailure { Log.e("BrujulaApp", "Fallo al sembrar bienestar", it) }
+            runCatching { Migrations.exerciseToWorkdays(container.database, container.routineRepository) }
+                .onFailure { Log.e("BrujulaApp", "Fallo al migrar el ejercicio", it) }
         }
         launchReminderResync()
     }
