@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Ícono animado del splash (<= 800 ms). El lienzo es de 108 dp y el contenido cabe en el círculo
+  central que deja visible el sistema. Baldosa 60x60 (24..84); mismas proporciones que el diseño
+  (viewBox 100 -> 60). Estado final idéntico al inicio de IntroScreen.
+-->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt">
+    <aapt:attr name="android:drawable">
+        <vector
+            android:width="108dp"
+            android:height="108dp"
+            android:viewportWidth="108"
+            android:viewportHeight="108">
+            <group
+                android:name="tile"
+                android:pivotX="54"
+                android:pivotY="54"
+                android:scaleX="0.08"
+                android:scaleY="0.08">
+                <path
+                    android:name="tile_shape"
+                    android:fillColor="#4B3BFF"
+                    android:pathData="M54,24 H54 A30,30 0 0 1 84,54 V54 A30,30 0 0 1 54,84 H54 A30,30 0 0 1 24,54 V54 A30,30 0 0 1 54,24 Z" />
+                <path
+                    android:name="ring"
+                    android:fillColor="#00000000"
+                    android:strokeColor="#FFFFFF"
+                    android:strokeAlpha="0"
+                    android:strokeWidth="3"
+                    android:pathData="M54,54m-18,0a18,18 0,1 1,36 0a18,18 0,1 1,-36 0" />
+                <group
+                    android:name="needle"
+                    android:pivotX="54"
+                    android:pivotY="54"
+                    android:rotation="-360"
+                    android:scaleX="0.6"
+                    android:scaleY="0.6">
+                    <path
+                        android:fillColor="#FFB020"
+                        android:pathData="M54,38.4 L59.4,54 L48.6,54 Z" />
+                    <path
+                        android:fillColor="#FFFFFF"
+                        android:pathData="M48.6,54 L59.4,54 L54,69.6 Z" />
+                </group>
+            </group>
+        </vector>
+    </aapt:attr>
+
+    <!-- La baldosa crece desde un punto con rebote (cubic-bezier .34,1.4,.64,1). -->
+    <target android:name="tile">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator
+                    android:duration="600"
+                    android:interpolator="@anim/brujula_overshoot"
+                    android:propertyName="scaleX"
+                    android:valueFrom="0.08"
+                    android:valueTo="1" />
+                <objectAnimator
+                    android:duration="600"
+                    android:interpolator="@anim/brujula_overshoot"
+                    android:propertyName="scaleY"
+                    android:valueFrom="0.08"
+                    android:valueTo="1" />
+            </set>
+        </aapt:attr>
+    </target>
+    <!-- El radio se transforma de círculo a 26 %. -->
+    <target android:name="tile_shape">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="600"
+                android:interpolator="@android:interpolator/fast_out_slow_in"
+                android:propertyName="pathData"
+                android:valueFrom="M54,24 H54 A30,30 0 0 1 84,54 V54 A30,30 0 0 1 54,84 H54 A30,30 0 0 1 24,54 V54 A30,30 0 0 1 54,24 Z"
+                android:valueTo="M40,24 H68 A16,16 0 0 1 84,40 V68 A16,16 0 0 1 68,84 H40 A16,16 0 0 1 24,68 V40 A16,16 0 0 1 40,24 Z"
+                android:valueType="pathType" />
+        </aapt:attr>
+    </target>
+    <target android:name="ring">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="300"
+                android:interpolator="@android:interpolator/linear_out_slow_in"
+                android:propertyName="strokeAlpha"
+                android:startOffset="250"
+                android:valueFrom="0"
+                android:valueTo="1" />
+        </aapt:attr>
+    </target>
+    <!-- La aguja gira -360° y se asienta (cubic-bezier .2,.8,.2,1). -->
+    <target android:name="needle">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator
+                    android:duration="450"
+                    android:interpolator="@android:interpolator/fast_out_slow_in"
+                    android:propertyName="rotation"
+                    android:startOffset="300"
+                    android:valueFrom="-360"
+                    android:valueTo="0" />
+                <objectAnimator
+                    android:duration="450"
+                    android:interpolator="@android:interpolator/fast_out_slow_in"
+                    android:propertyName="scaleX"
+                    android:startOffset="300"
+                    android:valueFrom="0.6"
+                    android:valueTo="1" />
+                <objectAnimator
+                    android:duration="450"
+                    android:interpolator="@android:interpolator/fast_out_slow_in"
+                    android:propertyName="scaleY"
+                    android:startOffset="300"
+                    android:valueFrom="0.6"
+                    android:valueTo="1" />
+            </set>
+        </aapt:attr>
+    </target>
+</animated-vector>

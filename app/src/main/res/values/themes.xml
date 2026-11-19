@@ -1,7 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="brujula_indigo">#4B3BFF</color>
+    <color name="brujula_night">#0F0D1F</color>
+
+    <!-- Fondo oscuro: nunca hay destello blanco entre el splash y la intro. -->
     <style name="Theme.Brujula" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@color/brujula_indigo</item>
+        <item name="android:windowBackground">@color/brujula_night</item>
+    </style>
+
+    <style name="Theme.Brujula.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/brujula_night</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/avd_splash_icon</item>
+        <item name="windowSplashScreenAnimationDuration">800</item>
+        <item name="postSplashScreenTheme">@style/Theme.Brujula</item>
     </style>
 </resources>
