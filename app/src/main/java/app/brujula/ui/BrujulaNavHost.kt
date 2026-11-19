@@ -22,6 +22,10 @@ import app.brujula.activities.form.ActivityFormScreen
 import app.brujula.activities.form.ActivityFormViewModel
 import app.brujula.container
 import app.brujula.core.theme.BrujulaTheme
+import app.brujula.habits.HabitFormScreen
+import app.brujula.habits.HabitFormViewModel
+import app.brujula.habits.HabitsScreen
+import app.brujula.habits.HabitsViewModel
 import app.brujula.reminders.readPermissionStatus
 import app.brujula.today.TodayScreen
 import app.brujula.today.TodayViewModel
@@ -92,7 +96,27 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                     onAddAt = { navController.navigate(Routes.activityForm(start = it)) },
                 )
             }
-            composable(Routes.HABITS) { PlaceholderScreen() }
+            composable(Routes.HABITS) {
+                val container = LocalContext.current.container
+                val vm: HabitsViewModel = viewModel(
+                    factory = viewModelFactory {
+                        initializer {
+                            HabitsViewModel(
+                                clock = container.clock,
+                                routineRepository = container.routineRepository,
+                                activityRepository = container.activityRepository,
+                                habitRepository = container.habitRepository,
+                                resync = container.reminderSync,
+                            )
+                        }
+                    },
+                )
+                HabitsScreen(
+                    viewModel = vm,
+                    onNewHabit = { navController.navigate(Routes.habitForm()) },
+                    onEditHabit = { navController.navigate(Routes.habitForm(it)) },
+                )
+            }
             composable(Routes.ROUTINE) { PlaceholderScreen() }
             composable(
                 Routes.ACTIVITY_FORM,
@@ -128,7 +152,22 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
             composable(
                 Routes.HABIT_FORM,
                 arguments = listOf(navArgument("id") { type = NavType.LongType; defaultValue = -1L }),
-            ) { PlaceholderScreen() }
+            ) { entry ->
+                val container = LocalContext.current.container
+                val id = entry.arguments?.getLong("id")?.takeIf { it >= 0 }
+                val vm: HabitFormViewModel = viewModel(
+                    factory = viewModelFactory {
+                        initializer {
+                            HabitFormViewModel(
+                                habitId = id,
+                                habitRepository = container.habitRepository,
+                                resync = container.reminderSync,
+                            )
+                        }
+                    },
+                )
+                HabitFormScreen(viewModel = vm, onClose = { navController.popBackStack() })
+            }
         }
     }
 }
