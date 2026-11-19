@@ -118,11 +118,14 @@ class TodayViewModel(
         perms: PermissionStatus,
     ): TodayUiState {
         val window = routine.awakeWindow(day)
-        val today = occurrencesOn(day, activities, done)
-        val timeline = (occurrencesOn(day.minusDays(1), activities, done) + today)
-            .filter { it.span.overlaps(window) }
-            .sortedBy { it.span.start }
-        val minutes = workMinutes(today)
+        // Dia logico: todo lo que empieza en el (04:00 a 03:59), ya sea por fecha de calendario de ayer, hoy o manana,
+        // mas lo de ayer que aun cruza la vigilia de hoy.
+        val logical = (-1L..1L).flatMap { occurrencesOn(day.plusDays(it), activities, done) }
+            .filter { logicalDay(it.span.start) == day }
+        val spill = occurrencesOn(day.minusDays(1), activities, done)
+            .filter { logicalDay(it.span.start) != day && it.span.overlaps(window) }
+        val timeline = (spill + logical).sortedBy { it.span.start }
+        val minutes = workMinutes(logical)
         return TodayUiState(
             dayLabel = formatDayEs(day),
             workMinutes = minutes,

@@ -148,6 +148,65 @@ class TodayViewModelTest {
         assertEquals(60, s.workMinutes)
     }
 
+    private fun TestScope.vmFor(file: String, tick: Long = 0) = TodayViewModel(
+        clock = clock,
+        routineRepository = RoutineRepository(
+            PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, file) },
+        ),
+        activityRepository = activities, habitRepository = habits,
+        readPermissions = { perms }, scopeOverride = backgroundScope, tickMs = tick,
+    )
+
+    @Test fun activityBeforeWakeIsShownInOrder() = runTest {
+        activities.upsert(act("Trabajo", ActivityType.WORK, "09:00", 60))
+        activities.upsert(act("Dentista", ActivityType.APPOINTMENT, "07:00", 45))
+        val s = vm().state.first { it.timeline.size == 2 }
+        assertEquals(listOf("Dentista", "Trabajo"), s.timeline.map { it.occurrence.activity.title })
+        assertEquals(60, s.workMinutes)
+    }
+
+    @Test fun afterMidnightItemSavedForTodayAppearsTodayAndNotTomorrow() = runTest {
+        clock.current = day.atTime(23, 50)
+        // "Hoy 00:15" se guarda con la fecha natural siguiente
+        activities.upsert(act("Llamada", ActivityType.PERSONAL, "00:15", 30, date = day.plusDays(1)))
+        activities.upsert(act("Trabajo", ActivityType.WORK, "09:00", 60))
+        val s = vm().state.first { it.timeline.size == 2 }
+        assertEquals(listOf("Trabajo", "Llamada"), s.timeline.map { it.occurrence.activity.title })
+        assertEquals(day.plusDays(1), s.timeline.last().occurrence.day)
+        // el dia logico siguiente (a las 10:00) no la repite
+        clock.current = day.plusDays(1).atTime(10, 0)
+        val n = vmFor("r2.preferences_pb").state.first { it.day == day.plusDays(1) }
+        assertTrue(n.timeline.none { it.occurrence.activity.title == "Llamada" })
+    }
+
+    @Test fun nowMovesAndDayRollsOverWithTicker() = runTest {
+        clock.current = day.atTime(10, 40)
+        activities.upsert(act("Ejercicio", ActivityType.EXERCISE, "10:30", 30))
+        activities.upsert(act("Lectura", ActivityType.PERSONAL, "11:30", 30, repeat = Repeat.DAILY))
+        val vm = vmFor("r3.preferences_pb", tick = 1000)
+        // Room emite en otros hilos: se avanza el reloj virtual del ticker y se espera en tiempo real.
+        fun TestScope.await(cond: (TodayUiState) -> Boolean): TodayUiState {
+            // un solo tick: avanzar mas reiniciaria la consulta (flatMapLatest) antes de que Room responda
+            testScheduler.advanceTimeBy(1000)
+            repeat(500) {
+                testScheduler.runCurrent()
+                if (cond(vm.state.value)) return vm.state.value
+                Thread.sleep(10)
+            }
+            error("estado esperado no alcanzado: ${vm.state.value}")
+        }
+        val first = await { it.timeline.size == 2 && it.timeline.any { e -> e.isNow } }
+        assertEquals("Ejercicio", first.timeline.single { it.isNow }.occurrence.activity.title)
+        clock.current = day.atTime(11, 40)
+        val second = await { st -> st.timeline.any { it.isNow && it.occurrence.activity.title == "Lectura" } }
+        assertEquals("Lectura", second.timeline.single { it.isNow }.occurrence.activity.title)
+        // 03:59 sigue siendo el dia logico; 04:00 rueda al siguiente
+        clock.current = day.plusDays(1).atTime(3, 59)
+        assertEquals(day, await { it.day == day && it.timeline.none { e -> e.isNow } }.day)
+        clock.current = day.plusDays(1).atTime(4, 0)
+        assertEquals(day.plusDays(1), await { it.day == day.plusDays(1) }.day)
+    }
+
     @Test fun toggleDoneTargetsTheGivenOccurrenceOfOvernightRepeat() = runTest {
         // DAILY 23:30 + 10 h: la de ayer termina 09:30 (cruza la vigilia) y la de hoy empieza 23:30
         val id = activities.upsert(act("Guardia", ActivityType.PERSONAL, "23:30", 600, date = day.minusDays(1), repeat = Repeat.DAILY))
