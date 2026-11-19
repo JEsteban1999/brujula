@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -53,7 +52,7 @@ fun RoutineScreen(viewModel: RoutineViewModel, modifier: Modifier = Modifier) {
     val reduced = rememberReducedMotion()
 
     Column(
-        modifier.fillMaxSize().background(c.bg).statusBarsPadding().verticalScroll(rememberScrollState())
+        modifier.fillMaxSize().background(c.bg).verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp).padding(top = 8.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
