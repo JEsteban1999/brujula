@@ -25,6 +25,10 @@ import app.brujula.claude.DayPlanner
 import app.brujula.claude.PlanContext
 import app.brujula.claude.PlanContextProvider
 import app.brujula.planning.DaySnapshotProvider
+import app.brujula.planning.ProposalExecutor
+import app.brujula.planning.ProposalLock
+import app.brujula.planning.ProposalRepository
+import app.brujula.claude.ClaudeNotes
 import app.brujula.claude.PendingDictations
 import app.brujula.claude.PendingCopy
 import app.brujula.claude.PendingNotifier
@@ -111,6 +115,27 @@ class AppContainer(val context: Context) {
     var dayPlanner: DayPlanner
         get() = dayPlannerOverride ?: DayPlanner(claudeGateway, { day -> planContext(day) }, isOnline = { isOnline(context) }, clock = clock)
         set(value) { dayPlannerOverride = value }
+
+    /** Propuestas de Claude guardadas (D1). */
+    val proposalRepository: ProposalRepository by lazy { ProposalRepository(database.proposalDao()) }
+
+    /** Nota de la tarjeta de Claude en Hoy (D15). */
+    val claudeNotes: ClaudeNotes by lazy { ClaudeNotes(context.applicationContext.routineDataStore) }
+
+    /** Un solo vuelo para aceptar y deshacer, compartido por todos los ejecutores que se arman aquí. */
+    private val proposalLock = ProposalLock()
+    private var proposalExecutorOverride: ProposalExecutor? = null
+
+    /**
+     * Acepta y deshace propuestas con las dependencias vigentes (reloj, Google, avisos sustituibles) y el cerrojo
+     * compartido; las copias de Google corren en [syncScope]. Sustituible en pruebas.
+     */
+    var proposalExecutor: ProposalExecutor
+        get() = proposalExecutorOverride ?: ProposalExecutor(
+            database, activityRepository, proposalRepository, googleCopySync, reminderSync, claudeNotes, clock, syncScope,
+            reminderScheduler = reminderScheduler, lock = proposalLock,
+        )
+        set(value) { proposalExecutorOverride = value }
 
     private var interpreterOverride: TextInterpreter? = null
     private var executorOverride: ActionApplier? = null

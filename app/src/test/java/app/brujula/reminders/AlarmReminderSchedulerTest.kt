@@ -95,6 +95,22 @@ class AlarmReminderSchedulerTest {
         assertEquals(listOf(ms(15), ms(60)), triggers())
     }
 
+    @Test fun cancelledSnoozeIsNotRearmedByReplaceAllNorAfterReboot() {
+        scheduler.scheduleOne(r("act:5:20261118:s", 15))
+        scheduler.scheduleOne(r("habit:1:a:s", 20))
+        scheduler.cancelSnooze("act:5:20261118:s")
+        assertEquals(listOf(ms(20)), triggers())
+        scheduler.replaceAll(emptyList())
+        assertEquals(listOf(ms(20)), triggers())
+        // Simula reinicio: solo la espera que sigue vigente se vuelve a armar.
+        shadowOf(alarms).scheduledAlarms.toList().forEach { alarms.cancel(it.operation!!) }
+        scheduler.replaceAll(emptyList())
+        assertEquals(listOf(ms(20)), triggers())
+        // Cancelar una que no existe no hace nada.
+        scheduler.cancelSnooze("act:9:20261118:s")
+        assertEquals(listOf(ms(20)), triggers())
+    }
+
     @Test fun expiredSnoozeIsPrunedAndNotRearmed() {
         scheduler.scheduleOne(r("habit:1:a:s", 15))
         nowMs += 7 * 3_600_000L

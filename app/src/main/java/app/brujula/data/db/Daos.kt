@@ -53,6 +53,9 @@ interface ActivityDao {
     @Query("DELETE FROM activity_completions WHERE activityId = :id AND day = :day")
     suspend fun deleteCompletion(id: Long, day: LocalDate)
 
+    @Query("SELECT EXISTS(SELECT 1 FROM activity_completions WHERE activityId = :id AND day = :day)")
+    suspend fun isDone(id: Long, day: LocalDate): Boolean
+
     @Query("SELECT * FROM activity_overrides")
     fun observeOverrides(): Flow<List<ActivityOverrideEntity>>
 
@@ -89,6 +92,27 @@ interface ProposalDao {
 
     @Query("UPDATE proposals SET status = 'SUPERSEDED' WHERE day = :day AND status = 'PENDING'")
     suspend fun supersedePending(day: LocalDate)
+
+    @Query("SELECT DISTINCT day FROM proposals WHERE status = 'ACCEPTED'")
+    suspend fun acceptedDays(): List<LocalDate>
+
+    /** Deshacer: la propuesta vuelve a estar pendiente, sin datos para deshacer. */
+    @Query("UPDATE proposals SET status = 'PENDING', undo = NULL, acceptedAt = NULL WHERE id = :id")
+    suspend fun reopen(id: Long)
+
+    /** Una sola pendiente por día: las anteriores del mismo día pasan a SUPERSEDED en la misma transacción. */
+    @Transaction
+    suspend fun insertPending(e: ProposalEntity): Long {
+        supersedePending(e.day)
+        return insert(e.copy(id = 0, status = "PENDING", undo = null, acceptedAt = null))
+    }
+
+    /** Vuelve a dejar [id] como la pendiente de su día (las demás pendientes de ese día pasan a SUPERSEDED). */
+    @Transaction
+    suspend fun reopenAsOnlyPending(id: Long, day: LocalDate) {
+        supersedePending(day)
+        reopen(id)
+    }
 }
 
 @Dao

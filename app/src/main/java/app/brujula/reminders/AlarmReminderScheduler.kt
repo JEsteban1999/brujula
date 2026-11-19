@@ -65,6 +65,14 @@ class AlarmReminderScheduler(
         }
     }
 
+    @Synchronized
+    override fun cancelSnooze(key: String) {
+        cancel(key)
+        saveAlarms(loadAlarms() - key)
+        val kept = loadSnoozes().filter { it.key != key }
+        prefs.edit().putStringSet(SNOOZES, kept.map { encode(it) }.toSet()).apply()
+    }
+
     private fun loadAlarms(): Map<String, Long> =
         prefs.getStringSet(ALARMS, emptySet()).orEmpty().mapNotNull {
             val at = it.substringAfterLast('|').toLongOrNull() ?: return@mapNotNull null

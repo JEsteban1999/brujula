@@ -24,6 +24,12 @@ object ReminderPlanner {
     private val KEY_MINUTE = DateTimeFormatter.ofPattern("yyyyMMddHHmm")
     private val KEY_DAY = DateTimeFormatter.ofPattern("yyyyMMdd")
 
+    /** Clave del aviso de la ocurrencia de [activityId] en [day] (fecha de la serie). */
+    fun activityKey(activityId: Long, day: LocalDate): String = "act:$activityId:${day.format(KEY_DAY)}"
+
+    /** Clave de la espera "En 15 min" de ese aviso (ver NotificationActionReceiver). */
+    fun activitySnoozeKey(activityId: Long, day: LocalDate): String = activityKey(activityId, day) + NotificationActionReceiver.SNOOZE_SUFFIX
+
     /** Avisos futuros dentro de [horizonHours]; [habitCounts] va por dia logico (el dia de la vigilia). */
     fun plan(
         now: LocalDateTime,
@@ -70,7 +76,7 @@ object ReminderPlanner {
                 val at = occ.span.start.minusMinutes(before.toLong())
                 if (at <= now || at > limit) continue
                 out += Reminder(
-                    key = "act:${occ.activity.id}:${day.format(KEY_DAY)}", at = at, kind = ReminderKind.ACTIVITY,
+                    key = activityKey(occ.activity.id, day), at = at, kind = ReminderKind.ACTIVITY,
                     title = "${occ.activity.title} a las ${formatTime(occ.span.start.toLocalTime())}",
                     body = "Empieza en $before min.",
                     activityId = occ.activity.id, day = day,

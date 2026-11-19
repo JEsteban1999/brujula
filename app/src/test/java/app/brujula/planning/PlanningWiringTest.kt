@@ -50,4 +50,15 @@ class PlanningWiringTest {
         c.dayPlanner = custom
         assertSame(custom, c.dayPlanner)
     }
+
+    @Test fun proposalServicesAreWiredAndTheExecutorIsReplaceable() = runBlocking {
+        val c = app.container
+        assertSame(c.proposalRepository, c.proposalRepository)
+        assertSame(c.claudeNotes, c.claudeNotes)
+        // Por defecto, dos lecturas comparten el mismo cerrojo de un solo vuelo.
+        assertSame(c.proposalExecutor.lock, c.proposalExecutor.lock)
+        val custom = c.proposalExecutor
+        c.proposalExecutor = custom
+        assertSame(custom, c.proposalExecutor)
+    }
 }
