@@ -12,7 +12,13 @@ import app.brujula.habits.Habit
 import app.brujula.habits.HabitRepository
 import app.brujula.habits.HabitSchedule
 import app.brujula.reminders.ReminderResync
+import app.brujula.activities.ActivityType
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.time.LocalTime
 import java.time.LocalDate
 import java.time.format.TextStyle
 import java.util.Locale
@@ -34,6 +40,8 @@ class ActionExecutor(
     private val habitRepo: HabitRepository,
     private val googleCopySync: GoogleCopySync,
     private val reminderSync: ReminderResync,
+    /** Las copias a Google corren aquí (producción: `container.syncScope`), fuera de la cancelación de quien llama. */
+    private val syncScope: CoroutineScope,
 ) {
     /** Solo para pruebas: se invoca tras cada fila insertada, dentro de la transacción. */
     internal var afterInsert: (suspend () -> Unit)? = null
@@ -76,22 +84,31 @@ class ActionExecutor(
             messages += "No pude guardar lo que pediste. No se agendó nada."
             return ApplyResult(emptyList(), messages, null)
         }
-        savedActivities.filter { it.copyToGoogle }.forEach { googleCopySync.afterSave(it) }
-        reminderSync.resync()
+        // Ya confirmado: el resync no se cancela a medias y la copia a Google no retrasa la respuesta.
+        withContext(NonCancellable) { reminderSync.resync() }
+        val toCopy = savedActivities.filter { it.copyToGoogle }
+        if (toCopy.isNotEmpty()) syncScope.launch { toCopy.forEach { googleCopySync.afterSave(it) } }
         val token = UndoToken(created.mapNotNull { it.activityId }, created.mapNotNull { it.habitId })
         return ApplyResult(created.toList(), messages, token)
     }
 
-    /** Idempotente: lo que ya no existe se omite. La copia de Google se barre aunque terminara después de [apply]. */
-    suspend fun undo(token: UndoToken) {
+    /**
+     * Idempotente y sin cancelación a medias. Por cada actividad creada se barre la copia de Google aunque la fila ya no
+     * exista (un reintento, o una copia que terminó después de [apply]): `afterDelete` busca por id de actividad.
+     */
+    suspend fun undo(token: UndoToken) = withContext(NonCancellable) {
         for (id in token.activityIds) {
-            val stored = activityRepo.get(id) ?: continue
-            activityRepo.delete(id)
-            googleCopySync.afterDelete(stored)
+            val stored = activityRepo.get(id)
+            if (stored != null) activityRepo.delete(id)
+            googleCopySync.afterDelete(stored ?: stub(id))
         }
         token.habitIds.forEach { habitRepo.delete(it) }
         reminderSync.resync()
     }
+
+    private fun stub(id: Long) = Activity(
+        id = id, title = "", type = ActivityType.PERSONAL, date = LocalDate.of(1970, 1, 1), start = LocalTime.MIDNIGHT, durationMin = 5,
+    )
 
     private val es = Locale.forLanguageTag("es")
 

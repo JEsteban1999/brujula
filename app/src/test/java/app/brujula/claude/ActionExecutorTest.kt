@@ -16,7 +16,14 @@ import app.brujula.habits.HabitIcon
 import app.brujula.habits.HabitRepository
 import app.brujula.habits.HabitSchedule
 import app.brujula.reminders.ReminderResync
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.job
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -40,13 +47,19 @@ class ActionExecutorTest {
     private val writer = FakeGoogleCalendarWriter()
     private var resyncs = 0
     private lateinit var executor: ActionExecutor
+    private val sched = TestCoroutineScheduler()
+    private val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(sched))
+
+    private suspend fun advanceUntilIdle() = scope.coroutineContext.job.children.toList().joinAll()
+
+    private fun run(block: suspend TestScope.() -> Unit) = runTest(StandardTestDispatcher(sched)) { block() }
 
     @Before fun setUp() {
         db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), BrujulaDatabase::class.java)
             .allowMainThreadQueries().build()
         activities = ActivityRepository(db.activityDao())
         habits = HabitRepository(db.habitDao())
-        executor = ActionExecutor(db, activities, habits, GoogleCopySync(writer, activities), ReminderResync { resyncs++ })
+        executor = ActionExecutor(db, activities, habits, GoogleCopySync(writer, activities), ReminderResync { resyncs++ }, scope)
     }
 
     @After fun tearDown() { db.close() }
@@ -64,7 +77,7 @@ class ActionExecutorTest {
         group = HabitGroup.ESSENTIAL,
     )
 
-    @Test fun appliesActivityAndHabitWithSpanishLabelsAndOneResync() = runTest {
+    @Test fun appliesActivityAndHabitWithSpanishLabelsAndOneResync() = run {
         val r = executor.apply(listOf(Validated.Activity(exercise), Validated.Habit(stretch)))
         assertEquals(
             listOf("Ejercicio · jue 19 nov · 19:00–20:00", "Hábito · Estirarse · cada 2 h"),
@@ -77,15 +90,16 @@ class ActionExecutorTest {
         assertEquals(listOf(r.created[1].habitId!!), r.undo!!.habitIds)
     }
 
-    @Test fun habitLabelsForOtherModes() = runTest {
+    @Test fun habitLabelsForOtherModes() = run {
         val at = stretch.copy(schedule = HabitSchedule.AtTimes(listOf(LocalTime.of(9, 0), LocalTime.of(14, 30))))
         val bed = stretch.copy(name = "Leer", schedule = HabitSchedule.BeforeBed(30))
         val r = executor.apply(listOf(Validated.Habit(at), Validated.Habit(bed)))
         assertEquals(listOf("Hábito · Estirarse · a las 9:00, 14:30", "Hábito · Leer · 30 min antes de dormir"), r.created.map { it.label })
     }
 
-    @Test fun appointmentIsCopiedToGoogleAndUndoRemovesRowsAndCopy() = runTest {
+    @Test fun appointmentIsCopiedToGoogleAndUndoRemovesRowsAndCopy() = run {
         val r = executor.apply(listOf(Validated.Activity(dentist), Validated.Habit(stretch)))
+        advanceUntilIdle()
         assertEquals(1, writer.events.size)
         executor.undo(r.undo!!)
         assertTrue(activities.observeAll().first().isEmpty())
@@ -94,7 +108,7 @@ class ActionExecutorTest {
         assertEquals(2, resyncs)
     }
 
-    @Test fun undoIsIdempotentAndLeavesOtherRowsAlone() = runTest {
+    @Test fun undoIsIdempotentAndLeavesOtherRowsAlone() = run {
         val other = activities.upsert(exercise.copy(title = "Otra"))
         val r = executor.apply(listOf(Validated.Activity(dentist)))
         executor.undo(r.undo!!)
@@ -104,7 +118,7 @@ class ActionExecutorTest {
         assertTrue(writer.events.isEmpty())
     }
 
-    @Test fun nonActionItemsCreateNothingAndPassMessages() = runTest {
+    @Test fun nonActionItemsCreateNothingAndPassMessages() = run {
         val r = executor.apply(listOf(Validated.Question("¿A qué hora?"), Validated.Unsupported("No puedo mover cosas."), Validated.Invalid("«X»: fecha ya pasó.")))
         assertEquals(listOf("¿A qué hora?", "No puedo mover cosas.", "«X»: fecha ya pasó."), r.messages)
         assertTrue(r.created.isEmpty())
@@ -114,13 +128,13 @@ class ActionExecutorTest {
         assertEquals(0, habits.count())
     }
 
-    @Test fun mixedBatchKeepsMessagesAndCreatesValidOnes() = runTest {
+    @Test fun mixedBatchKeepsMessagesAndCreatesValidOnes() = run {
         val r = executor.apply(listOf(Validated.Invalid("mal"), Validated.Activity(exercise)))
         assertEquals(listOf("mal"), r.messages)
         assertEquals(1, r.created.size)
     }
 
-    @Test fun failureRollsBackEverything() = runTest {
+    @Test fun failureRollsBackEverything() = run {
         var n = 0
         executor.afterInsert = { if (++n == 2) error("boom") }
         val r = executor.apply(listOf(Validated.Activity(exercise), Validated.Activity(dentist), Validated.Habit(stretch)))
@@ -133,8 +147,42 @@ class ActionExecutorTest {
         assertEquals(0, resyncs)
     }
 
-    @Test fun repeatingActivityLabelMentionsRepeat() = runTest {
+    @Test fun repeatingActivityLabelMentionsRepeat() = run {
         val r = executor.apply(listOf(Validated.Activity(exercise.copy(repeat = Repeat.DAILY))))
         assertEquals("Ejercicio · jue 19 nov · 19:00–20:00 · cada día", r.created[0].label)
+    }
+
+    @Test fun applyReturnsBeforeSlowGoogleCopyThenUndoRemovesIt() = run {
+        writer.insertDelayMs = 5_000
+        val r = executor.apply(listOf(Validated.Activity(dentist)))
+        assertNotNull(r.undo)
+        assertEquals(1, resyncs)
+        assertTrue(writer.events.isEmpty())
+        advanceUntilIdle()
+        assertEquals(1, writer.events.size)
+        executor.undo(r.undo!!)
+        assertTrue(writer.events.isEmpty())
+    }
+
+    @Test fun undoTwiceStillSweepsCopyLinkedAfterApplyReturned() = run {
+        val r = executor.apply(listOf(Validated.Activity(dentist)))
+        val id = r.undo!!.activityIds.single()
+        executor.undo(r.undo!!)
+        // Una copia que aparece después de borrar la fila (terminó tarde) la barre el reintento.
+        writer.events[500L] = app.brujula.calendar.GoogleEventDraft(
+            activityId = id, title = "Dentista", start = java.time.LocalDateTime.of(2026, 11, 20, 16, 45),
+            end = java.time.LocalDateTime.of(2026, 11, 20, 17, 15), rrule = null,
+        )
+        executor.undo(r.undo!!)
+        assertTrue(writer.events.isEmpty())
+    }
+
+    @Test fun undoAfterLogRemovesHabitAndItsLogs() = run {
+        val r = executor.apply(listOf(Validated.Habit(stretch)))
+        val hid = r.undo!!.habitIds.single()
+        habits.logDone(hid, java.time.LocalDateTime.of(2026, 11, 19, 10, 0))
+        executor.undo(r.undo!!)
+        assertEquals(0, habits.count())
+        assertEquals(0, db.query("SELECT COUNT(*) FROM habit_logs", null).use { it.moveToFirst(); it.getInt(0) })
     }
 }
