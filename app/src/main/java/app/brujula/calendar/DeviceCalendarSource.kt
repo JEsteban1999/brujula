@@ -6,7 +6,9 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.provider.CalendarContract.Calendars
 import android.provider.CalendarContract.Instances
+import android.util.Log
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.LocalDateTime
@@ -28,8 +30,14 @@ class DeviceCalendarSource(
     private fun queryCalendars(): List<DeviceCalendar> = try {
         context.contentResolver.query(Calendars.CONTENT_URI, CALENDAR_PROJECTION, null, null, Calendars._ID)
             ?.use { mapCalendars(it) } ?: emptyList()
-    } catch (_: SecurityException) {
-        emptyList()
+    } catch (e: RuntimeException) {
+        failed(e)
+    }
+
+    private fun <T> failed(e: RuntimeException): List<T> {
+        if (e is CancellationException) throw e
+        Log.w("DeviceCalendarSource", "Consulta de calendario fallida", e)
+        return emptyList()
     }
 
     override suspend fun events(calendarIds: Set<Long>, from: LocalDateTime, to: LocalDateTime): List<ExternalEvent> {
@@ -46,8 +54,8 @@ class DeviceCalendarSource(
                 val selection = "${Instances.CALENDAR_ID} IN (${calendarIds.joinToString(",")})"
                 context.contentResolver.query(uri, INSTANCE_PROJECTION, selection, null, Instances.BEGIN)
                     ?.use { c -> mapInstances(c, z) { sources[it].orEmpty() } } ?: emptyList()
-            } catch (_: SecurityException) {
-                emptyList()
+            } catch (e: RuntimeException) {
+                failed(e)
             }
         }
     }

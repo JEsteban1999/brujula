@@ -19,13 +19,13 @@ class ExternalEventsTest {
     private val all = listOf(crossing, early, allDayThu)
 
     @Test fun crossingMidnightBelongsToStartDay() {
-        assertEquals(listOf(1L, 2L), eventsOnLogicalDay(wed, all).map { it.eventId })
-        assertEquals(listOf(3L), eventsOnLogicalDay(thu, all).map { it.eventId })
+        assertEquals(listOf(1L, 2L), eventsOnLogicalDay(wed, all, null).map { it.eventId })
+        assertEquals(listOf(3L), eventsOnLogicalDay(thu, all, null).map { it.eventId })
     }
 
     @Test fun allDayOnlyOnItsDate() {
-        assertEquals(emptyList<Long>(), eventsOnLogicalDay(wed, listOf(allDayThu)).map { it.eventId })
-        assertEquals(listOf(3L), eventsOnLogicalDay(thu, listOf(allDayThu)).map { it.eventId })
+        assertEquals(emptyList<Long>(), eventsOnLogicalDay(wed, listOf(allDayThu), null).map { it.eventId })
+        assertEquals(listOf(3L), eventsOnLogicalDay(thu, listOf(allDayThu), null).map { it.eventId })
     }
 
     @Test fun spillFromPreviousDayCountsWhenItOverlapsAwakeWindow() {
@@ -36,6 +36,6 @@ class ExternalEventsTest {
     }
 
     @Test fun duplicatedInstancesCollapse() {
-        assertEquals(1, eventsOnLogicalDay(wed, listOf(crossing, crossing.copy())).size)
+        assertEquals(1, eventsOnLogicalDay(wed, listOf(crossing, crossing.copy()), null).size)
     }
 }

@@ -39,12 +39,12 @@ data class ExternalEvent(
 
 /**
  * Eventos del dia logico [day]: los de horas que empiezan en el (04:00 a 03:59), los de todo el dia de esa fecha y,
- * si se pasa [awake] (la vigilia de [day]), los que empezaron el dia logico anterior y aun la cruzan.
+ * si [awake] (la vigilia de [day]) no es null, los que empezaron el dia logico anterior y aun la cruzan.
  */
 fun eventsOnLogicalDay(
     day: LocalDate,
     events: List<ExternalEvent>,
-    awake: TimeSpan? = null,
+    awake: TimeSpan?,
 ): List<ExternalEvent> = events
     .filter { e ->
         if (e.allDay) {
