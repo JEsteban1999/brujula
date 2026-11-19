@@ -81,7 +81,7 @@ fun mapInstances(
             calendarId = calId,
             calendarName = cursor.str(Instances.CALENDAR_DISPLAY_NAME).orEmpty(),
             source = sourceOf(calId),
-            title = cursor.str(Instances.TITLE)?.takeIf { it.isNotBlank() } ?: "(Sin título)",
+            title = cursor.str(Instances.TITLE)?.takeIf { it.isNotBlank() }.orEmpty(),
             span = span,
             allDay = allDay,
             organizer = cursor.str(Instances.ORGANIZER),

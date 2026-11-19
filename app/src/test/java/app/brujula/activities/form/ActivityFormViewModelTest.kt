@@ -240,4 +240,17 @@ class ActivityFormViewModelTest {
         vm.state.first { it.ready }
         assertEquals(1, repo.observeAll().first().size)
     }
+
+    @Test fun failingCalendarPrefsDoNotBreakTheForm() = runTest {
+        val vm = ActivityFormViewModel(
+            activityId = null, prefillStart = null, clock = clock, activityRepository = repo,
+            resync = { resyncs++ }, calendarSource = calendar,
+            selectedCalendarIds = kotlinx.coroutines.flow.flow { throw java.io.IOException("datastore") },
+            scopeOverride = backgroundScope,
+        )
+        vm.setTitle("Leer")
+        vm.save()
+        vm.state.first { it.saved }
+        assertTrue(repo.observeAll().first().any { it.title == "Leer" })
+    }
 }

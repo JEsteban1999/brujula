@@ -211,7 +211,7 @@ fun ExternalTimelineBlock(
     val source = remember { MutableInteractionSource() }
     val start = formatTime(e.span.start.toLocalTime())
     val end = formatTime(e.span.end.toLocalTime())
-    val description = "Evento fijo de ${e.calendarName}: ${e.title}, de $start a $end" +
+    val description = "Evento fijo de ${e.calendarName}: ${e.displayTitle}, de $start a $end" +
         (if (block.countsAsWork) ", cuenta como trabajo" else "")
 
     Row(
@@ -235,7 +235,7 @@ fun ExternalTimelineBlock(
         }
         Box(Modifier.width(4.dp).fillMaxHeight().clip(RoundedCornerShape(2.dp)).background(rail))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-            Text(e.title, color = fg, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text(e.displayTitle, color = fg, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             Text(
                 "Fijo · ${e.calendarName}" + if (block.countsAsWork) " · Trabajo" else "",
                 color = fg.copy(alpha = 0.8f), fontSize = 12.sp,
@@ -265,7 +265,7 @@ fun AllDayRow(event: app.brujula.calendar.ExternalEvent, onOpen: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            "Todo el día · ${event.title}", color = c.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+            "Todo el día · ${event.displayTitle}", color = c.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
             maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
         )
     }

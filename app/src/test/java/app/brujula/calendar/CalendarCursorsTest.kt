@@ -31,6 +31,14 @@ class CalendarCursorsTest {
         self: Int? = null, pkg: String? = null,
     ): Array<Any?> = arrayOf(id, begin, end, title, allDay, 7L, "Trabajo", "ana@x.com", status, self, pkg, 0xFF336699.toInt())
 
+    @Test fun blankTitleStaysBlankAndNeverCountsAsWork() {
+        val begin = millis(LocalDateTime.of(2026, 11, 18, 14, 0), bogota)
+        val e = mapInstances(cursor(row(9, begin, begin + 3_600_000, "   ")), bogota).single()
+        assertEquals("", e.title)
+        assertEquals("(Sin título)", e.displayTitle)
+        assertEquals("", classificationKey(e))
+    }
+
     @Test fun mapsTimedAndAllDayInstances() {
         val timed = row(1, millis(LocalDateTime.of(2026, 11, 18, 14, 0), bogota), millis(LocalDateTime.of(2026, 11, 18, 15, 30), bogota), "Reunión")
         val d = LocalDate.of(2026, 11, 19)

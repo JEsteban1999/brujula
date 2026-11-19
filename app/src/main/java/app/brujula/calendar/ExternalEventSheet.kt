@@ -69,7 +69,7 @@ fun ExternalEventSheet(
             Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(event.title, color = c.text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text(event.displayTitle, color = c.text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Text(
                 if (event.allDay) "Todo el día" else
                     "${formatTime(event.span.start.toLocalTime())} – ${formatTime(event.span.end.toLocalTime())}",

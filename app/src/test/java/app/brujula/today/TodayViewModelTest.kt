@@ -362,4 +362,20 @@ class TodayViewModelTest {
         vm.refreshExternal()
         vm.state.first { st -> st.timeline.any { it is TimelineBlock.External } }
     }
+
+    @Test fun mappedUntitledEventNeverCountsAsWorkAndSetIsNoOp() = runTest {
+        val begin = day.atTime(15, 0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val cursor = android.database.MatrixCursor(app.brujula.calendar.INSTANCE_PROJECTION)
+        cursor.addRow(arrayOf<Any?>(8L, begin, begin + 3_600_000, "", 0, 1L, "Personal", null, null, null, null, 0))
+        val ev = app.brujula.calendar.mapInstances(cursor, java.time.ZoneId.systemDefault()) { "Google" }.single()
+        val vm = vmWithCalendar(listOf(ev))
+        vm.setCountsAsWork(ev, true)
+        val other = ev.copy(eventId = 9, title = "  ")
+        vm.setCountsAsWork(other, true)
+        val s = vm.state.first { st -> st.timeline.any { it is TimelineBlock.External } }
+        assertFalse((s.timeline.single() as TimelineBlock.External).countsAsWork)
+        assertEquals(0, s.workMinutes)
+        Thread.sleep(200)
+        assertTrue(classifications.observe().first().isEmpty())
+    }
 }

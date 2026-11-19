@@ -37,6 +37,9 @@ data class ExternalEvent(
     val calendarColor: Int = 0,
 ) {
     val key: String get() = "$eventId:$instanceBegin"
+
+    /** Título para mostrar; el título queda vacío si el evento no tiene, para no clasificarlo como trabajo. */
+    val displayTitle: String get() = title.ifBlank { "(Sin título)" }
 }
 
 /**

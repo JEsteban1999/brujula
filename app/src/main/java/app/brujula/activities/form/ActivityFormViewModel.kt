@@ -1,5 +1,6 @@
 package app.brujula.activities.form
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.brujula.activities.Activity
@@ -20,6 +21,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -100,7 +102,7 @@ class ActivityFormViewModel(
             }
         }
         scope.launch {
-            selectedCalendarIds.collect { ids ->
+            selectedCalendarIds.catch { Log.w("ActivityForm", "No se pudo leer los calendarios elegidos", it); emit(null) }.collect { ids ->
                 selectedIds = ids
                 reloadExternal(_state.value.date)
             }
