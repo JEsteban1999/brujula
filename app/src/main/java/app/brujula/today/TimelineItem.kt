@@ -130,7 +130,7 @@ fun OwnTimelineBlock(
                 textDecoration = if (done) TextDecoration.LineThrough else null,
             )
             Text(
-                "${a.type.labelEs} · ${formatMinutes(a.durationMin)}",
+                occurrenceSubtitle(occ),
                 color = fg.copy(alpha = 0.8f), fontSize = 12.sp,
             )
         }
@@ -270,3 +270,7 @@ fun AllDayRow(event: app.brujula.calendar.ExternalEvent, onOpen: () -> Unit) {
         )
     }
 }
+
+/** Subtitulo del bloque: tipo y duracion real de la ocurrencia (con el override aplicado). */
+internal fun occurrenceSubtitle(occ: app.brujula.activities.Occurrence): String =
+    "${occ.activity.type.labelEs} · ${formatMinutes(occ.span.minutes.toInt())}"

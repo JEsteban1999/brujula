@@ -180,7 +180,8 @@ class TodayViewModelTest {
     @Test fun activityBeforeWakeIsShownInOrder() = runTest {
         activities.upsert(act("Trabajo", ActivityType.WORK, "09:00", 60))
         activities.upsert(act("Dentista", ActivityType.APPOINTMENT, "07:00", 45))
-        val s = vm().state.first { it.own.size == 2 }
+        val vm = vm()
+        val s = vm.state.first { it.own.size == 2 }
         assertEquals(listOf("Dentista", "Trabajo"), s.own.map { it.occurrence.activity.title })
         assertEquals(60, s.workMinutes)
     }
@@ -190,7 +191,8 @@ class TodayViewModelTest {
         // "Hoy 00:15" se guarda con la fecha natural siguiente
         activities.upsert(act("Llamada", ActivityType.PERSONAL, "00:15", 30, date = day.plusDays(1)))
         activities.upsert(act("Trabajo", ActivityType.WORK, "09:00", 60))
-        val s = vm().state.first { it.own.size == 2 }
+        val vm = vm()
+        val s = vm.state.first { it.own.size == 2 }
         assertEquals(listOf("Trabajo", "Llamada"), s.own.map { it.occurrence.activity.title })
         assertEquals(day.plusDays(1), s.own.last().occurrence.day)
         // el dia logico siguiente (a las 10:00) no la repite
@@ -511,12 +513,16 @@ class TodayViewModelTest {
 
     @Test fun overrideMovesBlockInTimeline() = runTest {
         val id = activities.upsert(act("Ejercicio", ActivityType.EXERCISE, "18:30", 30, repeat = Repeat.DAILY))
+        activities.upsert(act("Trabajo", ActivityType.WORK, "09:00", 60))
         activities.setOverride(app.brujula.activities.OccurrenceOverride(id, day, day.atTime(20, 0), null, false))
-        val s = vm().state.first { it.own.isNotEmpty() }
-        val occ = s.own.single().occurrence
+        val vm = vm()
+        val s = vm.state.first { it.own.size == 2 }
+        val occ = s.own.single { it.occurrence.activity.id == id }.occurrence
         assertEquals(day.atTime(20, 0), occ.span.start)
         assertEquals(day, occ.day)
         activities.setOverride(app.brujula.activities.OccurrenceOverride(id, day, null, null, true))
-        assertTrue(vm().state.first { it.own.isEmpty() }.own.isEmpty())
+        // Pasar de 2 a 1 bloque (Trabajo) prueba que el salto se aplico.
+        val after = vm.state.first { st -> st.own.size == 1 }
+        assertEquals(listOf("Trabajo"), after.own.map { it.occurrence.activity.title })
     }
 }

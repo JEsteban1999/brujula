@@ -109,6 +109,15 @@ class ActivityRepositoryTest {
         assertEquals(app.brujula.activities.ActivityOrigin.PLAN, repo.get(id)!!.origin)
     }
 
+    @Test fun overrideSurvivesActivitySave() = runTest {
+        val id = repo.upsert(sample)
+        val day = LocalDate.of(2026, 11, 27)
+        val o = app.brujula.activities.OccurrenceOverride(id, day, day.atTime(19, 30), null, false)
+        repo.setOverride(o)
+        repo.upsert(sample.copy(id = id, title = "X"))
+        assertEquals(o, repo.getOverride(id, day))
+    }
+
     @Test fun overridesRoundTrip() = runTest {
         val id = repo.upsert(sample)
         val day = LocalDate.of(2026, 11, 27)

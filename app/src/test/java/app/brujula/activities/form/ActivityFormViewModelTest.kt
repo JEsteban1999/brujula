@@ -359,14 +359,17 @@ class ActivityFormViewModelTest {
     }
 
     @Test fun conflictUsesMovedOccurrence() = runTest {
-        // "Ejercicio en casa" de manana (19:00-20:00) se mueve a las 21:00 solo manana: 19:00 ya no choca, 21:00 si.
-        val id = repo.observeAll().first().single().id
-        repo.setOverride(app.brujula.activities.OccurrenceOverride(id, tomorrow, tomorrow.atTime(21, 0), null, false))
-        val vm = newVm(); vm.setDateChoice(DateChoice.TOMORROW); vm.shiftStart(495); vm.setDuration(60) // 19:00
-        vm.state.first { it.ready }
-        kotlinx.coroutines.yield()
+        // Yoga diaria 13:00-14:00; solo manana se mueve a las 15:00: 13:00 ya no choca y 15:00 si.
+        val id = repo.upsert(
+            Activity(title = "Yoga", type = ActivityType.PERSONAL, date = tomorrow, start = LocalTime.of(13, 0), durationMin = 60, repeat = app.brujula.activities.Repeat.DAILY),
+        )
+        repo.setOverride(app.brujula.activities.OccurrenceOverride(id, tomorrow, tomorrow.atTime(15, 0), null, false))
+        val vm = newVm(); vm.setDateChoice(DateChoice.TOMORROW); vm.setDuration(60)
+        vm.shiftStart(255) // 15:00 (desde 10:45)
+        // Esperar el choque con Yoga prueba que actividades y overrides ya cargaron.
+        assertEquals("Yoga", vm.state.first { it.conflict != null }.conflict!!.activity.title)
+        assertEquals(LocalTime.of(15, 0), vm.state.value.start)
+        vm.shiftStart(-120) // 13:00: libre porque Yoga se movio
         assertNull(vm.state.value.conflict)
-        vm.shiftStart(120) // 21:00
-        assertEquals("Ejercicio en casa", vm.state.first { it.conflict != null }.conflict!!.activity.title)
     }
 }
