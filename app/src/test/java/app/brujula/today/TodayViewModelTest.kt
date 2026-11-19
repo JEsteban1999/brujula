@@ -260,12 +260,12 @@ class TodayViewModelTest {
     }
 
     @Test fun todayCardsAreEssentialOnlyEvenWithWellnessActive() = runTest {
-        habits.upsert(Habit(name = "Agua", icon = HabitIcon.WATER, schedule = HabitSchedule.Every(90), dailyTarget = 8))
-        habits.upsert(Habit(name = "Bálsamo", icon = HabitIcon.LIP_BALM, schedule = HabitSchedule.AtTimes(listOf(LocalTime.of(9, 0))), dailyTarget = 1))
         habits.upsert(
             Habit(name = "Ojos", icon = HabitIcon.EYE, schedule = HabitSchedule.Every(30), dailyTarget = 14,
                 group = app.brujula.habits.HabitGroup.WELLNESS, window = app.brujula.habits.HabitWindow.WORK),
         )
+        habits.upsert(Habit(name = "Agua", icon = HabitIcon.WATER, schedule = HabitSchedule.Every(90), dailyTarget = 8))
+        habits.upsert(Habit(name = "Bálsamo", icon = HabitIcon.LIP_BALM, schedule = HabitSchedule.AtTimes(listOf(LocalTime.of(9, 0))), dailyTarget = 1))
         val s = vm().state.first { it.habits.isNotEmpty() }
         assertEquals(listOf("Agua", "Bálsamo"), s.habits.map { it.name })
     }

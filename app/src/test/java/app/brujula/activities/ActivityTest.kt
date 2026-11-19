@@ -45,6 +45,6 @@ class ActivityTest {
     }
     @Test fun labels() {
         assertEquals(listOf("Trabajo", "Ejercicio", "Cita", "Personal"), ActivityType.values().map { it.labelEs })
-        assertEquals(listOf("No se repite", "Todos los días", "Lunes a viernes", "Días laborales", "Cada semana"), Repeat.values().map { it.labelEs })
+        assertEquals(listOf("No se repite", "Todos los días", "Lunes a viernes", "Días laborales (sin festivos)", "Cada semana"), Repeat.values().map { it.labelEs })
     }
 }

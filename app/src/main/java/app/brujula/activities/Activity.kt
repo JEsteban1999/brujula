@@ -11,7 +11,7 @@ enum class ActivityType(val labelEs: String) {
 }
 
 enum class Repeat(val labelEs: String) {
-    NONE("No se repite"), DAILY("Todos los días"), WEEKDAYS("Lunes a viernes"), WORKDAYS("Días laborales"), WEEKLY("Cada semana")
+    NONE("No se repite"), DAILY("Todos los días"), WEEKDAYS("Lunes a viernes"), WORKDAYS("Días laborales (sin festivos)"), WEEKLY("Cada semana")
 }
 
 data class Activity(
