@@ -12,6 +12,8 @@ import app.brujula.activities.findConflict
 import app.brujula.activities.occurrencesOn
 import app.brujula.calendar.CalendarSource
 import app.brujula.calendar.ExternalEvent
+import app.brujula.calendar.GoogleCopyStatus
+import app.brujula.calendar.GoogleCopySync
 import app.brujula.calendar.NoCalendarSource
 import app.brujula.core.time.Clock
 import app.brujula.core.time.TimeSpan
@@ -20,6 +22,7 @@ import app.brujula.routine.logicalDay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flowOf
@@ -52,12 +55,23 @@ data class ActivityFormState(
     val titleError: String? = null,
     val isEdit: Boolean = false,
     val saved: Boolean = false,
+    /** Resultado de la copia a Google del ultimo guardado. */
+    val googleStatus: GoogleCopyStatus = GoogleCopyStatus.NOT_REQUESTED,
     /** Un guardado en curso: ignora toques repetidos. */
     val saving: Boolean = false,
     /** En edición, falso hasta que la actividad termina de cargar. */
     val ready: Boolean = true,
 ) {
     val end: LocalTime get() = start.plusMinutes(durationMin.toLong())
+
+    /** Aviso si la copia a Google no se pudo hacer; null si no hay nada que avisar. */
+    val googleNotice: String?
+        get() = when (googleStatus) {
+            GoogleCopyStatus.NO_PERMISSION -> "No se pudo copiar: falta el permiso de calendario"
+            GoogleCopyStatus.NO_GOOGLE_ACCOUNT -> "No hay una cuenta de Google en el teléfono"
+            GoogleCopyStatus.FAILED -> "No se pudo copiar a Google Calendar"
+            else -> null
+        }
 
     /** Texto del choque, o null si la hora esta libre. */
     val conflictMessage: String?
@@ -78,6 +92,8 @@ class ActivityFormViewModel(
     private val resync: ReminderResync = ReminderResync { },
     private val calendarSource: CalendarSource = NoCalendarSource,
     selectedCalendarIds: Flow<Set<Long>?> = flowOf(null),
+    private val googleCopy: GoogleCopySync? = null,
+    private val noticeMillis: Long = 1800,
     scopeOverride: CoroutineScope? = null,
 ) : ViewModel() {
     /** "Hoy" del usuario: el día lógico (cambia a las 04:00). */
@@ -237,7 +253,7 @@ class ActivityFormViewModel(
         }
         _state.update { it.copy(saving = true) }
         scope.launch {
-            activityRepository.upsert(
+            val id = activityRepository.upsert(
                 Activity(
                     id = editingId ?: 0L, title = title, type = s.type, date = s.date, start = s.start,
                     durationMin = s.durationMin.coerceIn(MIN_DURATION, MAX_DURATION), repeat = s.repeat,
@@ -245,15 +261,28 @@ class ActivityFormViewModel(
                 ),
             )
             runCatching { resync.resync() }
-            _state.update { it.copy(saved = true) }
+            // La actividad ya esta guardada: la copia a Google va fuera del hilo principal y nunca falla el guardado.
+            val status = googleCopy?.let { sync ->
+                runCatching { withContext(Dispatchers.IO) { activityRepository.get(id)?.let { sync.afterSave(it) } } }
+                    .getOrNull() ?: GoogleCopyStatus.FAILED
+            } ?: GoogleCopyStatus.NOT_REQUESTED
+            if (status != GoogleCopyStatus.NOT_REQUESTED && status != GoogleCopyStatus.COPIED) {
+                _state.update { it.copy(googleStatus = status) }
+                delay(noticeMillis)
+            }
+            _state.update { it.copy(googleStatus = status, saved = true) }
         }
     }
 
     fun delete() {
         val id = editingId ?: return
         scope.launch {
+            val before = activityRepository.get(id)
             activityRepository.delete(id)
             runCatching { resync.resync() }
+            if (before != null) {
+                googleCopy?.let { sync -> runCatching { withContext(Dispatchers.IO) { sync.afterDelete(before) } } }
+            }
             _state.update { it.copy(saved = true) }
         }
     }

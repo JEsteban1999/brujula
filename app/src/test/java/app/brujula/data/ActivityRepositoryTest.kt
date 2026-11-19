@@ -9,6 +9,7 @@ import app.brujula.activities.ActivityType
 import app.brujula.activities.Repeat
 import app.brujula.data.db.BrujulaDatabase
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.*
@@ -84,5 +85,18 @@ class ActivityRepositoryTest {
         repo.setGoogleEventId(id, null)
         assertNull(repo.get(id)!!.googleEventId)
         assertEquals(emptySet<Long>(), repo.observeGoogleEventIds().first())
+    }
+
+    @Test fun concurrentSetLinkIsNotLostByUpsert() = runTest {
+        val id = repo.upsert(sample)
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            kotlinx.coroutines.coroutineScope {
+                repeat(100) { n ->
+                    launch { repo.upsert(sample.copy(id = id, title = "T$n")) }
+                    if (n == 50) launch { repo.setGoogleEventId(id, 77L) }
+                }
+            }
+        }
+        assertEquals(77L, repo.get(id)!!.googleEventId)
     }
 }

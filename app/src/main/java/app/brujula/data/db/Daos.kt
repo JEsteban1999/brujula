@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 import java.time.LocalDate
@@ -20,6 +21,16 @@ interface ActivityDao {
     suspend fun count(): Int
 
     @Upsert suspend fun upsert(e: ActivityEntity): Long
+
+    /**
+     * Lectura del vinculo guardado + escritura en una sola transaccion: Room serializa las transacciones de
+     * escritura, asi un [setGoogleEventId] concurrente no se pierde entre la lectura y el upsert.
+     */
+    @Transaction
+    suspend fun upsertKeepingGoogleLink(e: ActivityEntity): Long {
+        val kept = if (e.id != 0L && e.googleEventId == null) get(e.id)?.googleEventId else e.googleEventId
+        return upsert(e.copy(googleEventId = kept))
+    }
 
     @Query("UPDATE activities SET googleEventId = :eventId WHERE id = :id")
     suspend fun setGoogleEventId(id: Long, eventId: Long?)

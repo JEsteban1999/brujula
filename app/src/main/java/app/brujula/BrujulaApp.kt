@@ -7,6 +7,9 @@ import app.brujula.activities.ActivityRepository
 import app.brujula.calendar.CalendarSource
 import app.brujula.calendar.WorkClassificationRepository
 import app.brujula.calendar.DeviceCalendarSource
+import app.brujula.calendar.DeviceGoogleCalendarWriter
+import app.brujula.calendar.GoogleCalendarWriter
+import app.brujula.calendar.GoogleCopySync
 import app.brujula.core.time.Clock
 import app.brujula.core.time.SystemClock
 import app.brujula.reminders.AlarmReminderScheduler
@@ -42,6 +45,11 @@ class AppContainer(val context: Context) {
 
     /** Calendarios del telefono (solo lectura); las pruebas lo sustituyen por uno falso. */
     var calendarSource: CalendarSource = DeviceCalendarSource(context.applicationContext)
+
+    /** Escritura en el Google Calendar principal; las pruebas lo sustituyen por uno falso. */
+    var googleCalendarWriter: GoogleCalendarWriter = DeviceGoogleCalendarWriter(context.applicationContext, DeviceCalendarSource(context.applicationContext))
+
+    val googleCopySync: GoogleCopySync get() = GoogleCopySync(googleCalendarWriter, activityRepository)
 
     /** Reloj de los receptores; las pruebas lo sustituyen. */
     var clock: Clock = SystemClock

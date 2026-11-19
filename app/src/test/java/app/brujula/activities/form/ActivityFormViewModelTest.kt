@@ -253,4 +253,40 @@ class ActivityFormViewModelTest {
         vm.state.first { it.saved }
         assertTrue(repo.observeAll().first().any { it.title == "Leer" })
     }
+
+    @Test fun copyWithoutPermissionSavesAndExposesStatus() = runTest {
+        val writer = app.brujula.calendar.FakeGoogleCalendarWriter(permission = false)
+        val vm = ActivityFormViewModel(
+            activityId = null, prefillStart = null, clock = clock, activityRepository = repo,
+            resync = { resyncs++ }, calendarSource = calendar, selectedCalendarIds = flowOf(setOf(1L)),
+            googleCopy = app.brujula.calendar.GoogleCopySync(writer, repo), noticeMillis = 10,
+            scopeOverride = backgroundScope,
+        )
+        vm.setTitle("Dentista"); vm.setType(ActivityType.APPOINTMENT)
+        vm.save()
+        val s = vm.state.first { it.saved }
+        assertEquals(app.brujula.calendar.GoogleCopyStatus.NO_PERMISSION, s.googleStatus)
+        assertEquals(0, writer.inserts)
+        assertTrue(repo.observeAll().first().any { it.title == "Dentista" })
+    }
+
+    @Test fun copyWithPermissionStoresLinkAndDeleteRemovesCopy() = runTest {
+        val writer = app.brujula.calendar.FakeGoogleCalendarWriter()
+        fun vm(id: Long? = null) = ActivityFormViewModel(
+            activityId = id, prefillStart = null, clock = clock, activityRepository = repo,
+            resync = { resyncs++ }, calendarSource = calendar, selectedCalendarIds = flowOf(setOf(1L)),
+            googleCopy = app.brujula.calendar.GoogleCopySync(writer, repo), noticeMillis = 10,
+            scopeOverride = backgroundScope,
+        )
+        val v = vm()
+        v.setTitle("Dentista"); v.setType(ActivityType.APPOINTMENT); v.save()
+        v.state.first { it.saved }
+        val saved = repo.observeAll().first().first { it.title == "Dentista" }
+        assertEquals(100L, saved.googleEventId)
+        val e = vm(saved.id)
+        e.state.first { it.ready }
+        e.delete()
+        e.state.first { it.saved }
+        assertTrue(writer.events.isEmpty())
+    }
 }

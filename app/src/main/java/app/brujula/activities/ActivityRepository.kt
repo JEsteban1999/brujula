@@ -18,11 +18,13 @@ class ActivityRepository(private val dao: ActivityDao) {
 
     suspend fun count(): Int = dao.count()
 
+    /**
+     * Guarda la actividad. Si llega con `googleEventId == null` y ya existe, se conserva el vinculo guardado:
+     * editar desde el formulario no debe perder la copia de Google. El vinculo solo se cambia o se borra con
+     * [setGoogleEventId]. La lectura y la escritura van en una transaccion del DAO (sin carreras con ese metodo).
+     */
     suspend fun upsert(a: Activity): Long {
-        // Editar desde el formulario no debe perder el vinculo con Google: si llega null se conserva el guardado.
-        // Para cambiarlo o borrarlo a proposito se usa setGoogleEventId.
-        val kept = if (a.id != 0L && a.googleEventId == null) dao.get(a.id)?.googleEventId else a.googleEventId
-        val rowId = dao.upsert(a.copy(googleEventId = kept).toEntity())
+        val rowId = dao.upsertKeepingGoogleLink(a.toEntity())
         return if (a.id != 0L) a.id else rowId
     }
 

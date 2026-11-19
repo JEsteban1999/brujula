@@ -166,6 +166,7 @@ fun BrujulaNavHost(navController: NavHostController = rememberNavController()) {
                                 resync = container.reminderSync,
                                 calendarSource = container.calendarSource,
                                 selectedCalendarIds = container.routineRepository.calendarPrefs.selectedCalendarIds,
+                                googleCopy = container.googleCopySync,
                             )
                         }
                     },

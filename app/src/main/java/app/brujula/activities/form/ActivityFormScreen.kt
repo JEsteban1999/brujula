@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -166,6 +167,15 @@ fun ActivityFormScreen(
                     if (state.type == ActivityType.APPOINTMENT) "Las citas se copian por defecto"
                     else "Los bloques de rutina se quedan en Brújula",
                     state.copyToGoogle, viewModel::setCopyToGoogle,
+                )
+            }
+
+            state.googleNotice?.let { notice ->
+                Text(
+                    notice, color = c.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.soft2)
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .semantics { this.liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
                 )
             }
 
