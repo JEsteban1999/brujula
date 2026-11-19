@@ -176,3 +176,24 @@ Razón: la app es personal, en Android, y lo más importante (no olvidar nada) d
 - De dónde sale el sueño. **Llamada del diseñador:** en esta versión, del horario de sueño de "Tu rutina", ajustado cuando el usuario confirma el aviso de "a dormir" y abre la app por la mañana. Medir sueño real (Health Connect, reloj) queda fuera de esta versión.
 - Orden de construcción por fases (lo define el plan).
 - Detalles finos de animación, siguiendo los bocetos.
+
+## 11. Días laborales y de descanso (agregado 18-nov-2026, aprobado)
+
+**Por qué:** el usuario no vive igual los fines de semana y festivos: se levanta tarde, no trabaja (o deja el PC trabajando) y hace ejercicio solo si se siente con ganas. Tratar todos los días igual le exigía una meta de trabajo y un ejercicio fijo que no aplican esos días.
+
+**Tipos de día**
+- **Laboral:** lunes a viernes que no sean festivo. Rutina actual, sin cambios.
+- **Descanso:** sábados, domingos y **todos los festivos de Colombia**, caigan el día que caigan. Se calculan en la app, sin internet, para cualquier año:
+  - Fijos: 1 ene (Año Nuevo), 1 may (Día del Trabajo), 20 jul (Independencia), 7 ago (Batalla de Boyacá), 8 dic (Inmaculada Concepción), 25 dic (Navidad).
+  - Trasladables al lunes siguiente si no caen en lunes (Ley Emiliani): 6 ene (Reyes Magos), 19 mar (San José), 29 jun (San Pedro y San Pablo), 15 ago (Asunción), 12 oct (Día de la Raza), 1 nov (Todos los Santos), 11 nov (Independencia de Cartagena).
+  - Según la Pascua (domingo de Resurrección = P): Jueves Santo (P−3) y Viernes Santo (P−2), sin traslado; Ascensión (lunes P+43), Corpus Christi (lunes P+64), Sagrado Corazón (lunes P+71).
+- El tipo de día se determina por el **día lógico** (cambia a las 04:00).
+
+**Qué cambia en un día de descanso**
+- **Horario propio:** levantarse **10:00** y acostarse **1:00** por defecto, configurables en "Tu rutina" (sección "Fines de semana y festivos"). La ventana de vigilia de ese día usa estas horas.
+- **Sin meta de trabajo:** no se muestra la barra "x / 6–7 h" ni el aviso de pocas horas. Si hay bloques de trabajo, se muestran los minutos sin meta ("Trabajo hoy: 1 h 30").
+- **Ejercicio opcional:** el "Ejercicio en casa" por defecto pasa a ser solo de lunes a viernes (18:30). En días de descanso, ~2 h después de levantarse llega un aviso "¿Te animas a hacer ejercicio hoy?" con "Sí, agéndalo" (crea un bloque de Ejercicio de 30 min en el siguiente hueco libre de ≥ 30 min del día) y "Hoy no" (no hace nada más ese día). Los días de descanso sin ejercicio no rompen la racha (la racha cuenta solo días laborales, y suma los de descanso en que sí se hizo).
+- **Hábitos iguales:** agua, bálsamo y los demás siguen activos. Los de intervalo empiezan desde la hora de levantarse de ese día. Los de horario fijo que caigan antes de levantarse se corren a la hora de levantarse (sin duplicar si ya hay uno a esa hora) en vez de perderse.
+- **Hoy muestra el tipo de día:** etiqueta "Descanso" los fines de semana, o "Festivo · {nombre}" en festivos.
+
+**Fuera de alcance:** festivos de otros países; festivos leídos desde Google Calendar (posible en Fase 2 como complemento); horarios distintos para sábado vs domingo.
