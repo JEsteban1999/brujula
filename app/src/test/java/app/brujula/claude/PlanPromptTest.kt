@@ -47,7 +47,7 @@ class PlanPromptTest {
     ) = PlanContext(
         now = now, zone = ZoneId.of("America/Bogota"), logicalToday = logicalDay(now), day = day, dayType = dayTypeOf(day),
         routine = routine, awake = routine.awakeWindow(day), lunch = routine.lunchWindow(day), items = items,
-        nextDayFirstStart = nextDayFirstStart, habitNames = habitNames, today = today,
+        nextDayFirstStart = nextDayFirstStart, nextDayFirstFixedStart = nextDayFirstStart, habitNames = habitNames, today = today,
     )
 
     private val thursdayItems = listOf(
@@ -166,6 +166,8 @@ class PlanPromptTest {
         s.has("Las citas (Cita) tienen una hora acordada con otras personas: no las muevas ni las quites salvo que el usuario lo pida explícitamente.")
         // El sueño se respeta; la hora de dormir se calcula en la app (Task 3), no en el prompt.
         s.has("Respeta el sueño: nada antes de levantarse ni después de acostarse.")
+        // Intercambio: cada move se valida contra el estado en curso, así que mover ambos chocaría.
+        s.has("Para intercambiar dos bloques, quita uno (skip) y crea su reemplazo (create) en vez de mover ambos.")
         assertFalse(s, s.contains("media hora antes de lo primero"))
     }
 

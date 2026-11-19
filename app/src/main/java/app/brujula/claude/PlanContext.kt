@@ -8,6 +8,7 @@ import app.brujula.core.time.TimeSpan
 import app.brujula.habits.HabitRepository
 import app.brujula.planning.DaySnapshotProvider
 import app.brujula.planning.DaySummary
+import app.brujula.planning.firstFixedStart
 import app.brujula.routine.DayType
 import app.brujula.routine.Routine
 import app.brujula.routine.RoutineRepository
@@ -55,8 +56,16 @@ data class PlanContext(
     val lunch: TimeSpan?,
     /** Por hora de inicio. */
     val items: List<PlanItemRef>,
-    /** Primera hora ocupada (propia o externa) del día lógico siguiente. */
+    /**
+     * Primera hora ocupada (cualquier bloque propio o evento externo) del día lógico siguiente. Solo para el prompt; la hora
+     * de dormir usa [nextDayFirstFixedStart].
+     */
     val nextDayFirstStart: LocalDateTime?,
+    /**
+     * Inicio de lo primero *fijo* del día lógico siguiente (D12): eventos externos con hora (sin copias de Brújula) y citas
+     * propias (APPOINTMENT). Los bloques de rutina, trabajo, ejercicio y personales no cuentan. Entrada de [app.brujula.planning.suggestBedtime].
+     */
+    val nextDayFirstFixedStart: LocalDateTime?,
     val habitNames: List<String>,
     /** Cómo va hoy (día lógico del reloj), aunque se arme otro día. */
     val today: DaySummary,
@@ -148,6 +157,7 @@ class PlanContextProvider(
             lunch = routine.lunchWindow(day),
             items = (own + external).sortedBy { it.span.start },
             nextDayFirstStart = nextStarts.filter { logicalDay(it) == nextDay }.minOrNull(),
+            nextDayFirstFixedStart = firstFixedStart(next),
             habitNames = habitRepository.observeHabits().first().filter { it.active }.map { it.name },
             today = todaySummary,
         )

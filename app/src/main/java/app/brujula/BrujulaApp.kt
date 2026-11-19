@@ -109,7 +109,7 @@ class AppContainer(val context: Context) {
 
     /** Arma propuestas de Claude para un día (no guarda ni aplica); por defecto con el gateway vigente. Sustituible en pruebas. */
     var dayPlanner: DayPlanner
-        get() = dayPlannerOverride ?: DayPlanner(claudeGateway, { day -> planContext(day) }, isOnline = { isOnline(context) })
+        get() = dayPlannerOverride ?: DayPlanner(claudeGateway, { day -> planContext(day) }, isOnline = { isOnline(context) }, clock = clock)
         set(value) { dayPlannerOverride = value }
 
     private var interpreterOverride: TextInterpreter? = null

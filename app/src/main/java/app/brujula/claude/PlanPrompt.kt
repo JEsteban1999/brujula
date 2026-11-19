@@ -40,6 +40,7 @@ OPERACIONES (changes)
 - create: un bloque nuevo. Lleva title (corto, con mayúscula inicial, sin fecha ni hora, como "Bloque de trabajo"), activityType (WORK, EXERCISE o PERSONAL), date, start y durationMin (5 a 720); ref va en null. Nunca crees APPOINTMENT: las citas con otras personas solo las agenda el usuario.
 - date es la fecha real de calendario en que empieza el bloque y start la hora en 24 horas (HH:mm). El día lógico va de las 04:00 a las 03:59: un bloque a las 00:30 de la noche del día a armar empieza el día de calendario siguiente, así que su date es la del día siguiente.
 - Devuelve solo lo que cambia; lo que se queda igual no va en changes. Prefiere mover o quitar lo que ya existe antes que crear bloques nuevos, y no crees un bloque que repita uno que ya está. Pon primero los move y skip y después los create.
+- Para intercambiar dos bloques, quita uno (skip) y crea su reemplazo (create) en vez de mover ambos.
 - Si no hace falta cambiar nada, devuelve changes vacío y dilo en summary.
 
 REGLAS DEL DÍA

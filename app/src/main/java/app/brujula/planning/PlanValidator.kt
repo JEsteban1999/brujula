@@ -6,7 +6,6 @@ import app.brujula.activities.ActivityType
 import app.brujula.activities.Repeat
 import app.brujula.activities.form.MAX_DURATION
 import app.brujula.activities.form.REMIND_BEFORE_MIN
-import app.brujula.claude.DayPlanner
 import app.brujula.claude.PlanChange
 import app.brujula.claude.PlanContext
 import app.brujula.claude.PlanItemRef
@@ -39,6 +38,8 @@ object PlanValidator {
     const val MAX_TITLE = 80
     const val TOO_MANY = "Claude propuso demasiados cambios; apliqué los primeros $MAX_CHANGES."
     const val APPOINTMENT = "Las citas se agendan dictándolas."
+    const val OUT_OF_RANGE = "Por ahora puedo armar hasta 6 días adelante."
+    const val PAST_DAY = "Ese día ya pasó. Puedo armar desde hoy hasta 6 días adelante."
     const val LUNCH_TITLE = "Almuerzo y pausa"
     const val BED_TITLE = "A dormir"
     private const val EXTERNAL_SOURCE_FALLBACK = "Calendario"
@@ -49,12 +50,14 @@ object PlanValidator {
     private val SPACES = Regex("""\s+""")
     private val CREATABLE = setOf(ActivityType.WORK, ActivityType.EXERCISE, ActivityType.PERSONAL)
 
-    /** Motivo por el que no se puede armar [PlanContext.day] (D10), o null si está en la ventana. */
-    fun dayProblem(ctx: PlanContext): String? = when {
-        ctx.day < ctx.logicalToday -> DayPlanner.PAST_DAY
-        ctx.day > ctx.logicalToday.plusDays(MAX_DAYS_AHEAD) -> DayPlanner.OUT_OF_RANGE
+    /** Motivo por el que no se puede armar [day] cuando hoy (día lógico) es [logicalToday] (D10), o null si se puede. */
+    fun dayProblem(day: LocalDate, logicalToday: LocalDate): String? = when {
+        day < logicalToday -> PAST_DAY
+        day > logicalToday.plusDays(MAX_DAYS_AHEAD) -> OUT_OF_RANGE
         else -> null
     }
+
+    fun dayProblem(ctx: PlanContext): String? = dayProblem(ctx.day, ctx.logicalToday)
 
     fun validate(result: PlanResult, ctx: PlanContext): ValidatedPlan {
         dayProblem(ctx)?.let { return ValidatedPlan(emptyList(), listOf(it)) }
@@ -123,9 +126,9 @@ object PlanValidator {
         )
     }
 
-    /** D12 para el día armado; si es hoy, nunca antes de ahora. */
+    /** D12 para el día armado (solo lo fijo de mañana mueve la hora de levantarse); si es hoy, nunca antes de ahora. */
     private fun bedtimeFor(ctx: PlanContext): BedtimeSuggestion =
-        suggestBedtime(ctx.day, ctx.routine, ctx.nextDayFirstStart, notBefore = ctx.now.takeIf { ctx.day == ctx.logicalToday })
+        suggestBedtime(ctx.day, ctx.routine, ctx.nextDayFirstFixedStart, notBefore = ctx.now.takeIf { ctx.day == ctx.logicalToday })
 
     private fun minutesWithin(span: TimeSpan, within: TimeSpan): Int {
         val start = maxOf(span.start, within.start)

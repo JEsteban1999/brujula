@@ -21,6 +21,7 @@ import app.brujula.habits.HabitRepository
 import app.brujula.habits.HabitSchedule
 import app.brujula.planning.DaySnapshotProvider
 import app.brujula.planning.ExerciseState
+import app.brujula.planning.PlanValidator
 import app.brujula.routine.DayKind
 import app.brujula.routine.RoutineRepository
 import kotlinx.coroutines.test.TestScope
@@ -169,6 +170,7 @@ class PlanContextProviderTest {
         assertEquals(0, ctx.today.waterCount)
         assertEquals(8, ctx.today.waterTarget)
         assertEquals(sat.atTime(7, 0), ctx.nextDayFirstStart)
+        assertEquals("Lo fijo: el vuelo, no el bloque personal de las 7:00", sat.atTime(9, 0), ctx.nextDayFirstFixedStart)
         assertEquals(listOf("Tomar agua"), ctx.habitNames)
         assertEquals(TimeSpan(fri.atTime(8, 15), sat.atTime(0, 30)), ctx.awake)
         assertTrue("Mañana todo lo no hecho se puede mover", ctx.items.single { it.title == "Tarde" }.movable)
@@ -201,6 +203,41 @@ class PlanContextProviderTest {
         val ctx = provider(wed.atTime(21, 0)).forDay(thu)
 
         assertEquals(fri.atTime(10, 0), ctx.nextDayFirstStart)
+        assertNull("Ni el vuelo de la noche anterior ni un bloque personal son lo fijo del viernes", ctx.nextDayFirstFixedStart)
+    }
+
+    // D12: solo lo fijo de mañana (externos y citas) adelanta la hora de levantarse; los bloques de rutina no.
+    private suspend fun workdayBlock() =
+        add("Bloque de trabajo", wed, LocalTime.of(8, 0), min = 240, type = ActivityType.WORK, repeat = Repeat.WORKDAYS)
+
+    @Test fun tomorrowsOwnWorkBlockDoesNotMoveTheBedtime() = runTest {
+        workdayBlock()
+        val ctx = provider(wed.atTime(21, 0)).forDay(thu)
+        assertEquals("El prompt sí ve la primera hora ocupada", fri.atTime(8, 0), ctx.nextDayFirstStart)
+        assertNull(ctx.nextDayFirstFixedStart)
+        val t = PlanValidator.totals(ctx, emptyList())
+        assertEquals("Se levanta a las 8:15 (rutina)", fri.atTime(0, 15), t.bedtime)
+        assertEquals(480, t.sleepMinutes)
+    }
+
+    @Test fun tomorrowsExternalEventAtSevenWakesAt630() = runTest {
+        workdayBlock()
+        calendar.eventList = listOf(ext(1, "Vuelo", fri.atTime(7, 0), fri.atTime(8, 0)))
+        val ctx = provider(wed.atTime(21, 0)).forDay(thu)
+        assertEquals(fri.atTime(7, 0), ctx.nextDayFirstFixedStart)
+        val t = PlanValidator.totals(ctx, emptyList())
+        assertEquals(thu.atTime(22, 30), t.bedtime)
+        assertEquals("Hasta las 6:30", 480, t.sleepMinutes)
+    }
+
+    @Test fun tomorrowsCitaAt730WakesAtSeven() = runTest {
+        workdayBlock()
+        add("Médico", fri, LocalTime.of(7, 30), type = ActivityType.APPOINTMENT)
+        val ctx = provider(wed.atTime(21, 0)).forDay(thu)
+        assertEquals(fri.atTime(7, 30), ctx.nextDayFirstFixedStart)
+        val t = PlanValidator.totals(ctx, emptyList())
+        assertEquals(thu.atTime(23, 0), t.bedtime)
+        assertEquals("Hasta las 7:00", 480, t.sleepMinutes)
     }
 
     @Test fun at0030ThursdayTodayIsWednesday() = runTest {

@@ -3,6 +3,9 @@ package app.brujula.claude
 import app.brujula.planning.PlanOp
 import app.brujula.planning.PlanValidator
 import app.brujula.planning.Proposal
+import app.brujula.core.time.Clock
+import app.brujula.core.time.SystemClock
+import app.brujula.routine.logicalDay
 import kotlinx.coroutines.CancellationException
 import java.time.LocalDate
 
@@ -21,13 +24,19 @@ sealed interface PlanOutcome {
  * aplica nada (eso es `Aceptar plan`). Solo días de hoy (día lógico) a hoy + 6 (D10); fuera de eso no se llama a Claude.
  *
  * Un ajuste (D9) es una llamada nueva con los cambios de [Proposal.ops] de la propuesta anterior y el texto en `<ajuste>`.
+ *
+ * La llamada puede tardar hasta 90 s: la respuesta se valida con la hora de [clock] al recibirla (nada en el pasado si el día
+ * es hoy, y la hora de dormir nunca antes de ahora), no con la del contexto.
  */
 class DayPlanner(
     private val gateway: ClaudeGateway,
     private val contextProvider: suspend (LocalDate) -> PlanContext,
     private val isOnline: suspend () -> Boolean = { true },
+    private val clock: Clock = SystemClock,
 ) {
     suspend fun propose(day: LocalDate, request: String?, previous: Proposal? = null, adjustment: String? = null): PlanOutcome {
+        // D10 antes de leer nada: fuera de la ventana no se arma el contexto ni se llama a Claude.
+        PlanValidator.dayProblem(day, logicalDay(clock.now()))?.let { return PlanOutcome.Failed(it, retryable = false) }
         val ctx = try {
             contextProvider(day)
         } catch (e: CancellationException) {
@@ -35,7 +44,6 @@ class DayPlanner(
         } catch (e: Exception) {
             return PlanOutcome.Failed(CONTEXT_FAILED, retryable = true)
         }
-        PlanValidator.dayProblem(ctx)?.let { return PlanOutcome.Failed(it, retryable = false) }
         if (!isOnline()) return PlanOutcome.Offline
 
         // Un ajuste conserva el pedido original si no llega otro; una propuesta de otro día no sirve de base.
@@ -44,17 +52,21 @@ class DayPlanner(
         val user = PlanPrompt.user(ctx, cleanRequest, base?.ops?.map(::toChange), adjustment)
         return when (val r = gateway.plan(PlanPrompt.system(), user)) {
             is GatewayResult.Ok -> {
-                val validated = PlanValidator.validate(r.value, ctx)
+                // Lo mismo que se cargó antes de la llamada, pero con la hora de ahora.
+                val now = maxOf(clock.now(), ctx.now)
+                val current = ctx.copy(now = now, logicalToday = logicalDay(now))
+                PlanValidator.dayProblem(current)?.let { return PlanOutcome.Failed(it, retryable = false) }
+                val validated = PlanValidator.validate(r.value, current)
                 PlanOutcome.Ok(
                     Proposal(
                         day = day,
-                        createdAt = ctx.now,
+                        createdAt = current.now,
                         request = cleanRequest,
                         summary = r.value.summary.trim().take(MAX_SUMMARY),
                         ops = validated.ops,
                         rejected = validated.rejected,
-                        preview = PlanValidator.preview(ctx, validated.ops),
-                        totals = PlanValidator.totals(ctx, validated.ops),
+                        preview = PlanValidator.preview(current, validated.ops),
+                        totals = PlanValidator.totals(current, validated.ops),
                     ),
                 )
             }
@@ -89,8 +101,8 @@ class DayPlanner(
         const val MAX_SUMMARY = 400
         const val OFFLINE = "Sin conexión. Claude necesita internet para armar tu día."
         const val NO_KEY = "Para que Claude arme tu día, agrega tu clave en Tu rutina."
-        const val OUT_OF_RANGE = "Por ahora puedo armar hasta 6 días adelante."
-        const val PAST_DAY = "Ese día ya pasó. Puedo armar desde hoy hasta 6 días adelante."
+        const val OUT_OF_RANGE = PlanValidator.OUT_OF_RANGE
+        const val PAST_DAY = PlanValidator.PAST_DAY
         const val INVALID_KEY = DictationInterpreter.INVALID_KEY
         const val REFUSED = "Claude no pudo armar tu día con eso. Prueba pidiéndolo de otra forma."
         const val UNAVAILABLE = DictationInterpreter.UNAVAILABLE

@@ -51,10 +51,11 @@ object PlanFixtures {
         items: List<PlanItemRef> = emptyList(),
         routine: Routine = Routine(),
         nextDayFirstStart: LocalDateTime? = null,
+        nextDayFirstFixedStart: LocalDateTime? = nextDayFirstStart,
     ) = PlanContext(
         now = now, zone = ZoneId.of("America/Bogota"), logicalToday = logicalDay(now), day = day, dayType = dayTypeOf(day),
         routine = routine, awake = routine.awakeWindow(day), lunch = routine.lunchWindow(day), items = items.sortedBy { it.span.start },
-        nextDayFirstStart = nextDayFirstStart, habitNames = listOf("Tomar agua"),
+        nextDayFirstStart = nextDayFirstStart, nextDayFirstFixedStart = nextDayFirstFixedStart, habitNames = listOf("Tomar agua"),
         today = DaySummary(270, 360..420, 3, 8, ExerciseState.PENDING),
     )
 

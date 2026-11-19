@@ -3,6 +3,7 @@ package app.brujula.claude
 import app.brujula.activities.Activity
 import app.brujula.activities.ActivityOrigin
 import app.brujula.activities.ActivityType
+import app.brujula.core.time.FixedClock
 import app.brujula.core.time.TimeSpan
 import app.brujula.planning.BlockTag
 import app.brujula.planning.PlanFixtures
@@ -22,21 +23,25 @@ import java.time.LocalTime
 
 class DayPlannerTest {
     private val gateway = FakeClaudeGateway()
-    private var now: LocalDateTime = WED.atTime(21, 0)
+    private val clock = FixedClock(WED.atTime(21, 0))
+    private var now: LocalDateTime
+        get() = clock.current
+        set(value) { clock.current = value }
     private val requestedDays = mutableListOf<LocalDate>()
     private val items = listOf(
         PlanFixtures.own(2, "Gimnasio", THU.atTime(18, 30), THU.atTime(19, 30), ActivityType.EXERCISE, oneOff = false),
         PlanFixtures.ext(1, "Reunión de equipo", THU.atTime(9, 0), THU.atTime(10, 0), work = true),
     )
 
-    private fun planner(online: Boolean = true, failContext: Boolean = false) = DayPlanner(
-        gateway,
+    private fun planner(online: Boolean = true, failContext: Boolean = false, gw: ClaudeGateway = gateway) = DayPlanner(
+        gw,
         contextProvider = { day ->
             requestedDays += day
             if (failContext) error("DB cerrada")
             PlanFixtures.ctx(now, day, if (day == THU) items else emptyList())
         },
         isOnline = { online },
+        clock = clock,
     )
 
     private fun ok(summary: String, vararg changes: PlanChange) = GatewayResult.Ok(PlanResult(summary, changes.toList()))
@@ -45,13 +50,18 @@ class DayPlannerTest {
         val r = planner().propose(WED.plusDays(7), request = null)
         assertEquals(PlanOutcome.Failed(DayPlanner.OUT_OF_RANGE, retryable = false), r)
         assertEquals(0, gateway.planCalls)
+        assertEquals("Ni siquiera se arma el contexto", emptyList<LocalDate>(), requestedDays)
+        // Aunque leer el contexto fallara, la respuesta es la del rango.
+        assertEquals(PlanOutcome.Failed(DayPlanner.OUT_OF_RANGE, retryable = false), planner(failContext = true).propose(WED.plusDays(7), null))
+        assertEquals(emptyList<LocalDate>(), requestedDays)
         assertEquals("Por ahora puedo armar hasta 6 días adelante.", DayPlanner.OUT_OF_RANGE)
     }
 
     @Test fun pastDayIsRefusedAndTodayPlusSixIsAllowed() = runTest {
         val past = planner().propose(WED.minusDays(1), request = null)
-        assertTrue(past is PlanOutcome.Failed && !past.retryable)
+        assertEquals(PlanOutcome.Failed(DayPlanner.PAST_DAY, retryable = false), past)
         assertEquals(0, gateway.planCalls)
+        assertEquals(emptyList<LocalDate>(), requestedDays)
         gateway.plan = ok("Nada que cambiar.")
         assertTrue(planner().propose(WED.plusDays(6), request = null) is PlanOutcome.Ok)
         assertEquals(1, gateway.planCalls)
@@ -107,6 +117,43 @@ class DayPlannerTest {
         assertEquals(PlanTotals(workMinutes = 60 + 60, exerciseMinutes = 60, sleepMinutes = 480, bedtime = THU.plusDays(1).atTime(0, 15)), p.totals)
         assertTrue(gateway.lastPlanUser!!.contains("<pedido>\npasa el gym a la tarde\n</pedido>"))
         assertEquals(PlanPrompt.system(), gateway.lastPlanSystem)
+    }
+
+    @Test fun validatesWithTheTimeTheAnswerArrives() = runTest {
+        // Hoy (jueves) a las 9:58 se pide el día; Claude tarda y responde a las 10:05 con un bloque a las 10:00.
+        now = THU.atTime(9, 58)
+        gateway.plan = ok(
+            "Listo.",
+            PlanChange(op = "create", title = "Bloque de trabajo", activityType = "WORK", date = "2026-11-19", start = "10:00", durationMin = 60),
+            PlanChange(op = "create", title = "Leer", activityType = "PERSONAL", date = "2026-11-19", start = "11:00", durationMin = 30),
+        )
+        val slow = object : ClaudeGateway by gateway {
+            override suspend fun plan(system: String, user: String): GatewayResult<PlanResult> {
+                val r = gateway.plan(system, user)
+                now = THU.atTime(10, 5)
+                return r
+            }
+        }
+        val p = (planner(gw = slow).propose(THU, request = null) as PlanOutcome.Ok).proposal
+        assertEquals(listOf("Leer"), p.ops.map { (it as PlanOp.Create).activity.title })
+        assertEquals(1, p.rejected.size)
+        assertTrue(p.rejected[0], p.rejected[0].startsWith("«Bloque de trabajo»") && p.rejected[0].contains("ya pasó"))
+        assertEquals(THU.atTime(10, 5), p.createdAt)
+    }
+
+    @Test fun bedtimeIsNeverBeforeTheTimeTheAnswerArrives() = runTest {
+        // Jueves lógico, 00:10 del viernes: la sugerida (00:15) queda; si Claude responde a las 00:20, pasa a las 00:30.
+        now = THU.plusDays(1).atTime(0, 10)
+        gateway.plan = ok("Nada que cambiar.")
+        val slow = object : ClaudeGateway by gateway {
+            override suspend fun plan(system: String, user: String): GatewayResult<PlanResult> {
+                val r = gateway.plan(system, user)
+                now = THU.plusDays(1).atTime(0, 20)
+                return r
+            }
+        }
+        val p = (planner(gw = slow).propose(THU, request = null) as PlanOutcome.Ok).proposal
+        assertEquals(THU.plusDays(1).atTime(0, 30), p.totals.bedtime)
     }
 
     @Test fun summaryIsCappedAt400() = runTest {

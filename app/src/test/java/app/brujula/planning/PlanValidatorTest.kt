@@ -3,7 +3,6 @@ package app.brujula.planning
 import app.brujula.activities.ActivityOrigin
 import app.brujula.activities.ActivityType
 import app.brujula.activities.Repeat
-import app.brujula.claude.DayPlanner
 import app.brujula.claude.PlanChange
 import app.brujula.claude.PlanContext
 import app.brujula.claude.PlanResult
@@ -282,11 +281,11 @@ class PlanValidatorTest {
 
     @Test fun dayOutsideTheWindowRejectsEverything() {
         val far = validate(ctx(evening, WED.plusDays(7)), create("Bloque", "WORK", WED.plusDays(7), "15:00", 60))
-        assertEquals(listOf(DayPlanner.OUT_OF_RANGE), far.rejected)
+        assertEquals(listOf(PlanValidator.OUT_OF_RANGE), far.rejected)
         assertTrue(far.ops.isEmpty())
         val past = validate(ctx(evening, WED.minusDays(1)), create("Bloque", "WORK", WED.minusDays(1), "15:00", 60))
         assertTrue(past.ops.isEmpty())
-        assertEquals(1, past.rejected.size)
+        assertEquals(listOf(PlanValidator.PAST_DAY), past.rejected)
         assertEquals(1, validate(ctx(evening, WED.plusDays(6)), create("Bloque", "WORK", WED.plusDays(6), "15:00", 60)).ops.size)
     }
 
@@ -356,6 +355,13 @@ class PlanValidatorTest {
         assertEquals(90 + 30, t.exerciseMinutes)
         assertEquals(480, t.sleepMinutes)
         assertEquals(FRI.atTime(0, 15), t.bedtime)
+    }
+
+    @Test fun bedtimeUsesOnlyTomorrowsFirstFixedItem() {
+        // Mañana empieza con un bloque propio a las 8:00 (no es fijo): la hora de levantarse sigue siendo la de la rutina.
+        val t = PlanValidator.totals(ctx(evening, THU, nextDayFirstStart = FRI.atTime(8, 0), nextDayFirstFixedStart = null), emptyList())
+        assertEquals(FRI.atTime(0, 15), t.bedtime)
+        assertEquals(480, t.sleepMinutes)
     }
 
     @Test fun totalsBedtimeNeverBeforeNowWhenPlanningToday() {
