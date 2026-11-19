@@ -178,4 +178,16 @@ class HabitsViewModelTest {
         vm.add(eye.habit.id)
         assertEquals(1, vm.state.first { s -> s.wellness.first().count == 1 }.wellness.first().count)
     }
+
+    @Test fun restDayWellnessTargetIsNumberOfRemindersThatDay() = runTest {
+        val routine = RoutineRepository(PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "w4.preferences_pb") })
+        seeded(routine)
+        val sat = FixedClock(LocalDateTime.of(2026, 11, 21, 12, 0))
+        val vm = HabitsViewModel(sat, routine, activities, habits, scopeOverride = backgroundScope, tickMs = 0)
+        val rows = vm.state.first { it.wellness.size == 9 }.wellness.associateBy { it.habit.name }
+        assertEquals(0, rows.getValue("Descanso visual 20-20-20").target)
+        assertEquals(0, rows.getValue("Postura").target)
+        assertEquals(2, rows.getValue("Comer a horas").target)
+        assertEquals(0, rows.getValue("Comer a horas").count)
+    }
 }

@@ -454,15 +454,15 @@ private fun WellnessRowItem(
                 Text(row.summary, color = c.textMuted, fontSize = 12.sp, lineHeight = 16.sp)
             }
             Text(
-                "${row.count} de ${row.target}", color = c.textMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold,
-                modifier = Modifier.semantics { contentDescription = "${row.count} de ${row.target} hoy" },
+                if (row.target == 0) "Hoy no" else "${row.count} de ${row.target}", color = c.textMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.semantics { contentDescription = if (row.target == 0) "Hoy no" else "${row.count} de ${row.target} hoy" },
             )
         }
         Box(
-            Modifier.size(48.dp).alpha(if (h.active) 1f else 0.4f).pressScale(addSource, reduced).clip(RoundedCornerShape(12.dp))
+            Modifier.size(48.dp).alpha(if (h.active && row.target > 0) 1f else 0.4f).pressScale(addSource, reduced).clip(RoundedCornerShape(12.dp))
                 .background(c.surface2)
                 .combinedClickable(
-                    enabled = h.active, interactionSource = addSource, indication = null, role = Role.Button,
+                    enabled = h.active && row.target > 0, interactionSource = addSource, indication = null, role = Role.Button,
                     onClickLabel = "Sumar una a ${h.name}", onClick = { onAdd(h.id) },
                     onLongClickLabel = "Deshacer la última de ${h.name}", onLongClick = { onUndo(h.id) },
                 )

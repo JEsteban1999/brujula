@@ -114,7 +114,7 @@ class HabitsViewModel(
         return HabitsUiState(
             cards = cards,
             wellness = habits.filter { it.group == HabitGroup.WELLNESS }.map {
-                WellnessRow(it, counts[it.id] ?: 0, it.dailyTarget.coerceAtLeast(1), it.summary())
+                WellnessRow(it, counts[it.id] ?: 0, it.copy(active = true).timesFor(day, routine).size, it.summary())
             },
             exerciseStreak = exerciseStreak(day, doneDays),
             weekDone = (0L..6L).map { monday.plusDays(it) in doneDays },
