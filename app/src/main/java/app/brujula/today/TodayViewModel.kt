@@ -7,7 +7,6 @@ import app.brujula.activities.ActivityRepository
 import app.brujula.activities.Occurrence
 import app.brujula.activities.WorkStatus
 import app.brujula.activities.freeSlots
-import app.brujula.activities.occurrencesOn
 import app.brujula.activities.workMinutes
 import app.brujula.activities.workStatus
 import app.brujula.calendar.CalendarSource
@@ -51,7 +50,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalDateTime
-import java.time.LocalTime
 
 data class HabitChip(val habitId: Long, val name: String, val icon: HabitIcon, val count: Int, val target: Int)
 
@@ -90,7 +88,6 @@ data class TodayUiState(
 
 private const val MAX_VISIBLE_HABITS = 2
 private const val TICK_MS = 30_000L
-private val LOGICAL_DAY_START: LocalTime = LocalTime.of(4, 0)
 
 class TodayViewModel(
     private val clock: Clock,
@@ -127,12 +124,7 @@ class TodayViewModel(
         .mapLatest { (day, ids) ->
             withContext(Dispatchers.IO) {
                 runCatching {
-                    if (ids.isNullOrEmpty() || !calendarSource.hasReadPermission()) {
-                        emptyList()
-                    } else {
-                        val from = day.atTime(LOGICAL_DAY_START).minusDays(1)
-                        calendarSource.events(ids, from, day.atTime(LOGICAL_DAY_START).plusDays(2))
-                    }
+                    calendarSource.eventsAroundLogicalDay(ids, day)
                 }.getOrDefault(emptyList())
             }
         }
@@ -196,10 +188,8 @@ class TodayViewModel(
         val window = routine.awakeWindow(day)
         // Dia logico: todo lo que empieza en el (04:00 a 03:59), ya sea por fecha de calendario de ayer, hoy o manana,
         // mas lo de ayer que aun cruza la vigilia de hoy.
-        val logical = (-1L..1L).flatMap { occurrencesOn(day.plusDays(it), activities, done) }
-            .filter { logicalDay(it.span.start) == day }
-        val spill = occurrencesOn(day.minusDays(1), activities, done)
-            .filter { logicalDay(it.span.start) != day && it.span.overlaps(window) }
+        val logical = logicalOccurrences(day, activities, done)
+        val spill = spillOccurrences(day, activities, done, window)
         val ownBlocks = (spill + logical).map { TimelineBlock.Own(it, now in it.span) }
         val external = eventsOnLogicalDay(day, rawExternal, window)
         val timed = external.filter { !it.allDay }

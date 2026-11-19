@@ -24,6 +24,11 @@ const val MIN_BEFORE_BED_MIN = 15
 const val MAX_BEFORE_BED_MIN = 180
 private val REFERENCE_DAY: LocalDate = LocalDate.of(2000, 1, 3)
 
+/** Meta de un hábito "cada N minutos": tantos avisos como caben en la vigilia de un día laboral de referencia. */
+fun autoDailyTarget(intervalMin: Int, window: HabitWindow, routine: Routine): Int =
+    Habit(name = "", icon = HabitIcon.GENERIC, schedule = HabitSchedule.Every(intervalMin), dailyTarget = 1, window = window)
+        .timesFor(REFERENCE_DAY, routine).size.coerceIn(1, MAX_DAILY_TARGET)
+
 data class HabitFormState(
     val name: String = "",
     val icon: HabitIcon = HabitIcon.GENERIC,
@@ -123,11 +128,7 @@ class HabitFormViewModel(
     /** Meta calculada: tantos avisos como caben en la vigilia mientras el usuario no la toque. */
     private fun autoTarget(s: HabitFormState): HabitFormState {
         if (s.targetTouched || s.mode != HabitMode.EVERY || s.intervalMin !in MIN_INTERVAL_MIN..MAX_INTERVAL_MIN) return s
-        val slots = Habit(
-            name = "", icon = HabitIcon.GENERIC, schedule = HabitSchedule.Every(s.intervalMin), dailyTarget = 1,
-            window = if (s.workOnly) HabitWindow.WORK else HabitWindow.AWAKE,
-        ).timesFor(REFERENCE_DAY, routine).size
-        return s.copy(dailyTarget = slots.coerceIn(1, MAX_DAILY_TARGET))
+        return s.copy(dailyTarget = autoDailyTarget(s.intervalMin, if (s.workOnly) HabitWindow.WORK else HabitWindow.AWAKE, routine))
     }
     fun setDays(v: Set<DayOfWeek>) = edit { it.copy(days = v, daysError = null) }
 

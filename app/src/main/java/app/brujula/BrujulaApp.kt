@@ -13,6 +13,9 @@ import app.brujula.calendar.GoogleCopySync
 import app.brujula.claude.AnthropicClaudeGateway
 import app.brujula.claude.ClaudeGateway
 import app.brujula.claude.ClaudeKeyStore
+import app.brujula.claude.DictationContext
+import app.brujula.claude.DictationContextProvider
+import app.brujula.claude.DictationInterpreter
 import app.brujula.claude.KeystoreSecretCipher
 import app.brujula.core.time.Clock
 import app.brujula.core.time.SystemClock
@@ -65,6 +68,14 @@ class AppContainer(val context: Context) {
     var claudeGateway: ClaudeGateway
         get() = claudeGatewayOverride ?: defaultClaudeGateway
         set(value) { claudeGatewayOverride = value }
+
+    /** Lo que se envía a Claude con cada dictado; usa las dependencias vigentes (reloj y calendarios sustituibles). */
+    suspend fun dictationContext(): DictationContext =
+        DictationContextProvider(clock, routineRepository, activityRepository, habitRepository, calendarSource).current()
+
+    /** Convierte un dictado en acciones validadas (no aplica nada); usa el gateway vigente. */
+    val dictationInterpreter: DictationInterpreter
+        get() = DictationInterpreter(claudeGateway, ::dictationContext)
 
     /** Ambito de la app para la copia a Google: sobrevive al formulario (SupervisorJob + IO). */
     val syncScope = CoroutineScope(

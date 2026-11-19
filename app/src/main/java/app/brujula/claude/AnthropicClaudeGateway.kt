@@ -3,8 +3,23 @@ package app.brujula.claude
 import com.anthropic.client.AnthropicClient
 import com.anthropic.client.okhttp.AnthropicOkHttpClient
 import com.anthropic.errors.AnthropicIoException
+import com.anthropic.errors.AnthropicRetryableException
+import com.anthropic.errors.AnthropicServiceException
+import com.anthropic.errors.InternalServerException
+import com.anthropic.errors.PermissionDeniedException
+import com.anthropic.errors.RateLimitException
+import com.anthropic.errors.RequestTimeoutException
 import com.anthropic.errors.UnauthorizedException
+import com.anthropic.models.beta.AnthropicBeta
+import com.anthropic.models.beta.messages.BetaCacheControlEphemeral
+import com.anthropic.models.beta.messages.BetaOutputConfig
+import com.anthropic.models.beta.messages.BetaStopReason
+import com.anthropic.models.beta.messages.BetaTextBlockParam
+import com.anthropic.models.beta.messages.StructuredMessage
+import com.anthropic.models.beta.messages.StructuredMessageCreateParams
+import com.anthropic.models.beta.messages.StructuredOutputConfig
 import com.anthropic.models.messages.MessageCreateParams
+import com.anthropic.models.beta.messages.MessageCreateParams as BetaMessageCreateParams
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -36,6 +51,21 @@ class AnthropicClaudeGateway(private val keyStore: ClaudeKeyStore) : ClaudeGatew
         cached = null
     }
 
+    override suspend fun interpret(system: String, user: String): GatewayResult<DictationResult> = withContext(Dispatchers.IO) {
+        try {
+            val key = keyStore.read()
+            if (key == null) {
+                dropClient()
+                return@withContext GatewayResult.NoKey
+            }
+            DictationCall.read(clientFor(key).beta().messages().create(DictationCall.params(system, user)))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            DictationCall.failureOf(e)
+        }
+    }
+
     override suspend fun testKey(): KeyTestResult = withContext(Dispatchers.IO) {
         try {
             val key = keyStore.read()
@@ -60,5 +90,63 @@ class AnthropicClaudeGateway(private val keyStore: ClaudeKeyStore) : ClaudeGatew
         } catch (e: Exception) {
             KeyTestResult.ERROR
         }
+    }
+}
+
+/**
+ * Petición de dictado y lectura de su respuesta; separado para probarlo sin red.
+ *
+ * Va por el endpoint beta porque el SDK 3.9.0 expone ahí `fallbacks` ("default", beta server-side-fallback-2026-07-01):
+ * si Claude Opus 5.5 rechaza, el servidor reintenta con el modelo de respaldo dentro de la misma llamada. Si toda la cadena
+ * rechaza, llega stopReason == REFUSAL y se trata como [GatewayResult.Refused].
+ */
+internal object DictationCall {
+    private const val MAX_TOKENS = 4096L
+
+    /** Salida estructurada derivada de [DictationResult]; esfuerzo bajo, sin `thinking`, sin temperatura ni prefill. */
+    fun params(system: String, user: String): StructuredMessageCreateParams<DictationResult> =
+        BetaMessageCreateParams.builder()
+            .model(ClaudeModels.DICTATION)
+            .maxTokens(MAX_TOKENS)
+            .addBeta(AnthropicBeta.SERVER_SIDE_FALLBACK_2026_07_01)
+            .fallbacksDefault()
+            .systemOfBetaTextBlockParams(
+                listOf(
+                    // El system es fijo: se marca cacheable (si no alcanza el mínimo de tokens, el API simplemente no cachea).
+                    BetaTextBlockParam.builder().text(system).cacheControl(BetaCacheControlEphemeral.builder().build()).build(),
+                ),
+            )
+            .addUserMessage(user)
+            .outputConfig(
+                StructuredOutputConfig.builder<DictationResult>()
+                    .effort(BetaOutputConfig.Effort.LOW)
+                    .format(DictationResult::class.java)
+                    .build(),
+            )
+            .build()
+
+    /** Revisa stopReason antes de leer el contenido. */
+    fun read(response: StructuredMessage<DictationResult>): GatewayResult<DictationResult> {
+        val stop = response.stopReason().orElse(null)
+        if (stop == BetaStopReason.REFUSAL) return GatewayResult.Refused
+        if (stop != BetaStopReason.END_TURN) return GatewayResult.Error(retryable = false)
+        return try {
+            // Tras un respaldo puede haber texto parcial del primer modelo antes del bloque fallback: vale el último texto.
+            val block = response.content().lastOrNull { it.isText() } ?: return GatewayResult.Error(retryable = false)
+            GatewayResult.Ok(block.asText().text())
+        } catch (e: RuntimeException) {
+            // JSON que no encaja en DictationResult (AnthropicInvalidDataException) u otra respuesta ilegible.
+            GatewayResult.Error(retryable = false)
+        }
+    }
+
+    /** Clasifica por tipo de excepción, nunca por el texto del mensaje. */
+    fun failureOf(e: Exception): GatewayResult<Nothing> = when (e) {
+        is UnauthorizedException, is PermissionDeniedException -> GatewayResult.InvalidKey
+        is AnthropicIoException -> GatewayResult.Network
+        is RateLimitException, is InternalServerException, is RequestTimeoutException, is AnthropicRetryableException ->
+            GatewayResult.Error(retryable = true)
+        is AnthropicServiceException -> GatewayResult.Error(retryable = e.statusCode() >= 500)
+        else -> GatewayResult.Error(retryable = false)
     }
 }

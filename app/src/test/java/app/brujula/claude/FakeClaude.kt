@@ -13,7 +13,19 @@ class FakeSecretCipher : SecretCipher {
     }
 }
 
-class FakeClaudeGateway(var result: KeyTestResult = KeyTestResult.OK) : ClaudeGateway {
+class FakeClaudeGateway(
+    var result: KeyTestResult = KeyTestResult.OK,
+    var dictation: GatewayResult<DictationResult> = GatewayResult.Error(retryable = false),
+) : ClaudeGateway {
     var calls = 0
+    var interpretCalls = 0
+    var lastSystem: String? = null
+    var lastUser: String? = null
     override suspend fun testKey(): KeyTestResult { calls++; return result }
+    override suspend fun interpret(system: String, user: String): GatewayResult<DictationResult> {
+        interpretCalls++
+        lastSystem = system
+        lastUser = user
+        return dictation
+    }
 }
