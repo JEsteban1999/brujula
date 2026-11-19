@@ -25,6 +25,11 @@ object Migrations {
     suspend fun seedWellness(db: BrujulaDatabase, routine: RoutineRepository) {
         if (routine.isWellnessSeeded()) return
         val habits = HabitRepository(db.habitDao())
+        // Si el proceso murio entre el commit y la bandera, no se siembra otra vez.
+        if (habits.countWellness() > 0) {
+            routine.markWellnessSeeded()
+            return
+        }
         val wed = LocalDate.of(2026, 11, 18)
         val base = Routine()
         fun w(

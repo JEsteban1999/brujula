@@ -146,4 +146,19 @@ class SeedTest {
         Migrations.seedWellness(db, routine)
         assertEquals(8, wellness(habits).size)
     }
+
+    @Test fun seedWellnessSkipsAndMarksFlagWhenWellnessHabitAlreadyExists() = runTest {
+        val habits = HabitRepository(db.habitDao())
+        val routine = routineRepo()
+        habits.upsert(
+            app.brujula.habits.Habit(
+                name = "Postura", icon = app.brujula.habits.HabitIcon.POSTURE, schedule = HabitSchedule.Every(60),
+                dailyTarget = 1, group = app.brujula.habits.HabitGroup.WELLNESS,
+            ),
+        )
+        assertEquals(false, routine.isWellnessSeeded())
+        Migrations.seedWellness(db, routine)
+        assertEquals(1, wellness(habits).size)
+        assertEquals(true, routine.isWellnessSeeded())
+    }
 }

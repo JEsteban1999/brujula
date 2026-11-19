@@ -15,6 +15,8 @@ class HabitRepository(private val dao: HabitDao) {
 
     suspend fun count(): Int = dao.count()
 
+    suspend fun countWellness(): Int = dao.countWellness()
+
     suspend fun upsert(h: Habit): Long {
         val rowId = dao.upsert(h.toEntity())
         return if (h.id != 0L) h.id else rowId
