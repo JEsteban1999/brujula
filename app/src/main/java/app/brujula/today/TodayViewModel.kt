@@ -139,7 +139,11 @@ class TodayViewModel(
     private val classificationMap: Flow<Map<String, Boolean>> =
         classifications?.observe()?.catch { emit(emptyMap()) } ?: flowOf(emptyMap())
 
-    private val externalInputs = combine(externalRaw, classificationMap) { events, marks -> events to marks }
+    // Segunda defensa: un evento enlazado a una actividad (copia de Brujula) nunca cuenta como externo,
+    // aunque un adaptador de sincronizacion le haya quitado la marca customAppPackage.
+    private val externalInputs = combine(
+        externalRaw, classificationMap, activityRepository.observeGoogleEventIds(),
+    ) { events, marks, linked -> events.filter { it.eventId !in linked } to marks }
 
     private val data = combine(
         routineRepository.routine,

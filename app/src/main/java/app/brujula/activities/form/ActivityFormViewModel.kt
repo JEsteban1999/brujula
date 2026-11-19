@@ -22,7 +22,11 @@ import app.brujula.routine.logicalDay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flowOf
@@ -94,6 +98,9 @@ class ActivityFormViewModel(
     selectedCalendarIds: Flow<Set<Long>?> = flowOf(null),
     private val googleCopy: GoogleCopySync? = null,
     private val noticeMillis: Long = 1800,
+    /** Ambito de la aplicacion: la copia a Google sigue aunque se cierre el formulario. */
+    private val googleScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    private val googleTimeoutMillis: Long = 4_000,
     scopeOverride: CoroutineScope? = null,
 ) : ViewModel() {
     /** "Hoy" del usuario: el día lógico (cambia a las 04:00). */
@@ -105,6 +112,7 @@ class ActivityFormViewModel(
     private var external: List<ExternalEvent> = emptyList()
     private var externalDate: LocalDate? = null
     private var selectedIds: Set<Long>? = null
+    private var linkedEventIds: Set<Long> = emptySet()
     private var externalJob: Job? = null
 
     private val _state = MutableStateFlow(initialState(prefillStart).copy(ready = activityId == null))
@@ -114,6 +122,13 @@ class ActivityFormViewModel(
         scope.launch {
             activityRepository.observeAll().collect { list ->
                 all = list
+                _state.update(::withConflict)
+            }
+        }
+        scope.launch {
+            // Copias de Brujula: nunca cuentan como choque externo, aunque pierdan la marca customAppPackage.
+            activityRepository.observeGoogleEventIds().collect { ids ->
+                linkedEventIds = ids
                 _state.update(::withConflict)
             }
         }
@@ -181,7 +196,7 @@ class ActivityFormViewModel(
         val candidate = TimeSpan(begin, begin.plusMinutes(s.durationMin.toLong()))
         val busy = (-1L..1L).flatMap { occurrencesOn(s.date.plusDays(it), all, emptySet()) }
         val own = findConflict(candidate, busy, editingId)
-        val outside = if (own == null) external.firstOrNull { !it.allDay && it.span.overlaps(candidate) } else null
+        val outside = if (own == null) external.firstOrNull { !it.allDay && it.eventId !in linkedEventIds && it.span.overlaps(candidate) } else null
         return s.copy(conflict = own, externalConflict = outside)
     }
 
@@ -261,10 +276,18 @@ class ActivityFormViewModel(
                 ),
             )
             runCatching { resync.resync() }
-            // La actividad ya esta guardada: la copia a Google va fuera del hilo principal y nunca falla el guardado.
+            // La actividad ya esta guardada. La copia corre en el ambito de la app (no se cancela al cerrar) y el
+            // formulario espera poco: si tarda, se cierra sin aviso y la copia termina sola.
             val status = googleCopy?.let { sync ->
-                runCatching { withContext(Dispatchers.IO) { activityRepository.get(id)?.let { sync.afterSave(it) } } }
-                    .getOrNull() ?: GoogleCopyStatus.FAILED
+                val job = googleScope.async { sync.afterSave(activityRepository.get(id) ?: return@async GoogleCopyStatus.NOT_REQUESTED) }
+                try {
+                    // Reloj real (Default): el timeout no depende del reloj virtual de las pruebas.
+                    withContext(Dispatchers.Default) { withTimeoutOrNull(googleTimeoutMillis) { job.await() } }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    GoogleCopyStatus.FAILED
+                }
             } ?: GoogleCopyStatus.NOT_REQUESTED
             if (status != GoogleCopyStatus.NOT_REQUESTED && status != GoogleCopyStatus.COPIED) {
                 _state.update { it.copy(googleStatus = status) }
@@ -281,7 +304,7 @@ class ActivityFormViewModel(
             activityRepository.delete(id)
             runCatching { resync.resync() }
             if (before != null) {
-                googleCopy?.let { sync -> runCatching { withContext(Dispatchers.IO) { sync.afterDelete(before) } } }
+                googleCopy?.let { sync -> googleScope.launch { sync.afterDelete(before) } }
             }
             _state.update { it.copy(saved = true) }
         }

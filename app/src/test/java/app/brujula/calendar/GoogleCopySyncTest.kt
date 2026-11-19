@@ -7,6 +7,8 @@ import app.brujula.activities.Activity
 import app.brujula.activities.ActivityRepository
 import app.brujula.activities.ActivityType
 import app.brujula.data.db.BrujulaDatabase
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -120,5 +122,47 @@ class GoogleCopySyncTest {
         assertEquals(GoogleCopyStatus.FAILED, sync.afterSave(a))
         assertEquals("Dentista", repo.get(a.id)!!.title)
         assertNull(repo.get(a.id)!!.googleEventId)
+    }
+
+    @Test fun lostLinkAdoptsExistingCopyInsteadOfInserting() = runTest {
+        val a = save(base)
+        writer.events[500L] = draftFor(a)
+        assertEquals(GoogleCopyStatus.COPIED, sync.afterSave(a))
+        assertEquals(0, writer.inserts)
+        assertEquals(500L, repo.get(a.id)!!.googleEventId)
+    }
+
+    @Test fun lostLinkWithDuplicatesKeepsOne() = runTest {
+        val a = save(base)
+        writer.events[500L] = draftFor(a)
+        writer.events[501L] = draftFor(a)
+        sync.afterSave(a)
+        assertEquals(1, writer.events.size)
+        assertEquals(0, writer.inserts)
+    }
+
+    @Test fun concurrentSavesInsertOnce() = runTest {
+        writer.insertDelayMs = 50
+        val a = save(base)
+        val r = listOf(async { sync.afterSave(a) }, async { sync.afterSave(a) }).awaitAll()
+        assertEquals(listOf(GoogleCopyStatus.COPIED, GoogleCopyStatus.COPIED), r)
+        assertEquals(1, writer.inserts)
+        assertEquals(1, writer.events.size)
+    }
+
+    @Test fun deleteAlsoRemovesCopiesWithoutStoredLink() = runTest {
+        val a = save(base)
+        writer.events[500L] = draftFor(a)
+        sync.afterDelete(a)
+        assertEquals(emptyMap<Long, GoogleEventDraft>(), writer.events)
+    }
+
+    @Test fun ownEventTargetUsesCollectionUri() {
+        val t = ownEventTarget(42L)
+        assertEquals(android.provider.CalendarContract.Events.CONTENT_URI, t.uri)
+        assertEquals(
+            "_id = ? AND customAppPackage = ? AND deleted = 0", t.selection,
+        )
+        assertEquals(listOf("42", "app.brujula"), t.args.toList())
     }
 }

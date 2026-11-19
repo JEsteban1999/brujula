@@ -296,6 +296,19 @@ class TodayViewModelTest {
         return vm(routine)
     }
 
+    @Test fun externalEventLinkedToAnActivityIsNotShown() = runTest {
+        val id = activities.upsert(act("Copia", ActivityType.APPOINTMENT, "15:00", 60))
+        activities.setGoogleEventId(id, 1L)
+        val vm = vmWithCalendar(
+            listOf(
+                ext(1, "Copia", day.atTime(15, 0), day.atTime(16, 0)),
+                ext(2, "Ajena", day.atTime(17, 0), day.atTime(18, 0)),
+            ),
+        )
+        val s = vm.state.first { st -> st.timeline.any { it is TimelineBlock.External } }
+        assertEquals(listOf("Ajena"), s.timeline.filterIsInstance<TimelineBlock.External>().map { it.event.title })
+    }
+
     @Test fun externalEventAppearsSplitsFreeSlotAndHasNoDone() = runTest {
         activities.upsert(act("Trabajo", ActivityType.WORK, "09:00", 60))
         val vm = vmWithCalendar(listOf(ext(1, "Dentista", day.atTime(15, 0), day.atTime(16, 0))))

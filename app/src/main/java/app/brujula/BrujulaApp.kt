@@ -49,7 +49,18 @@ class AppContainer(val context: Context) {
     /** Escritura en el Google Calendar principal; las pruebas lo sustituyen por uno falso. */
     var googleCalendarWriter: GoogleCalendarWriter = DeviceGoogleCalendarWriter(context.applicationContext, DeviceCalendarSource(context.applicationContext))
 
-    val googleCopySync: GoogleCopySync get() = GoogleCopySync(googleCalendarWriter, activityRepository)
+    /** Ambito de la app para la copia a Google: sobrevive al formulario (SupervisorJob + IO). */
+    val syncScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> Log.e("AppContainer", "Fallo en la copia a Google", e) },
+    )
+
+    private var googleSyncOverride: GoogleCopySync? = null
+    private val defaultGoogleSync: GoogleCopySync by lazy { GoogleCopySync(googleCalendarWriter, activityRepository) }
+
+    /** Un solo GoogleCopySync (su Mutex serializa); sustituible en pruebas. */
+    var googleCopySync: GoogleCopySync
+        get() = googleSyncOverride ?: defaultGoogleSync
+        set(value) { googleSyncOverride = value }
 
     /** Reloj de los receptores; las pruebas lo sustituyen. */
     var clock: Clock = SystemClock

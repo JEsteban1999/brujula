@@ -23,6 +23,9 @@ interface GoogleCalendarWriter {
     suspend fun insert(calendarId: Long, e: GoogleEventDraft): Long?
     suspend fun update(eventId: Long, e: GoogleEventDraft): Boolean
     suspend fun delete(eventId: Long): Boolean
+
+    /** Copias de Brujula (no borradas) de esa actividad, para no duplicar si se perdio el vinculo. */
+    suspend fun findCopies(activityId: Long): List<Long>
 }
 
 data class GoogleEventDraft(
@@ -40,6 +43,7 @@ object NoGoogleCalendarWriter : GoogleCalendarWriter {
     override suspend fun insert(calendarId: Long, e: GoogleEventDraft): Long? = null
     override suspend fun update(eventId: Long, e: GoogleEventDraft) = false
     override suspend fun delete(eventId: Long) = false
+    override suspend fun findCopies(activityId: Long): List<Long> = emptyList()
 }
 
 /**
@@ -78,8 +82,19 @@ fun eventValues(calendarId: Long, e: GoogleEventDraft, zone: ZoneId): ContentVal
     }
     put(Events.HAS_ALARM, 0)
     put(Events.CUSTOM_APP_PACKAGE, BRUJULA_PACKAGE)
-    put(Events.CUSTOM_APP_URI, "brujula://activity/${e.activityId}")
+    put(Events.CUSTOM_APP_URI, activityUri(e.activityId))
 }
+
+fun activityUri(activityId: Long) = "brujula://activity/$activityId"
+
+/** Destino de update/delete: el proveedor rechaza selecciones sobre `events/{id}`, asi que se usa la coleccion. */
+class EventTarget(val uri: android.net.Uri, val selection: String, val args: Array<String>)
+
+fun ownEventTarget(eventId: Long) = EventTarget(
+    Events.CONTENT_URI,
+    "${Events._ID} = ? AND ${Events.CUSTOM_APP_PACKAGE} = ? AND ${Events.DELETED} = 0",
+    arrayOf(eventId.toString(), BRUJULA_PACKAGE),
+)
 
 class DeviceGoogleCalendarWriter(
     private val context: Context,
@@ -96,21 +111,24 @@ class DeviceGoogleCalendarWriter(
         context.contentResolver.insert(Events.CONTENT_URI, eventValues(calendarId, e, zone()))?.let { ContentUris.parseId(it) }
     }
 
-    /** false si el evento ya no existe o no es de Brujula (nunca se modifica un evento ajeno). */
+    /** false si el evento ya no existe, esta borrado o no es de Brujula (nunca se modifica un evento ajeno). */
     override suspend fun update(eventId: Long, e: GoogleEventDraft): Boolean = withContext(Dispatchers.IO) {
         val values = eventValues(0L, e, zone()).apply { remove(Events.CALENDAR_ID) }
-        context.contentResolver.update(
-            ContentUris.withAppendedId(Events.CONTENT_URI, eventId), values, OWN_ONLY, arrayOf(BRUJULA_PACKAGE),
-        ) > 0
+        val t = ownEventTarget(eventId)
+        context.contentResolver.update(t.uri, values, t.selection, t.args) > 0
     }
 
     override suspend fun delete(eventId: Long): Boolean = withContext(Dispatchers.IO) {
-        context.contentResolver.delete(
-            ContentUris.withAppendedId(Events.CONTENT_URI, eventId), OWN_ONLY, arrayOf(BRUJULA_PACKAGE),
-        ) > 0
+        val t = ownEventTarget(eventId)
+        context.contentResolver.delete(t.uri, t.selection, t.args) > 0
     }
 
-    private companion object {
-        const val OWN_ONLY = "${Events.CUSTOM_APP_PACKAGE} = ?"
+    override suspend fun findCopies(activityId: Long): List<Long> = withContext(Dispatchers.IO) {
+        context.contentResolver.query(
+            Events.CONTENT_URI, arrayOf(Events._ID),
+            "${Events.CUSTOM_APP_URI} = ? AND ${Events.CUSTOM_APP_PACKAGE} = ? AND ${Events.DELETED} = 0",
+            arrayOf(activityUri(activityId), BRUJULA_PACKAGE), Events._ID,
+        )?.use { c -> buildList { while (c.moveToNext()) add(c.getLong(0)) } } ?: emptyList()
     }
+
 }

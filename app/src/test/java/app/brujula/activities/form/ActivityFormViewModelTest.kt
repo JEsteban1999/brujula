@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -254,12 +255,19 @@ class ActivityFormViewModelTest {
         assertTrue(repo.observeAll().first().any { it.title == "Leer" })
     }
 
+    private val realScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+
+    /** Espera en reloj real (Room corre en hilos reales, no en el planificador de la prueba). */
+    private suspend fun awaitReal(cond: suspend () -> Boolean) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+        kotlinx.coroutines.withTimeout(10_000) { while (!cond()) kotlinx.coroutines.delay(25) }
+    }
+
     @Test fun copyWithoutPermissionSavesAndExposesStatus() = runTest {
         val writer = app.brujula.calendar.FakeGoogleCalendarWriter(permission = false)
         val vm = ActivityFormViewModel(
             activityId = null, prefillStart = null, clock = clock, activityRepository = repo,
             resync = { resyncs++ }, calendarSource = calendar, selectedCalendarIds = flowOf(setOf(1L)),
-            googleCopy = app.brujula.calendar.GoogleCopySync(writer, repo), noticeMillis = 10,
+            googleCopy = app.brujula.calendar.GoogleCopySync(writer, repo), noticeMillis = 10, googleScope = realScope,
             scopeOverride = backgroundScope,
         )
         vm.setTitle("Dentista"); vm.setType(ActivityType.APPOINTMENT)
@@ -275,7 +283,7 @@ class ActivityFormViewModelTest {
         fun vm(id: Long? = null) = ActivityFormViewModel(
             activityId = id, prefillStart = null, clock = clock, activityRepository = repo,
             resync = { resyncs++ }, calendarSource = calendar, selectedCalendarIds = flowOf(setOf(1L)),
-            googleCopy = app.brujula.calendar.GoogleCopySync(writer, repo), noticeMillis = 10,
+            googleCopy = app.brujula.calendar.GoogleCopySync(writer, repo), noticeMillis = 10, googleScope = realScope,
             scopeOverride = backgroundScope,
         )
         val v = vm()
@@ -287,6 +295,37 @@ class ActivityFormViewModelTest {
         e.state.first { it.ready }
         e.delete()
         e.state.first { it.saved }
+        awaitReal { writer.events.isEmpty() }
         assertTrue(writer.events.isEmpty())
+    }
+
+    @Test fun slowGoogleWriteClosesFormAndFinishesInBackground() = runTest {
+        val writer = app.brujula.calendar.FakeGoogleCalendarWriter().apply { insertDelayMs = 1_500 }
+        val vm = ActivityFormViewModel(
+            activityId = null, prefillStart = null, clock = clock, activityRepository = repo,
+            resync = { resyncs++ }, calendarSource = calendar, selectedCalendarIds = flowOf(setOf(1L)),
+            googleCopy = app.brujula.calendar.GoogleCopySync(writer, repo), noticeMillis = 10,
+            googleScope = realScope, googleTimeoutMillis = 200, scopeOverride = backgroundScope,
+        )
+        vm.setTitle("Dentista"); vm.setType(ActivityType.APPOINTMENT); vm.save()
+        val s = vm.state.first { it.saved }
+        assertNull(s.googleNotice)
+        assertNull(repo.observeAll().first().first { it.title == "Dentista" }.googleEventId)
+        awaitReal { repo.observeAll().first().first { it.title == "Dentista" }.googleEventId == 100L }
+        assertEquals(1, writer.inserts)
+    }
+
+    @Test fun linkedExternalEventIsNotAConflict() = runTest {
+        val id = repo.upsert(
+            Activity(title = "Copia", type = ActivityType.APPOINTMENT, date = tomorrow, start = LocalTime.of(9, 0), durationMin = 30),
+        )
+        repo.setGoogleEventId(id, 9L)
+        val span = TimeSpan(tomorrow.atTime(14, 0), tomorrow.atTime(15, 0))
+        calendar.eventList = listOf(
+            ExternalEvent(9L, 0, 1, "Personal", "Google", "Copia", span, false, null),
+            ExternalEvent(10L, 0, 1, "Personal", "Google", "Ajena", span, false, null),
+        )
+        val vm = newVm(prefill = tomorrow.atTime(14, 0))
+        assertEquals("Ajena", vm.state.first { it.externalConflict?.title == "Ajena" }.externalConflict?.title)
     }
 }

@@ -7,6 +7,7 @@ class FakeGoogleCalendarWriter(
     val events = mutableMapOf<Long, GoogleEventDraft>()
     var nextId = 100L
     var failInsert = false
+    var insertDelayMs = 0L
     var inserts = 0
     var updates = 0
     var deletes = 0
@@ -15,6 +16,7 @@ class FakeGoogleCalendarWriter(
     override suspend fun primaryGoogleCalendarId() = calendarId
     override suspend fun insert(calendarId: Long, e: GoogleEventDraft): Long? {
         if (failInsert) throw IllegalStateException("boom")
+        if (insertDelayMs > 0) kotlinx.coroutines.delay(insertDelayMs)
         inserts++
         val id = nextId++
         events[id] = e
@@ -30,4 +32,6 @@ class FakeGoogleCalendarWriter(
         deletes++
         return events.remove(eventId) != null
     }
+    override suspend fun findCopies(activityId: Long): List<Long> =
+        events.filterValues { it.activityId == activityId }.keys.toList()
 }
