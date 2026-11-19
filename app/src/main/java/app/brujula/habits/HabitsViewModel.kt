@@ -9,6 +9,7 @@ import app.brujula.core.time.Clock
 import app.brujula.reminders.ReminderResync
 import app.brujula.routine.Routine
 import app.brujula.routine.RoutineRepository
+import app.brujula.routine.dayTypeOf
 import app.brujula.routine.logicalDay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
@@ -39,6 +40,8 @@ data class HabitsUiState(
     val exerciseStreak: Int,
     /** Lunes a domingo de la semana del día lógico actual. */
     val weekDone: List<Boolean>,
+    /** Lunes a domingo: true si ese día es de descanso. */
+    val weekRest: List<Boolean>,
 )
 
 private const val TICK_MS = 30_000L
@@ -76,7 +79,7 @@ class HabitsViewModel(
                 build(now, day, routine, habits, counts, activities, done)
             }
         }
-        .stateIn(scope, SharingStarted.Eagerly, HabitsUiState(emptyList(), 0, List(7) { false }))
+        .stateIn(scope, SharingStarted.Eagerly, HabitsUiState(emptyList(), 0, List(7) { false }, List(7) { false }))
 
     private fun build(
         now: LocalDateTime,
@@ -108,6 +111,7 @@ class HabitsViewModel(
             cards = cards,
             exerciseStreak = exerciseStreak(day, doneDays),
             weekDone = (0L..6L).map { monday.plusDays(it) in doneDays },
+            weekRest = (0L..6L).map { dayTypeOf(monday.plusDays(it)).isRest },
         )
     }
 

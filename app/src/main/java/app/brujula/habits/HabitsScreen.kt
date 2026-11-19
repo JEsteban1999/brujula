@@ -45,6 +45,8 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -316,15 +318,30 @@ private fun StreakCard(state: HabitsUiState, reduced: Boolean) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             WEEK_LETTERS.forEachIndexed { i, letter ->
                 val done = state.weekDone.getOrElse(i) { false }
+                val rest = state.weekRest.getOrElse(i) { false }
+                val dashed = rest && !done
                 Column(
-                    Modifier.weight(1f).semantics { contentDescription = "$letter ${if (done) "hecho" else "sin hacer"}" },
+                    Modifier.weight(1f).semantics { contentDescription = "$letter ${if (done) "hecho" else if (rest) "descanso" else "sin hacer"}" },
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(letter, color = c.bg.copy(alpha = 0.7f), fontSize = 11.sp, textAlign = TextAlign.Center)
                     Box(
                         Modifier.size(32.dp).clip(CircleShape)
                             .background(if (done) c.accent2 else Color.Transparent)
-                            .border(2.dp, if (done) c.accent2 else c.bg.copy(alpha = 0.3f), CircleShape),
+                            .then(
+                                if (dashed) {
+                                    Modifier.drawBehind {
+                                        val sw = 2.dp.toPx()
+                                        drawCircle(
+                                            color = c.bg.copy(alpha = 0.45f),
+                                            radius = (size.minDimension - sw) / 2,
+                                            style = Stroke(width = sw, pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))),
+                                        )
+                                    }
+                                } else {
+                                    Modifier.border(2.dp, if (done) c.accent2 else c.bg.copy(alpha = 0.3f), CircleShape)
+                                },
+                            ),
                         contentAlignment = Alignment.Center,
                     ) {
                         if (done) Text("✓", color = c.onAccent2, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)

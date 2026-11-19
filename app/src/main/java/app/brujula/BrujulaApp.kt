@@ -15,6 +15,7 @@ import app.brujula.reminders.reminderChanges
 import app.brujula.reminders.startReminderResync
 import kotlinx.coroutines.CoroutineExceptionHandler
 import app.brujula.data.db.BrujulaDatabase
+import app.brujula.data.db.Migrations
 import app.brujula.data.db.Seed
 import app.brujula.habits.HabitRepository
 import app.brujula.routine.RoutineRepository
@@ -69,6 +70,7 @@ open class BrujulaApp : Application() {
     protected open fun startBackgroundWork() {
         appScope.launch {
             Seed.ensureDefaults(container.database, container.routineRepository, LocalDate.now())
+            Migrations.exerciseToWorkdays(container.database, container.routineRepository)
         }
         launchReminderResync()
     }

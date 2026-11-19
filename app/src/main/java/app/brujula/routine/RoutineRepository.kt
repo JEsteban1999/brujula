@@ -25,12 +25,19 @@ class RoutineRepository(private val dataStore: DataStore<Preferences>) {
         val goalMax = intPreferencesKey("work_goal_max")
         val theme = stringPreferencesKey("theme_mode")
         val seeded = booleanPreferencesKey("defaults_seeded")
+        val exerciseMigrated = booleanPreferencesKey("exercise_workdays_migrated")
     }
 
     val routine: Flow<Routine> = dataStore.data.map(::read)
 
     /** Marca de primer arranque: los datos por defecto ya se sembraron una vez. */
     suspend fun isSeeded(): Boolean = dataStore.data.first()[Keys.seeded] ?: false
+
+    suspend fun isExerciseMigrated(): Boolean = dataStore.data.first()[Keys.exerciseMigrated] ?: false
+
+    suspend fun markExerciseMigrated() {
+        dataStore.edit { it[Keys.exerciseMigrated] = true }
+    }
 
     suspend fun markSeeded() {
         dataStore.edit { it[Keys.seeded] = true }

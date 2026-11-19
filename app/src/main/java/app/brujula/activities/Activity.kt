@@ -1,6 +1,7 @@
 package app.brujula.activities
 
 import app.brujula.core.time.TimeSpan
+import app.brujula.routine.dayTypeOf
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
@@ -10,7 +11,7 @@ enum class ActivityType(val labelEs: String) {
 }
 
 enum class Repeat(val labelEs: String) {
-    NONE("No se repite"), DAILY("Todos los días"), WEEKDAYS("Lunes a viernes"), WEEKLY("Cada semana")
+    NONE("No se repite"), DAILY("Todos los días"), WEEKDAYS("Lunes a viernes"), WORKDAYS("Días laborales"), WEEKLY("Cada semana")
 }
 
 data class Activity(
@@ -31,6 +32,7 @@ fun Activity.occursOn(day: LocalDate): Boolean {
         Repeat.NONE -> day == date
         Repeat.DAILY -> true
         Repeat.WEEKDAYS -> day.dayOfWeek != DayOfWeek.SATURDAY && day.dayOfWeek != DayOfWeek.SUNDAY
+        Repeat.WORKDAYS -> !dayTypeOf(day).isRest
         Repeat.WEEKLY -> day.dayOfWeek == date.dayOfWeek
     }
 }

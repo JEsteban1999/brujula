@@ -121,4 +121,10 @@ class HabitsViewModelTest {
         assertEquals(3, s.exerciseStreak)
         assertEquals(listOf(true, true, true, false, false, false, false), s.weekDone)
     }
+
+    @Test fun weekRestMarksWeekendDays() = runTest {
+        val st = vm().state.first { true in it.weekRest }
+        // lunes 16 nov 2026 es festivo (Independencia de Cartagena, 11 nov trasladado)
+        assertEquals(listOf(true, false, false, false, false, true, true), st.weekRest)
+    }
 }

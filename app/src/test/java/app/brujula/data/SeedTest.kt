@@ -3,10 +3,12 @@ package app.brujula.data
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import app.brujula.activities.Activity
 import app.brujula.activities.ActivityRepository
 import app.brujula.activities.ActivityType
 import app.brujula.activities.Repeat
 import app.brujula.data.db.BrujulaDatabase
+import app.brujula.data.db.Migrations
 import app.brujula.data.db.Seed
 import app.brujula.habits.HabitRepository
 import app.brujula.habits.HabitSchedule
@@ -62,7 +64,7 @@ class SeedTest {
         val a = acts.single()
         assertEquals("Ejercicio en casa", a.title)
         assertEquals(ActivityType.EXERCISE, a.type)
-        assertEquals(Repeat.DAILY, a.repeat)
+        assertEquals(Repeat.WORKDAYS, a.repeat)
         assertEquals(LocalTime.of(18, 30), a.start)
         assertEquals(30, a.durationMin)
         assertEquals(today, a.date)
@@ -79,5 +81,33 @@ class SeedTest {
         Seed.ensureDefaults(db, routine, today)
         assertEquals(0, habits.observeHabits().first().size)
         assertEquals(0, activities.observeAll().first().size)
+    }
+
+    private fun phase1(start: LocalTime = LocalTime.of(18, 30)) = Activity(
+        title = "Ejercicio en casa", type = ActivityType.EXERCISE, date = LocalDate.of(2026, 11, 18),
+        start = start, durationMin = 30, repeat = Repeat.DAILY,
+    )
+
+    @Test fun migrationConvertsPhase1ExerciseOnly() = runTest {
+        val activities = ActivityRepository(db.activityDao())
+        val routine = routineRepo()
+        activities.upsert(phase1())
+        activities.upsert(phase1(LocalTime.of(19, 0)).copy(title = "Ejercicio en casa"))
+        activities.upsert(phase1().copy(title = "Otra", type = ActivityType.PERSONAL))
+        Migrations.exerciseToWorkdays(db, routine)
+        val all = activities.observeAll().first()
+        assertEquals(Repeat.WORKDAYS, all.single { it.start == LocalTime.of(18, 30) && it.title == "Ejercicio en casa" }.repeat)
+        assertEquals(Repeat.DAILY, all.single { it.start == LocalTime.of(19, 0) }.repeat)
+        assertEquals(Repeat.DAILY, all.single { it.title == "Otra" }.repeat)
+    }
+
+    @Test fun migrationRunsOnlyOnce() = runTest {
+        val activities = ActivityRepository(db.activityDao())
+        val routine = routineRepo()
+        val id = activities.upsert(phase1())
+        Migrations.exerciseToWorkdays(db, routine)
+        activities.upsert(activities.get(id)!!.copy(repeat = Repeat.DAILY))
+        Migrations.exerciseToWorkdays(db, routine)
+        assertEquals(Repeat.DAILY, activities.get(id)!!.repeat)
     }
 }
