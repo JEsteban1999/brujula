@@ -113,7 +113,7 @@ class HabitFormViewModel(
         autoTarget(it.copy(mode = v, intervalError = null, timesError = null, workOnly = it.workOnly && v != HabitMode.BEFORE_BED))
     }
     fun setBeforeBedMin(v: Int) = edit { it.copy(beforeBedMin = v.coerceIn(MIN_BEFORE_BED_MIN, MAX_BEFORE_BED_MIN)) }
-    fun setWorkOnly(v: Boolean) = edit { it.copy(workOnly = v && it.mode != HabitMode.BEFORE_BED) }
+    fun setWorkOnly(v: Boolean) = edit { autoTarget(it.copy(workOnly = v && it.mode != HabitMode.BEFORE_BED)) }
     fun setIntervalMin(v: Int) = edit { autoTarget(it.copy(intervalMin = v, intervalError = null)) }
     fun setTimes(v: List<LocalTime>) = edit { it.copy(times = v, timesError = null) }
     fun addTime(t: LocalTime) = edit { it.copy(times = (it.times + t).distinct().sorted(), timesError = null) }
@@ -123,8 +123,10 @@ class HabitFormViewModel(
     /** Meta calculada: tantos avisos como caben en la vigilia mientras el usuario no la toque. */
     private fun autoTarget(s: HabitFormState): HabitFormState {
         if (s.targetTouched || s.mode != HabitMode.EVERY || s.intervalMin !in MIN_INTERVAL_MIN..MAX_INTERVAL_MIN) return s
-        val slots = Habit(name = "", icon = HabitIcon.GENERIC, schedule = HabitSchedule.Every(s.intervalMin), dailyTarget = 1)
-            .timesFor(REFERENCE_DAY, routine).size
+        val slots = Habit(
+            name = "", icon = HabitIcon.GENERIC, schedule = HabitSchedule.Every(s.intervalMin), dailyTarget = 1,
+            window = if (s.workOnly) HabitWindow.WORK else HabitWindow.AWAKE,
+        ).timesFor(REFERENCE_DAY, routine).size
         return s.copy(dailyTarget = slots.coerceIn(1, MAX_DAILY_TARGET))
     }
     fun setDays(v: Set<DayOfWeek>) = edit { it.copy(days = v, daysError = null) }

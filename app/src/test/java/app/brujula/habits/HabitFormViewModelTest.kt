@@ -263,4 +263,13 @@ class HabitFormViewModelTest {
         vm.state.first { it.saved }
         assertEquals(HabitSchedule.AtTimes(listOf(LocalTime.of(21, 0))), habits.observeHabits().first().single().schedule)
     }
+
+    @Test fun workOnlyEveryRecomputesAutoTarget() = runTest {
+        val vm = vm()
+        vm.setIntervalMin(30)
+        vm.setWorkOnly(true)
+        assertEquals(14, vm.state.value.dailyTarget)
+        vm.setWorkOnly(false)
+        assertTrue(vm.state.value.dailyTarget > 14)
+    }
 }

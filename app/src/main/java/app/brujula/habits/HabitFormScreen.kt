@@ -64,6 +64,11 @@ private val ICONS = listOf(
     HabitIcon.WATER to "Agua", HabitIcon.LIP_BALM to "Bálsamo",
     HabitIcon.STRETCH to "Estirar", HabitIcon.GENERIC to "Otro",
 )
+private val WELLNESS_ICONS = listOf(
+    HabitIcon.EYE to "Ojos", HabitIcon.WALK to "Caminar", HabitIcon.STRETCH to "Estirar", HabitIcon.POSTURE to "Postura",
+    HabitIcon.FOOD to "Comida", HabitIcon.SCREEN_OFF to "Pantallas", HabitIcon.PILL to "Pastilla", HabitIcon.SUN to "Sol",
+    HabitIcon.BOOK to "Lectura", HabitIcon.GENERIC to "Otro",
+)
 private val DAY_LABELS = listOf(
     DayOfWeek.MONDAY to "L", DayOfWeek.TUESDAY to "M", DayOfWeek.WEDNESDAY to "X", DayOfWeek.THURSDAY to "J",
     DayOfWeek.FRIDAY to "V", DayOfWeek.SATURDAY to "S", DayOfWeek.SUNDAY to "D",
@@ -115,7 +120,9 @@ fun HabitFormScreen(viewModel: HabitFormViewModel, onClose: () -> Unit, modifier
             Field("Ícono") {
                 @OptIn(ExperimentalLayoutApi::class)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ICONS.forEach { (icon, label) ->
+                    val base = if (state.group == HabitGroup.WELLNESS) WELLNESS_ICONS else ICONS
+                    val options = if (base.any { it.first == state.icon }) base else base + (state.icon to state.icon.name.lowercase().replaceFirstChar { it.uppercase() })
+                    options.forEach { (icon, label) ->
                         Chip(label, state.icon == icon, reduced) { viewModel.setIcon(icon) }
                     }
                 }
