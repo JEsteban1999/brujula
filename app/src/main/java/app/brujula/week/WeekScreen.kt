@@ -39,6 +39,7 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,6 +57,9 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -97,6 +101,11 @@ fun WeekScreen(
     var openOwnKey by rememberSaveable { mutableStateOf<String?>(null) }
     var openEventKey by rememberSaveable { mutableStateOf<String?>(null) }
 
+    // Al dejar la pantalla (otra pestaña o destino) el aviso se descarta; al rotar se conserva.
+    val activity = LocalContext.current.findActivity()
+    DisposableEffect(viewModel) {
+        onDispose { if (activity?.isChangingConfigurations != true) viewModel.dismissMessage() }
+    }
     val snackbar = remember { SnackbarHostState() }
     val message = state.message
     LaunchedEffect(message) {
@@ -409,7 +418,7 @@ private fun TotalCard(modifier: Modifier, bg: Color, label: String, value: Strin
     ) {
         Text(label, color = c.textMuted, fontSize = 11.sp)
         Text(value, color = c.text, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
-        Text(sub, color = subColor, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(sub, color = subColor, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -418,7 +427,7 @@ private fun DetailHeader(title: String) {
     val c = BrujulaTheme.colors
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Text(
-            title, Modifier.weight(1f, fill = false), color = c.text, fontFamily = BrujulaTheme.type.display,
+            title, Modifier.weight(1f, fill = false).semantics { heading() }, color = c.text, fontFamily = BrujulaTheme.type.display,
             fontWeight = FontWeight.ExtraBold, fontSize = 20.sp,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -509,4 +518,10 @@ private fun RecurringSheet(event: WeekEvent.Own, onEditSeries: () -> Unit, onSki
             ) { Text("Quitar solo este día", color = c.text) }
         }
     }
+}
+
+private tailrec fun android.content.Context.findActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

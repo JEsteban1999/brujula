@@ -42,6 +42,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -102,8 +103,9 @@ class WeekViewModel(
         }
     }
 
-    /** Semanas respecto a la semana lógica actual; seguir "la actual" es offset 0, aunque el día lógico cambie. */
-    private val offset = MutableStateFlow(0)
+    /** Lunes fijado por el usuario; `null` = seguir la semana lógica actual (pasa sola a la nueva al cambiar de semana). */
+    private val anchor = MutableStateFlow<LocalDate?>(null)
+    @Volatile private var resumeSeen = false
     private val picked = MutableStateFlow<LocalDate?>(null)
     private val message = MutableStateFlow<WeekMessage?>(null)
     private val reloadExternal = MutableStateFlow(0)
@@ -113,8 +115,8 @@ class WeekViewModel(
 
     private val weekMonday: Flow<LocalDate> = combine(
         ticker.map { logicalDay(it) }.distinctUntilChanged(),
-        offset,
-    ) { today, off -> mondayOf(today).plusWeeks(off.toLong()) }.distinctUntilChanged()
+        anchor,
+    ) { today, fixed -> fixed ?: mondayOf(today) }.distinctUntilChanged()
 
     private val classificationMap: Flow<Map<String, Boolean>> = classifications.observe().catch { emit(emptyMap()) }
 
@@ -140,7 +142,8 @@ class WeekViewModel(
     private val loaded: Flow<Loaded> = weekMonday.flatMapLatest { monday ->
         combine(
             base,
-            externalFor(monday),
+            // Lo propio primero: los calendarios llegan después y nunca bloquean la pantalla ni las flechas.
+            externalFor(monday).onStart { emit(ExternalLoad(emptyList())) },
             activityRepository.observeGoogleEventIds(),
             classificationMap,
             sleepRepository.observeRange(monday.minusDays(1), monday.plusDays(5)).catch { emit(emptyMap()) },
@@ -184,15 +187,22 @@ class WeekViewModel(
     fun nextWeek() = moveWeek(1)
 
     private fun moveWeek(delta: Int) {
-        offset.update { (it + delta).coerceIn(MIN_WEEK_OFFSET, MAX_WEEK_OFFSET) }
+        val current = currentMonday()
+        val shown = anchor.value ?: current
+        val target = shown.plusWeeks(delta.toLong())
+        val weeks = ChronoUnit.WEEKS.between(current, target).toInt()
+        if (weeks !in MIN_WEEK_OFFSET..MAX_WEEK_OFFSET) return
+        anchor.value = if (target == current) null else target
         picked.value = null
     }
 
     /** Elige [day]; si es de otra semana dentro del rango, también cambia de semana. */
     fun select(day: LocalDate) {
-        val weeks = ChronoUnit.WEEKS.between(currentMonday(), mondayOf(day)).toInt()
+        val current = currentMonday()
+        val target = mondayOf(day)
+        val weeks = ChronoUnit.WEEKS.between(current, target).toInt()
         if (weeks !in MIN_WEEK_OFFSET..MAX_WEEK_OFFSET) return
-        offset.value = weeks
+        anchor.value = if (target == current) null else target
         picked.value = day
     }
 
@@ -228,11 +238,16 @@ class WeekViewModel(
                 val allowed = stored.repeat != Repeat.NONE && !stored.copyToGoogle && stored.googleEventId == null &&
                     logicalDay(occ.span.start) >= logicalDay(clock.now())
                 if (!allowed) return@withLock
-                val before = activityRepository.getOverride(stored.id, occ.day)
-                activityRepository.setOverride(OccurrenceOverride(stored.id, occ.day, null, null, skipped = true))
-                resyncSafely()
+                // El día que tocó el usuario (el lógico donde se ve), no la clave de la serie si la ocurrencia se movió.
+                val shown = logicalDay(occ.span.start)
+                val before = withContext(NonCancellable) {
+                    val prior = activityRepository.getOverride(stored.id, occ.day)
+                    activityRepository.setOverride(skipOverride(stored.id, occ.day))
+                    resyncSafely()
+                    prior
+                }
                 message.value = WeekMessage(
-                    "Quité «${stored.title}» del ${weekdayName(occ.day)} ${occ.day.dayOfMonth}.",
+                    "Quité «${stored.title}» del ${weekdayName(shown)} ${shown.dayOfMonth}.",
                     SkipUndo(stored.id, occ.day, before),
                 )
             }
@@ -245,11 +260,13 @@ class WeekViewModel(
         message.value = null
         return scope.launch {
             writeLock.withLock {
-                val current = activityRepository.getOverride(undo.activityId, undo.day)
-                if (current?.skipped != true) return@withLock
-                val before = undo.before
-                if (before == null) activityRepository.clearOverride(undo.activityId, undo.day) else activityRepository.setOverride(before)
-                resyncSafely()
+                withContext(NonCancellable) {
+                    val current = activityRepository.getOverride(undo.activityId, undo.day)
+                    if (current != skipOverride(undo.activityId, undo.day)) return@withContext
+                    val before = undo.before
+                    if (before == null) activityRepository.clearOverride(undo.activityId, undo.day) else activityRepository.setOverride(before)
+                    resyncSafely()
+                }
             }
         }
     }
@@ -265,18 +282,20 @@ class WeekViewModel(
 
     /** Vuelve a leer los calendarios del teléfono (al volver a la pantalla). */
     fun refreshExternal() {
+        // El primer ON_RESUME llega junto con la carga inicial: no se vuelve a consultar.
+        if (!resumeSeen) { resumeSeen = true; return }
         reloadExternal.update { it + 1 }
     }
 
+    private fun skipOverride(id: Long, day: LocalDate) = OccurrenceOverride(id, day, null, null, skipped = true)
+
     private suspend fun resyncSafely() {
-        withContext(NonCancellable) {
-            try {
-                resync.resync()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // Los avisos se recalculan solos en el siguiente cambio; no se pierde el override ya guardado.
-            }
+        try {
+            resync.resync()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Los avisos se recalculan solos en el siguiente cambio; no se pierde el override ya guardado.
         }
     }
 

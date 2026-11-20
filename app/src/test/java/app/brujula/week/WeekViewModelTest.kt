@@ -19,6 +19,7 @@ import app.brujula.data.db.BrujulaDatabase
 import app.brujula.reminders.ReminderResync
 import app.brujula.routine.RoutineRepository
 import app.brujula.sleep.SleepRepository
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
@@ -71,6 +72,7 @@ class WeekViewModelTest {
     private fun TestScope.vm(
         calendar: app.brujula.calendar.CalendarSource = FakeCalendarSource(),
         routine: RoutineRepository = routineRepo(),
+        tickMs: Long = 0,
     ) = WeekViewModel(
         clock = clock,
         routineRepository = routine,
@@ -80,7 +82,7 @@ class WeekViewModelTest {
         sleepRepository = sleep,
         resync = ReminderResync { resyncs++ },
         scopeOverride = backgroundScope,
-        tickMs = 0,
+        tickMs = tickMs,
     )
 
     private fun act(title: String, type: ActivityType, start: String, min: Int, date: LocalDate, repeat: Repeat = Repeat.NONE, copy: Boolean = false) =
@@ -192,6 +194,69 @@ class WeekViewModelTest {
         assertNull(activities.getOverride(id, thu))
         assertNull(vm.state.value.message)
         assertEquals(before, resyncs)
+    }
+
+    @Test fun hungCalendarStillShowsOwnAndNavigates() = runTest {
+        val hung = object : FakeCalendarSource() {
+            override suspend fun events(calendarIds: Set<Long>, from: LocalDateTime, to: LocalDateTime): List<ExternalEvent> =
+                awaitCancellation()
+        }
+        val routine = routineRepo()
+        routine.calendarPrefs.setSelectedCalendarIds(setOf(1L))
+        activities.upsert(act("Trabajo", ActivityType.WORK, "08:00", 240, thu))
+        val vm = vm(hung, routine)
+        val s = vm.state.first { it.data?.days?.first { d -> d.day == thu }?.workMinutes == 240 }
+        assertEquals(1, s.day(thu).events.filterIsInstance<WeekEvent.Own>().size)
+        vm.nextWeek()
+        assertEquals(mon.plusWeeks(1), vm.state.first { it.data?.monday == mon.plusWeeks(1) }.data!!.monday)
+    }
+
+    @Test fun anchoredWeekDoesNotShiftWhenLogicalWeekChanges() = runTest {
+        clock.current = LocalDateTime.of(2026, 11, 22, 23, 50) // domingo
+        val vm = vm(tickMs = 30_000)
+        vm.loaded()
+        vm.previousWeek()
+        vm.state.first { it.data?.monday == mon.minusWeeks(1) }
+        clock.current = LocalDateTime.of(2026, 11, 23, 4, 1) // ya es otra semana lógica
+        testScheduler.advanceTimeBy(31_000)
+        testScheduler.runCurrent()
+        assertEquals(mon.minusWeeks(1), vm.state.value.data!!.monday)
+    }
+
+    @Test fun currentWeekFollowsLogicalWeek() = runTest {
+        clock.current = LocalDateTime.of(2026, 11, 22, 23, 50)
+        val vm = vm(tickMs = 30_000)
+        assertEquals(mon, vm.loaded().data!!.monday)
+        clock.current = LocalDateTime.of(2026, 11, 23, 4, 1)
+        testScheduler.advanceTimeBy(31_000)
+        val s = vm.state.first { it.data?.monday == mon.plusWeeks(1) }
+        assertEquals(mon.plusWeeks(1), s.selected)
+    }
+
+    @Test fun skipMessageNamesTheDayShownWhenMoved() = runTest {
+        val id = activities.upsert(act("Trabajo", ActivityType.WORK, "08:00", 120, mon, Repeat.WORKDAYS))
+        // La ocurrencia de la serie del jueves se movió al viernes: el mensaje nombra el día que se ve.
+        activities.setOverride(OccurrenceOverride(id, thu, fri.atTime(10, 0), 60, skipped = false))
+        val vm = vm()
+        vm.loaded()
+        vm.select(fri)
+        val own = vm.state.first { it.hasOwn(fri) }.day(fri).events.filterIsInstance<WeekEvent.Own>().first { it.occurrence.day == thu }
+        vm.skipOccurrence(own).join()
+        assertEquals("Quité «Trabajo» del viernes 20.", vm.state.first { it.message != null }.message!!.text)
+    }
+
+    @Test fun undoDoesNotTouchOverrideChangedAfterSkip() = runTest {
+        val id = activities.upsert(act("Trabajo", ActivityType.WORK, "08:00", 120, mon, Repeat.WORKDAYS))
+        val vm = vm()
+        vm.loaded()
+        vm.select(fri)
+        val own = vm.state.first { it.hasOwn(fri) }.day(fri).events.filterIsInstance<WeekEvent.Own>().single()
+        vm.skipOccurrence(own).join()
+        vm.state.first { it.message != null }
+        val later = OccurrenceOverride(id, fri, null, null, skipped = true).copy(start = fri.atTime(9, 0))
+        activities.setOverride(later)
+        vm.undoSkip().join()
+        assertEquals(later, activities.getOverride(id, fri))
     }
 
     @Test fun calendarFailureStillShowsOwn() = runTest {
