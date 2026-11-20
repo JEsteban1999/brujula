@@ -50,6 +50,15 @@ class SleepTest {
         assertEquals(fri, wakeNightFor(at(sat, 11, 0), routine))
     }
 
+    @Test fun wakeWindowIsTwoHoursEachSideOfPlannedWake() {
+        assertNull(wakeNightFor(at(fri, 4, 30), routine))
+        assertEquals(thu, wakeNightFor(at(fri, 6, 15), routine))
+        assertEquals(thu, wakeNightFor(at(fri, 10, 15), routine))
+        assertNull(wakeNightFor(at(fri, 10, 16), routine))
+        assertEquals(fri, wakeNightFor(at(sat, 8, 0), routine))
+        assertNull(wakeNightFor(at(sat, 7, 59), routine))
+    }
+
     @Test fun bedtimeAfterMidnightBelongsToLogicalDay() {
         assertEquals(thu, bedtimeNightFor(at(fri, 0, 40), thu))
         assertNull(bedtimeNightFor(at(fri, 5, 0), thu))

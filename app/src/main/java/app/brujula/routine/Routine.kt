@@ -44,7 +44,7 @@ fun Routine.isAwake(at: LocalDateTime): Boolean {
     return at in awakeWindow(day) || at in awakeWindow(day.minusDays(1))
 }
 
-private val LOGICAL_DAY_START = LocalTime.of(4, 0)
+internal val LOGICAL_DAY_START = LocalTime.of(4, 0)
 
 /** El día lógico cambia a las 04:00. */
 fun logicalDay(at: LocalDateTime): LocalDate =

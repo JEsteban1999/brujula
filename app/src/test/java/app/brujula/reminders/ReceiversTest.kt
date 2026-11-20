@@ -481,6 +481,19 @@ class ReceiversTest {
         assertEquals(clockNow, rec?.bedAt)
     }
 
+    @Test fun realBedtimeNotificationActionReachesReceiver() {
+        val night = LocalDate.of(2026, 10, 16)
+        val clockNow = night.plusDays(1).atTime(0, 10)
+        ctx.container.clock = FixedClock(clockNow)
+        Notifications.show(ctx, planningReminder(ReminderKind.BEDTIME, "bed:202610162345", night, "Hora de ir a dormir", "Para dormir 8 h, acuéstate a las 0:15."))
+        val n = shadowOf(nm).allNotifications.single()
+        val action = n.actions.single { it.title.toString() == "Ya me acuesto" }
+        NotificationActionReceiver().onReceive(ctx, shadowOf(action.actionIntent).savedIntent)
+        awaitCalls(1)
+        val rec = runBlocking { ctx.container.sleepRepository.observeRange(night, night).first()[night] }
+        assertEquals(clockNow, rec?.bedAt)
+    }
+
     @Test fun laterActionOnlyCancels() {
         val key = "night:20261118"
         Notifications.show(ctx, planningReminder(ReminderKind.PLAN_NIGHT, key, LocalDate.of(2026, 11, 18), "¿Armamos mañana?", "Mira cómo te fue hoy y deja listo tu día de mañana."))

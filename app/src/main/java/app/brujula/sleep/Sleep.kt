@@ -1,14 +1,13 @@
 package app.brujula.sleep
 
 import app.brujula.core.time.TimeSpan
+import app.brujula.routine.LOGICAL_DAY_START
 import app.brujula.routine.Routine
 import app.brujula.routine.awakeWindow
 import app.brujula.routine.logicalDay
 import app.brujula.routine.wakeFor
-import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
-import java.time.LocalTime
 
 /** Lo que se sabe de una noche; [night] es su día lógico (la noche del jueves es jueves aunque te acuestes el viernes a la 00:30). */
 data class SleepRecord(val night: LocalDate, val bedAt: LocalDateTime?, val wakeAt: LocalDateTime?)
@@ -17,7 +16,6 @@ data class SleepRecord(val night: LocalDate, val bedAt: LocalDateTime?, val wake
 const val WAKE_GRACE_MIN = 120
 private const val BED_EARLY_MARGIN_H = 6L
 private const val MAX_SLEEP_H = 16L
-private val DAY_START: LocalTime = LocalTime.of(4, 0)
 
 /** D2: lo planeado sale de la rutina; `bedAt` y `wakeAt` lo ajustan solo si son plausibles. */
 fun sleepSpan(night: LocalDate, routine: Routine, record: SleepRecord?): TimeSpan {
@@ -31,11 +29,12 @@ fun sleepSpan(night: LocalDate, routine: Routine, record: SleepRecord?): TimeSpa
 
 fun sleepMinutes(night: LocalDate, routine: Routine, record: SleepRecord?): Int = sleepSpan(night, routine, record).minutes.toInt()
 
-/** La noche que termina con [at] como primer despertar: solo entre las 04:00 y 2 h después de la hora de levantarse. */
+/** La noche que termina con [at] como primer despertar: solo entre 2 h antes y 2 h después de la hora de levantarse (un desvelo a las 04:30 no cuenta). */
 fun wakeNightFor(at: LocalDateTime, routine: Routine): LocalDate? {
     val d = logicalDay(at)
-    val from = d.atTime(DAY_START)
-    val to = d.atTime(routine.wakeFor(d)).plusMinutes(WAKE_GRACE_MIN.toLong())
+    val planned = d.atTime(routine.wakeFor(d))
+    val from = maxOf(d.atTime(LOGICAL_DAY_START), planned.minusMinutes(WAKE_GRACE_MIN.toLong()))
+    val to = planned.plusMinutes(WAKE_GRACE_MIN.toLong())
     return if (at >= from && at <= to) d.minusDays(1) else null
 }
 
