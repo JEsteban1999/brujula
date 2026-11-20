@@ -7,6 +7,7 @@ import app.brujula.habits.Habit
 import app.brujula.habits.HabitIcon
 import app.brujula.habits.HabitSchedule
 import app.brujula.routine.Routine
+import app.brujula.sleep.SleepRecord
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -34,6 +35,21 @@ class ReminderPlannerTest {
     @Test fun noHabitReminderBetweenBedAndWake() {
         val r = plan(d.atTime(23, 0))
         assertTrue(r.none { it.at.isAfter(d.plusDays(1).atTime(0, 30)) && it.at.isBefore(d.plusDays(1).atTime(8, 15)) })
+    }
+
+    @Test fun habitRemindersStopAfterYaMeAcuestoUntilWake() {
+        val now = d.atTime(21, 0)
+        val bedAt = d.atTime(21, 30)
+        fun habitTimes(sleep: Map<LocalDate, SleepRecord>) =
+            ReminderPlanner.plan(now, Routine(), listOf(water), emptyMap(), emptySet(), emptyList(), emptySet(), sleep = sleep)
+                .filter { it.kind == ReminderKind.HABIT }.map { it.at }
+        assertTrue("sin registro, avisa antes de la hora de acostarse de la rutina", d.atTime(21, 45) in habitTimes(emptyMap()))
+        val after = habitTimes(mapOf(d to SleepRecord(d, bedAt, null)))
+        assertTrue(after.none { it > bedAt && it < d.plusDays(1).atTime(8, 15) })
+        assertTrue("al despertar vuelve a avisar", after.any { it >= d.plusDays(1).atTime(8, 15) })
+        // Un despertar registrado termina la noche antes.
+        val woke = habitTimes(mapOf(d to SleepRecord(d, bedAt, d.plusDays(1).atTime(6, 0))))
+        assertTrue(woke.none { it > bedAt && it < d.plusDays(1).atTime(6, 0) })
     }
 
     @Test fun handledKeysAndReachedTargetAreSkipped() {

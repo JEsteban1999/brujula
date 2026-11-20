@@ -17,9 +17,10 @@ class WidgetActionReceiver : BroadcastReceiver() {
         val app = context.applicationContext
         launchAsync("WidgetAction") {
             safely("WidgetAction") { add(app, id) }
-            safely("WidgetAction") { WidgetUpdater.updateAll(app) }
-            // Como "Hecho" en la notificación: el próximo aviso de ese hábito se reprograma con el conteo nuevo.
+            // Como "Hecho" en la notificación: el próximo aviso de ese hábito se reprograma con el conteo nuevo. Va antes que
+            // el repintado: este puede esperar a los calendarios y el aviso no debe depender de eso.
             safely("WidgetAction") { app.container.reminderSync.resync() }
+            safely("WidgetAction") { WidgetUpdater.updateAll(app) }
         }
     }
 

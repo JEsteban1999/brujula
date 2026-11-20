@@ -79,6 +79,14 @@ class HabitSuggesterTest {
         assertEquals("Listo: te aviso cada 75 min.", s.doneText())
     }
 
+    @Test fun intervalWithoutFromTimeThatReachesTheStretchDropsItAndSaysSo() {
+        val stretch = FasterStretch(LocalTime.of(15, 0), 60)
+        val c = ctx(habits = listOf(water.copy(schedule = HabitSchedule.Every(90, stretch))))
+        val s = validate(interval(min = 60, from = null), c)!!
+        assertEquals(HabitSchedule.Every(60), s.after.schedule)
+        assertTrue(s.message, s.message.contains("Quito el tramo"))
+    }
+
     @Test fun intervalOnAtTimesRejected() {
         assertNull(validate(interval(ref = "H4"), ctx()))
         assertNull(validate(interval(ref = "H4", from = null), ctx()))

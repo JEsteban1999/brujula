@@ -4,6 +4,7 @@ import app.brujula.core.theme.ThemeMode
 import app.brujula.core.theme.isDarkAt
 import app.brujula.core.time.TimeSpan
 import app.brujula.planning.DaySnapshot
+import app.brujula.routine.LOGICAL_DAY_START
 import app.brujula.routine.Routine
 import app.brujula.routine.logicalDay
 import app.brujula.routine.wakeFor
@@ -27,7 +28,6 @@ data class WidgetModel(
 const val WIDGET_MAX_REFRESH_MIN = 60L
 
 private val HOUR = DateTimeFormatter.ofPattern("HH:mm")
-private val LOGICAL_DAY_START = LocalTime.of(4, 0)
 private val AUTO_DARK_FROM = LocalTime.of(21, 0)
 
 private class Block(val title: String, val span: TimeSpan)

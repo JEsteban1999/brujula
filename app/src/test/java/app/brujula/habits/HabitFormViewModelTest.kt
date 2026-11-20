@@ -288,6 +288,18 @@ class HabitFormViewModelTest {
         assertEquals(HabitSchedule.Every(75, faster), habits.observeHabits().first().single().schedule)
     }
 
+    @Test fun baseIntervalNotSlowerThanStretchDropsTheStretch() = runTest {
+        val id = habits.upsert(
+            Habit(name = "Agua", icon = HabitIcon.WATER, schedule = HabitSchedule.Every(90, faster), dailyTarget = 8),
+        )
+        val vm = vm(id)
+        vm.state.first { it.ready }
+        vm.setIntervalMin(60)
+        vm.save()
+        vm.state.first { it.saved }
+        assertEquals(HabitSchedule.Every(60), habits.observeHabits().first().single().schedule)
+    }
+
     @Test fun removeFasterSavesPlainEvery() = runTest {
         val id = habits.upsert(
             Habit(name = "Agua", icon = HabitIcon.WATER, schedule = HabitSchedule.Every(90, faster), dailyTarget = 8),

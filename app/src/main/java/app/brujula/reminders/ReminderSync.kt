@@ -6,6 +6,7 @@ import app.brujula.habits.HabitRepository
 import app.brujula.routine.BedtimeChoice
 import app.brujula.routine.RoutineRepository
 import app.brujula.routine.logicalDay
+import app.brujula.sleep.SleepRecord
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,6 +34,8 @@ class ReminderSync(
     private val bedtime: suspend () -> BedtimeChoice? = { null },
     /** Quita un aviso ya publicado por su clave (producción: `Notifications.cancel`). */
     private val cancelPosted: (String) -> Unit = {},
+    /** Registros de sueño de las noches entre las fechas dadas (producción: `sleepRepository.observeRange`). */
+    private val sleepRecords: suspend (LocalDate, LocalDate) -> Map<LocalDate, SleepRecord> = { _, _ -> emptyMap() },
     /** Tope para leer la hora de dormir (lee los calendarios del sistema); sin respuesta, esta pasada va sin ella. */
     private val bedtimeTimeoutMs: Long = BEDTIME_TIMEOUT_MS,
 ) : ReminderResync {
@@ -68,6 +71,7 @@ class ReminderSync(
             overrides = activityRepo.observeOverrides().first(),
             plannedDays = planned,
             bedtime = bedtimeWithin(),
+            sleep = sleepRecords(today.minusDays(1), today),
         )
         // Si mañana ya tiene plan aceptado, el aviso "¿Armamos mañana?" que siga publicado ya no tiene sentido (M5). Solo
         // los días recientes: un aviso de hace semanas ya no puede estar publicado.

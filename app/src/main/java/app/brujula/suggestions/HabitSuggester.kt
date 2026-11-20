@@ -81,6 +81,7 @@ private const val MAX_SUGGESTED_INTERVAL = 240
 private const val MAX_SUGGESTED_TIMES = 12
 private const val MAX_SUGGESTED_TARGET = 20
 private const val MAX_MESSAGE = 300
+private const val STRETCH_DROPPED = "(Quito el tramo de más seguido, que ya no sería más rápido.)"
 private val HM: DateTimeFormatter = DateTimeFormatter.ofPattern("H:mm").withResolverStyle(ResolverStyle.STRICT)
 
 /**
@@ -90,7 +91,7 @@ private val HM: DateTimeFormatter = DateTimeFormatter.ofPattern("H:mm").withReso
 fun validate(item: SuggestionItem, ctx: SuggestionContext): HabitSuggestion? {
     val stat = ctx.stats.firstOrNull { it.ref == item.habitRef.trim() } ?: return null
     val habit = stat.habit
-    val message = item.message.trim().take(MAX_MESSAGE).trim()
+    var message = item.message.trim().take(MAX_MESSAGE).trim()
     if (message.isEmpty()) return null
     val kind = when (item.change.trim().lowercase()) {
         "interval" -> SuggestionKind.INTERVAL
@@ -106,7 +107,10 @@ fun validate(item: SuggestionItem, ctx: SuggestionContext): HabitSuggestion? {
             val min = item.intervalMin?.takeIf { it in MIN_SUGGESTED_INTERVAL..MAX_SUGGESTED_INTERVAL } ?: return null
             val fromText = item.fromTime?.trim()?.takeIf { it.isNotEmpty() }
             if (fromText == null) {
-                HabitChange(HabitSchedule.Every(min, current.faster), habit.dailyTarget)
+                // El tramo "más seguido" siempre es más rápido que la base: si la base nueva lo alcanza, el tramo se quita.
+                val stretch = current.faster?.takeIf { min > it.intervalMin }
+                if (current.faster != null && stretch == null) message = "$message $STRETCH_DROPPED"
+                HabitChange(HabitSchedule.Every(min, stretch), habit.dailyTarget)
             } else {
                 if (habit.window != HabitWindow.AWAKE) return null
                 val from = parseHm(fromText) ?: return null

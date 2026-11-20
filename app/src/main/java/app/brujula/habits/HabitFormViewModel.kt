@@ -168,7 +168,8 @@ class HabitFormViewModel(
         }
         val beforeBed = s.mode == HabitMode.BEFORE_BED
         val schedule = when (s.mode) {
-            HabitMode.EVERY -> HabitSchedule.Every(s.intervalMin, s.faster)
+            // El tramo "más seguido desde" tiene que ser más rápido que la base; si ya no lo es, se quita.
+            HabitMode.EVERY -> HabitSchedule.Every(s.intervalMin, s.faster?.takeIf { s.intervalMin > it.intervalMin })
             HabitMode.AT_TIMES -> HabitSchedule.AtTimes(s.times.distinct().sorted())
             HabitMode.BEFORE_BED -> HabitSchedule.BeforeBed(s.beforeBedMin)
         }

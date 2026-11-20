@@ -112,12 +112,18 @@ class SuggestionService(
     suspend fun requestNow(): SuggestRequestResult {
         if (!hasKey()) return SuggestRequestResult.Message(HabitSuggester.NO_KEY)
         if (!isOnline()) return SuggestRequestResult.Message(HabitSuggester.OFFLINE)
+        var attemptBeforeWaiting: LocalDateTime? = null
+        var waited = false
         if (!flight.tryLock()) {
             if (requesting.value) return SuggestRequestResult.Message(THINKING)
             // La corrida automática solo está revisando condiciones: se espera su turno en vez de mostrar un aviso.
+            attemptBeforeWaiting = store.lastAttempt()
+            waited = true
             flight.lock()
         }
         try {
+            // Si mientras esperaba la automática llamó a Claude, ese es el resultado: no se llama otra vez.
+            if (waited && store.lastAttempt() != attemptBeforeWaiting) return currentResult()
             return when (val outcome = suggestWhileRunning(HabitSuggester.MIN_DAYS_ON_DEMAND)) {
                 is SuggestOutcome.Ok -> {
                     record(outcome)
@@ -135,6 +141,13 @@ class SuggestionService(
         } finally {
             flight.unlock()
         }
+    }
+
+    /** El resultado de una corrida ajena que ya terminó: la tarjeta pendiente, o que no hubo nada que sugerir / no se pudo. */
+    private suspend fun currentResult(): SuggestRequestResult = when {
+        store.entries.first().any { it.status == SuggestionStatus.PENDING } -> SuggestRequestResult.Shown
+        store.lastRun() == store.lastAttempt() -> SuggestRequestResult.Message(HabitSuggester.NONE)
+        else -> SuggestRequestResult.Message(DictationInterpreter.UNAVAILABLE)
     }
 
     /**

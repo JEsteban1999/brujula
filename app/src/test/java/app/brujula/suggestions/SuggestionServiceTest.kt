@@ -14,6 +14,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.runCurrent
+import java.util.concurrent.atomic.AtomicInteger
+import org.junit.Assert.assertFalse
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -163,6 +168,27 @@ class SuggestionServiceTest {
         assertEquals("al día siguiente reintenta una vez", 2, h.gateway.suggestCalls)
         h.service.maybeRunAuto()?.join()
         assertEquals(2, h.gateway.suggestCalls)
+    }
+
+    @Test fun requestNowAfterWaitingForTheAutoRunDoesNotCallClaudeAgain() = runTest {
+        val h = harness()
+        h.due()
+        val gate = CompletableDeferred<Unit>()
+        val calls = AtomicInteger()
+        // La primera comprobación de clave (la de la corrida automática) espera; las demás pasan.
+        val service = SuggestionService(
+            h.store, h.suggester, h.habits, resync = {}, clock = h.clock, syncScope = backgroundScope,
+            hasKey = { if (calls.incrementAndGet() == 1) gate.await(); true }, isOnline = { true },
+        )
+        val auto = service.maybeRunAuto()!!
+        runCurrent()
+        val request = async { service.requestNow() }
+        runCurrent()
+        assertFalse("espera el turno de la automática", request.isCompleted)
+        gate.complete(Unit)
+        auto.join()
+        assertEquals(SuggestRequestResult.Shown, request.await())
+        assertEquals("una sola llamada a Claude", 1, h.gateway.suggestCalls)
     }
 
     @Test fun autoIsSingleFlight() = runTest {

@@ -393,6 +393,30 @@ class TodayViewModelTest {
         assertEquals(60, s.workMinutes)
     }
 
+    /** Hoy y la foto del día (Propuesta, Noche, Semana) dan la misma cuenta, con un override y un externo clasificado como trabajo. */
+    @Test fun todayMatchesTheDaySnapshotForTheSameInputs() = runTest {
+        val w1 = activities.upsert(act("Trabajo", ActivityType.WORK, "08:00", 150))
+        activities.upsert(act("Ejercicio", ActivityType.EXERCISE, "10:30", 30))
+        activities.upsert(act("Trabajo", ActivityType.WORK, "11:00", 90))
+        activities.setOverride(app.brujula.activities.OccurrenceOverride(w1, day, day.atTime(9, 0), 60, skipped = false))
+        val meeting = ext(10, "Reunión", day.atTime(14, 0), day.atTime(15, 30))
+        classifications.set(classificationKey(meeting), true)
+        calendar.eventList = listOf(meeting, ext(11, "Dentista", day.atTime(16, 0), day.atTime(17, 0)))
+        val routine = routineRepo("rx.preferences_pb")
+        routine.calendarPrefs.setSelectedCalendarIds(setOf(1L))
+        val s = vm(routine).state.first { st -> st.timeline.count { it is TimelineBlock.External } == 2 }
+
+        val snap = app.brujula.planning.DaySnapshotProvider(routine, activities, habits, calendar, classifications).snapshot(day)
+
+        assertEquals(snap.summary.workMinutes, s.workMinutes)
+        assertEquals(60 + 90 + 90, s.workMinutes)
+        assertEquals(snap.own.map { it.activity.title to it.span }, s.own.map { it.occurrence.activity.title to it.occurrence.span })
+        assertEquals(
+            snap.external.map { Triple(it.event.title, it.event.span, it.countsAsWork) },
+            s.timeline.filterIsInstance<TimelineBlock.External>().map { Triple(it.event.title, it.event.span, it.countsAsWork) },
+        )
+    }
+
     @Test fun multiDayWorkEventIsClippedToTheLogicalDay() = runTest {
         // Dia mostrado: miercoles 18; el evento va de lunes 09:00 a viernes 18:00 y cuenta como trabajo.
         val ev = ext(7, "Congreso", day.minusDays(2).atTime(9, 0), day.plusDays(2).atTime(18, 0))

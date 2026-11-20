@@ -18,7 +18,18 @@ import app.brujula.today.HabitChip
 import app.brujula.today.todayHabitChips
 import app.brujula.ui.DeepLinks
 import app.brujula.voice.QuickVoiceActivity
+import app.brujula.planning.DaySnapshot
+import app.brujula.planning.DaySnapshotProvider
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 
@@ -57,6 +68,7 @@ private val SLOTS = listOf(
     HabitSlot(R.id.widget_habit2, R.id.widget_habit2_icon, R.id.widget_habit2_name, R.id.widget_habit2_count, R.id.widget_habit2_plus),
 )
 
+private const val SNAPSHOT_TIMEOUT_MS = 3_500L
 private const val REQ_BODY = 1
 private const val REQ_MIC = 2
 private const val REQ_ALARM = 3
@@ -72,22 +84,54 @@ object WidgetUpdater {
     fun hasWidgets(context: Context): Boolean =
         AppWidgetManager.getInstance(context).getAppWidgetIds(component(context)).isNotEmpty()
 
-    /** Sin widgets puestos no calcula nada. Lee Room y DataStore (no llamar desde el hilo principal). */
-    suspend fun updateAll(context: Context) {
+    /** Tope para leer el día con los calendarios del sistema; vencido, el widget sale solo con lo propio. Las pruebas lo acortan. */
+    internal var snapshotTimeoutMs = SNAPSHOT_TIMEOUT_MS
+
+    /** Serializa los repintados: uno del receptor y otro del recolector no se pisan ni dejan un conteo viejo al final. */
+    private val updateMutex = Mutex()
+
+    /** Lecturas que quedaron colgadas en el proveedor de calendarios no retienen el Mutex ni el `goAsync` de nadie. */
+    private val readScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Sin widgets puestos no calcula nada. Lee Room y DataStore (no llamar desde el hilo principal). Pase lo que pase, queda
+     * armada una alarma: la de la próxima frontera, o una de respaldo a 60 min si algo falló antes.
+     */
+    suspend fun updateAll(context: Context) = updateMutex.withLock {
         val app = context.applicationContext
         val manager = AppWidgetManager.getInstance(app)
         val ids = manager.getAppWidgetIds(component(app))
-        if (ids.isEmpty()) return
+        if (ids.isEmpty()) return@withLock
         val c = app.container
         val now = c.clock.now()
-        val day = logicalDay(now)
-        val snapshot = c.daySnapshots.snapshot(day)
-        val habits = c.habitRepository.observeHabits().first()
-        val counts = c.habitRepository.observeCountsFor(day).first()
-        val routine = c.routineRepository.routine.first()
-        val model = buildWidgetModel(now, snapshot, todayHabitChips(habits, counts, day), routine)
-        manager.updateAppWidget(ids, render(app, model))
-        scheduleNext(app, model.nextRefresh)
+        var armed = false
+        try {
+            val day = logicalDay(now)
+            val snapshot = snapshotOrOwn(c.daySnapshots, day)
+            val habits = c.habitRepository.observeHabits().first()
+            val counts = c.habitRepository.observeCountsFor(day).first()
+            val routine = c.routineRepository.routine.first()
+            val model = buildWidgetModel(now, snapshot, todayHabitChips(habits, counts, day), routine)
+            manager.updateAppWidget(ids, render(app, model))
+            armed = true
+            scheduleNext(app, model.nextRefresh)
+        } finally {
+            if (!armed) runCatching { scheduleNext(app, now.plusMinutes(WIDGET_MAX_REFRESH_MIN)) }
+        }
+    }
+
+    /** El día con calendarios; si tarda más del tope (o se cuelga), solo con los datos propios. */
+    private suspend fun snapshotOrOwn(provider: DaySnapshotProvider, day: LocalDate): DaySnapshot {
+        val read = readScope.async { provider.snapshot(day) }
+        val full = try {
+            withTimeoutOrNull(snapshotTimeoutMs) { read.await() }
+        } catch (e: CancellationException) {
+            read.cancel()
+            throw e
+        }
+        if (full != null) return full
+        read.cancel()
+        return provider.ownSnapshot(day)
     }
 
     internal fun render(context: Context, m: WidgetModel): RemoteViews {

@@ -104,7 +104,12 @@ open class DaySnapshotProvider(
     private val calendarSource: CalendarSource,
     private val classifications: WorkClassificationRepository,
 ) {
-    open suspend fun snapshot(day: LocalDate): DaySnapshot {
+    open suspend fun snapshot(day: LocalDate): DaySnapshot = build(day, withExternal = true)
+
+    /** Lo mismo sin leer los calendarios del sistema: para cuando no hay tiempo de esperarlos (widget). */
+    open suspend fun ownSnapshot(day: LocalDate): DaySnapshot = build(day, withExternal = false)
+
+    private suspend fun build(day: LocalDate, withExternal: Boolean): DaySnapshot {
         val routine = routineRepository.routine.first()
         val activities = activityRepository.observeAll().first()
         val done = activityRepository.observeDoneKeys().first()
@@ -112,8 +117,10 @@ open class DaySnapshotProvider(
         val linked = activityRepository.observeGoogleEventIds().first()
 
         // Segunda defensa, como en Hoy: un evento enlazado a una actividad (copia de Brújula) nunca es externo.
-        val raw = calendarSource.selectedEventsAroundOrEmpty(routineRepository.calendarPrefs.selectedCalendarIds, day)
-            .filter { it.eventId !in linked }
+        val raw = if (!withExternal) emptyList() else {
+            calendarSource.selectedEventsAroundOrEmpty(routineRepository.calendarPrefs.selectedCalendarIds, day)
+                .filter { it.eventId !in linked }
+        }
         val marks = workMarks()
 
         val water = habitRepository.observeHabits().first().firstOrNull { it.active && it.icon == HabitIcon.WATER }

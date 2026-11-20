@@ -18,6 +18,8 @@ import app.brujula.routine.Routine
 import app.brujula.routine.awakeWindow
 import app.brujula.routine.dayTypeOf
 import app.brujula.routine.wakeFor
+import app.brujula.sleep.SleepRecord
+import app.brujula.sleep.sleepSpan
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -52,11 +54,15 @@ object ReminderPlanner {
         /** Días (lógicos) con un plan ACCEPTED: solo ellos reciben el resumen de la mañana, y su noche anterior no avisa. */
         plannedDays: Set<LocalDate> = emptySet(),
         bedtime: BedtimeChoice? = null,
+        /** Registros de sueño por noche (día lógico): tras un "Ya me acuesto" los hábitos callan hasta que se despierta. */
+        sleep: Map<LocalDate, SleepRecord> = emptyMap(),
     ): List<Reminder> {
         val limit = now.plusHours(horizonHours)
         // La vigilia de ayer puede cruzar la medianoche; la de manana puede caer dentro del horizonte.
         val days = (-1L..1L).map { now.toLocalDate().plusDays(it) }
         val out = mutableListOf<Reminder>()
+        // Solo las noches con "Ya me acuesto" registrado; sin él, la noche de la rutina ya no trae avisos de hábitos.
+        val asleep = sleep.values.filter { it.bedAt != null }.map { sleepSpan(it.night, routine, it) }
 
         for (habit in habits) {
             for (day in days) {
@@ -64,6 +70,7 @@ object ReminderPlanner {
                 if (count >= habit.dailyTarget) continue
                 for (at in habit.timesFor(day, routine)) {
                     if (at <= now || at > limit) continue
+                    if (asleep.any { at >= it.start && at < it.end }) continue
                     val key = "habit:${habit.id}:${at.format(KEY_MINUTE)}"
                     if (key in handledKeys) continue
                     out += Reminder(

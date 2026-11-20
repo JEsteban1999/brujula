@@ -14,7 +14,7 @@ class BootReceiver : BroadcastReceiver() {
         launchAsync("BootReceiver") {
             safely("BootReceiver") { app.container.reminderSync.resync() }
             // También repinta el widget y vuelve a armar su alarma (se pierde al reiniciar o cambiar la hora).
-            WidgetUpdater.updateAll(app)
+            safely("BootReceiver") { WidgetUpdater.updateAll(app) }
         }
     }
 

@@ -297,6 +297,7 @@ class AppContainer(val context: Context) {
         ReminderSync(
             clock, routineRepository, activityRepository, habitRepository, reminderScheduler,
             plannedDays = { proposalRepository.acceptedDays() },
+            sleepRecords = { from, to -> sleepRepository.observeRange(from, to).first() },
             bedtime = {
                 // Un fallo leyendo la agenda no debe tumbar el resto de los avisos.
                 try {

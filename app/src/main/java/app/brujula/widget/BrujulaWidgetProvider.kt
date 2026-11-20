@@ -5,6 +5,7 @@ import android.appwidget.AppWidgetProvider
 import android.content.Context
 import android.content.Intent
 import app.brujula.reminders.launchAsync
+import app.brujula.reminders.safely
 
 /** El widget 4x2. Solo repinta: al ponerlo, con la alarma de la próxima frontera y cuando la app avisa de cambios. */
 class BrujulaWidgetProvider : AppWidgetProvider() {
@@ -18,10 +19,13 @@ class BrujulaWidgetProvider : AppWidgetProvider() {
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) = refresh(context)
 
-    override fun onDisabled(context: Context) = WidgetUpdater.cancelRefresh(context)
+    /** Un broadcast ajeno con esta acción no debe cancelar la alarma mientras haya widgets puestos. */
+    override fun onDisabled(context: Context) {
+        if (!WidgetUpdater.hasWidgets(context)) WidgetUpdater.cancelRefresh(context)
+    }
 
     private fun refresh(context: Context) {
         val app = context.applicationContext
-        launchAsync("BrujulaWidget") { WidgetUpdater.updateAll(app) }
+        launchAsync("BrujulaWidget") { safely("BrujulaWidget") { WidgetUpdater.updateAll(app) } }
     }
 }

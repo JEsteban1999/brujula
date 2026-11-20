@@ -25,7 +25,7 @@ class SuggestionCallTest {
         val p = SuggestionCall.params("SISTEMA", "USUARIO")
         assertEquals("claude-haiku-5-5", p.model().asString())
         assertEquals(ClaudeModels.SUGGESTIONS, p.model().asString())
-        assertEquals(4000L, p.maxTokens())
+        assertEquals(16000L, p.maxTokens())
         val out = p.outputConfig().get()
         assertEquals(OutputConfig.Effort.MEDIUM, out.effort().get())
         val schema = jsonMapper().writeValueAsString(out)

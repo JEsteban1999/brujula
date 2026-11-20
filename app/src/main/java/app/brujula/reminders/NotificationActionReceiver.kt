@@ -12,6 +12,7 @@ import app.brujula.container
 import app.brujula.core.time.TimeSpan
 import app.brujula.routine.awakeWindow
 import app.brujula.sleep.bedtimeNightFor
+import app.brujula.widget.WidgetUpdater
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -33,6 +34,8 @@ class NotificationActionReceiver : BroadcastReceiver() {
         launchAsync("NotificationAction") {
             safely("NotificationAction") { handle(app, action, key, reminder) }
             app.container.reminderSync.resync()
+            // El conteo del widget también cambia con "Hecho", aunque el proceso estuviera muerto.
+            safely("NotificationAction") { WidgetUpdater.updateAll(app) }
         }
     }
 

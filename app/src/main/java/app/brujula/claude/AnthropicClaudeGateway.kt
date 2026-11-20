@@ -349,12 +349,12 @@ internal fun <T : Any> readStructured(response: Message, type: Class<T>, what: S
 
 /**
  * Petición de sugerencias de hábitos (D11): Claude Haiku 5.5 por el endpoint NO beta, esfuerzo MEDIUM (el predeterminado de
- * Haiku 5.5), 4000 tokens y 60 s por petición. Sin `fallbacks` (Haiku 5.5 los rechaza con 400), sin `thinking`, temperatura
+ * Haiku 5.5), 16000 tokens (el razonamiento adaptativo de Haiku 5.5 cuenta contra el tope) y 60 s por petición. Sin `fallbacks` (Haiku 5.5 los rechaza con 400), sin `thinking`, temperatura
  * ni prefill: un rechazo (stopReason == REFUSAL) es simplemente "sin sugerencias". Schema escrito a mano [Schemas.SUGGESTION];
  * los fallos se clasifican con [DictationCall.failureOf] / [DictationCall.incompatible] con la etiqueta "Sugerencia".
  */
 internal object SuggestionCall {
-    private const val MAX_TOKENS = 4000L
+    private const val MAX_TOKENS = 16000L
 
     fun params(system: String, user: String): MessageCreateParams =
         MessageCreateParams.builder()
