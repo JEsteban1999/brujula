@@ -14,6 +14,17 @@ object QuickVoiceCopy {
     const val MIC_DENIED = "Sin permiso de micrófono."
     const val OPEN_APP = "Abrir Brújula"
     const val ANSWER = "Responder"
+    /** Título neutro mientras el reconocimiento aún no empieza (p. ej. con el diálogo de permiso). */
+    const val PREPARING = "Dictado"
+
+    /** La ventanita no tiene campo de texto: los mensajes que mandan a "escribir" se reemplazan. */
+    fun floating(message: String): String = when (message) {
+        VoiceCopy.NO_VOICE -> "El dictado por voz no está disponible en este teléfono."
+        VoiceCopy.NETWORK -> "El reconocimiento de voz necesita internet."
+        VoiceCopy.MIC_ERROR -> "No pude usar el micrófono. Toca para intentar de nuevo."
+        VoiceCopy.MIC_DENIED -> MIC_DENIED
+        else -> message
+    }
 }
 
 /** Cuándo se cierra sola la ventanita de dictado del widget. */
@@ -39,8 +50,11 @@ object QuickVoicePolicy {
 
     /** Abre la app en la Propuesta de [day]: siempre por [DeepLinks.intent] (con el secreto de la app). */
     fun proposalIntent(context: Context, day: LocalDate, request: String): Intent =
-        DeepLinks.intent(context, Routes.proposal(day, request.take(DeepLinks.MAX_REQUEST)))
+        DeepLinks.intent(context, Routes.proposal(day, request.take(DeepLinks.MAX_REQUEST))).newTask()
 
     /** Abre la app en la pantalla de voz. */
-    fun voiceIntent(context: Context): Intent = DeepLinks.intent(context, DeepLinks.VOICE)
+    fun voiceIntent(context: Context): Intent = DeepLinks.intent(context, DeepLinks.VOICE).newTask()
+
+    /** Se lanza desde la tarea propia de la ventanita: sin NEW_TASK, MainActivity quedaría dentro de ella. */
+    private fun Intent.newTask(): Intent = addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 }

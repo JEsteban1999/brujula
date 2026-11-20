@@ -78,6 +78,8 @@ class QuickVoicePolicyTest {
         assertEquals(Routes.proposal(day, "a".repeat(DeepLinks.MAX_REQUEST)), route)
         assertEquals(DeepLinks.token(ctx), intent.getStringExtra(DeepLinks.EXTRA_TOKEN))
         assertEquals("app.brujula.ui.MainActivity", intent.component!!.className)
+        assertTrue(intent.flags and android.content.Intent.FLAG_ACTIVITY_NEW_TASK != 0)
+        assertTrue(QuickVoicePolicy.voiceIntent(ctx).flags and android.content.Intent.FLAG_ACTIVITY_NEW_TASK != 0)
     }
 
     @Test fun widgetMicTargetsQuickVoiceActivityWithImmutableIntent() {

@@ -11,7 +11,9 @@ import app.brujula.claude.UndoToken
 import app.brujula.claude.Validated
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -89,6 +91,11 @@ class VoiceViewModel(
     private val requestDrain: () -> Unit = {},
     /** La ventanita del widget no puede mandar a Tu rutina: sin clave (o clave inválida) el dictado va a la cola. */
     private val queueWithoutKey: Boolean = false,
+    /**
+     * Ventanita del widget: no hay campo de texto, así que el borrador nunca bloquea un dictado y nada se pierde: los fallos
+     * recuperables y salir de un error o una pregunta pasan el texto a la cola.
+     */
+    private val floating: Boolean = false,
 ) : ViewModel() {
     private val scope: CoroutineScope get() = scopeOverride ?: viewModelScope
 
@@ -98,6 +105,10 @@ class VoiceViewModel(
     /** Contenido del campo "Escribir en vez de hablar"; vive aquí para sobrevivir a la rotación. */
     private val _draft = MutableStateFlow("")
     val draft: StateFlow<String> = _draft.asStateFlow()
+
+    private val _undoing = MutableStateFlow(false)
+    /** Un "Deshacer" está en curso (la ventanita no debe cerrarse todavía). */
+    val undoing: StateFlow<Boolean> = _undoing.asStateFlow()
 
     private val _hint = MutableStateFlow<String?>(null)
     val hint: StateFlow<String?> = _hint.asStateFlow()
@@ -117,6 +128,13 @@ class VoiceViewModel(
     private var lastPartial = ""
     /** El dictado ya esta en manos de apply o de la cola: una cancelacion posterior no debe encolarlo otra vez. */
     private var handedOff = false
+    /** Solo en modo ventanita: dictado completo que se encola si se sale de un error recuperable o de una pregunta. */
+    private var unsent: String? = null
+    /** Solo en modo ventanita: dictado de un error definitivo; pasa a la cola solo si el usuario abre la app desde ahí. */
+    private var carry: String? = null
+    /** Fuera del ciclo de la pantalla: sobrevive a `onCleared` (que cancela `viewModelScope`). */
+    private val detached: CoroutineScope get() = scopeOverride ?: detachedScope
+    private val detachedScope by lazy { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
 
     /**
      * Lo que escribe el usuario manda: si escribe mientras se escucha, se cancela el reconocedor y se vuelve a reposo
@@ -142,6 +160,7 @@ class VoiceViewModel(
         _hint.value = null
         lastText = null
         lastPartial = ""
+        if (floating) _draft.value = ""
         // Un dictado nuevo olvida la pregunta pendiente; responder a una pregunta (NeedsMore) la conserva.
         if (_state.value !is VoiceState.NeedsMore) base = null
         _state.value = VoiceState.Listening("")
@@ -155,7 +174,7 @@ class VoiceViewModel(
         when (e) {
             is SpeechEvent.Partial -> { lastPartial = e.text; _state.value = VoiceState.Listening(e.text) }
             is SpeechEvent.Final -> {
-                val typed = _draft.value
+                val typed = if (floating) "" else _draft.value
                 if (typed.isBlank()) {
                     submitText(e.text)
                 } else {
@@ -167,7 +186,7 @@ class VoiceViewModel(
             }
             is SpeechEvent.Failure -> {
                 // Lo ya entendido no se pierde: queda en el campo para enviarlo o editarlo, pero nunca pisa lo escrito.
-                if (lastPartial.isNotBlank() && _draft.value.isBlank()) _draft.value = lastPartial
+                if (!floating && lastPartial.isNotBlank() && _draft.value.isBlank()) _draft.value = lastPartial
                 _state.value = when (e.kind) {
                     SpeechFailure.NO_MATCH -> VoiceState.Error(VoiceCopy.NOT_HEARD, retry = true)
                     SpeechFailure.NETWORK -> VoiceState.Error(VoiceCopy.NETWORK, retry = false)
@@ -195,6 +214,7 @@ class VoiceViewModel(
         val text = lastText
         if (text == null) { start(); return }
         if (_state.value == VoiceState.Thinking) return
+        if (floating) _draft.value = ""
         _state.value = VoiceState.Thinking
         job = scope.launch { interpret(text, answer = _draft.value) }
     }
@@ -202,6 +222,7 @@ class VoiceViewModel(
     fun undo() {
         val token = undoToken ?: return
         undoToken = null
+        _undoing.value = true
         scope.launch {
             try {
                 executor.undo(token)
@@ -214,6 +235,8 @@ class VoiceViewModel(
                 if (s is VoiceState.Result && VoiceCopy.UNDO_FAILED !in s.messages) {
                     _state.value = s.copy(messages = s.messages + VoiceCopy.UNDO_FAILED)
                 }
+            } finally {
+                _undoing.value = false
             }
         }
     }
@@ -221,6 +244,8 @@ class VoiceViewModel(
     private suspend fun interpret(full: String, answer: String) {
         var settled = false
         handedOff = false
+        unsent = null
+        carry = null
         try {
             val outcome = try {
                 interpreter.interpret(full)
@@ -240,7 +265,7 @@ class VoiceViewModel(
                 InterpretOutcome.Offline -> queue(full)
                 is InterpretOutcome.Refused -> fail(outcome.message, retry = false, text = null, back = back, full = full)
                 is InterpretOutcome.Failed ->
-                    if (outcome.network) queue(full)
+                    if (outcome.network || (floating && outcome.retryable)) queue(full)
                     else fail(outcome.message, outcome.retryable, if (outcome.retryable) full else null, back, full)
             }
             settled = true
@@ -288,6 +313,7 @@ class VoiceViewModel(
         }
         if (!creatable && question != null) {
             base = full
+            if (floating) unsent = full
             _state.value = VoiceState.NeedsMore(question.text)
             return
         }
@@ -345,7 +371,11 @@ class VoiceViewModel(
 
     private fun fail(message: String, retry: Boolean, text: String?, back: String, full: String) {
         lastText = text
-        if (retry) {
+        if (floating) {
+            // Sin campo de texto: el dictado queda aparte, nunca en el borrador.
+            if (retry) unsent = full else carry = full
+            base = null
+        } else if (retry) {
             _draft.value = back
         } else {
             // Error definitivo: la pregunta pendiente ya no aplica; el campo conserva el dictado completo.
@@ -355,8 +385,26 @@ class VoiceViewModel(
         _state.value = VoiceState.Error(message, retry)
     }
 
+    /** Encola (una sola vez) el dictado del error definitivo o pendiente; la ventanita lo llama antes de abrir la app. */
+    fun queueForApp() = queueDetached(unsent ?: carry)
+
+    private fun queueDetached(text: String?) {
+        unsent = null
+        carry = null
+        if (text.isNullOrBlank()) return
+        detached.launch {
+            withContext(NonCancellable) { runCatching { pending.add(text, now()) }.onSuccess { requestDrain() } }
+        }
+    }
+
     override fun onCleared() {
+        val running = job?.isActive == true
         job?.cancel()
         speech.destroy()
+        // Con Claude entendiendo, la cancelación de arriba ya encola; aquí solo error recuperable o pregunta pendiente.
+        if (floating && !running) {
+            val answering = base?.takeIf { lastPartial.isNotBlank() }?.let { "$it. $lastPartial" }
+            queueDetached(answering ?: unsent)
+        }
     }
 }

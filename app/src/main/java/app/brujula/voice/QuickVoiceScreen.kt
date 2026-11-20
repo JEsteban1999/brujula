@@ -28,6 +28,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
@@ -55,29 +57,31 @@ fun QuickVoiceScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val hint by viewModel.hint.collectAsStateWithLifecycle()
     val textOnly by viewModel.textOnly.collectAsStateWithLifecycle()
+    val undoing by viewModel.undoing.collectAsStateWithLifecycle()
     val c = BrujulaTheme.colors
 
     // Se reinicia al cambiar el estado; sin tiempo (escuchando, entendiendo, pregunta, error) no cierra.
-    LaunchedEffect(state) { QuickVoicePolicy.closeWhenDue(state, onClose) }
+    // Con un "Deshacer" en curso se pausa; al terminar (Deshecho o fallo) arranca de nuevo.
+    LaunchedEffect(state, undoing) { if (!undoing) QuickVoicePolicy.closeWhenDue(state, onClose) }
 
     Box(
         Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClose),
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClickLabel = "Cerrar", onClick = onClose),
         contentAlignment = Alignment.BottomCenter,
     ) {
         Column(
             Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(12.dp)
                 .clip(RoundedCornerShape(24.dp)).background(c.bg).border(1.dp, c.line, RoundedCornerShape(24.dp))
                 // Tocar la tarjeta no la cierra.
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
+                .pointerInput(Unit) { detectTapGestures { } }
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             when (val s = state) {
-                is VoiceState.Idle -> if (textOnly) Denied(hint, onOpenApp) else Title(QuickVoiceCopy.LISTENING, mic = true)
+                is VoiceState.Idle -> if (textOnly) Denied(hint, onOpenApp) else Title(QuickVoiceCopy.PREPARING)
                 is VoiceState.Listening -> {
-                    Title(if (s.partial.isEmpty()) QuickVoiceCopy.LISTENING else "\"${s.partial}\"", mic = true)
+                    Title(if (s.partial.isEmpty()) QuickVoiceCopy.LISTENING else "\"${s.partial}\"", mic = true, live = s.partial.isEmpty())
                     Action(VoiceCopy.STOP_TALKING, primary = true, onClick = viewModel::stop)
                 }
                 VoiceState.Thinking, is VoiceState.OpenProposal -> Title(VoiceCopy.THINKING)
@@ -96,7 +100,7 @@ fun QuickVoiceScreen(
                     else Action(QuickVoiceCopy.OPEN_APP, primary = true, onClick = onOpenApp)
                 }
                 is VoiceState.Error -> {
-                    Title(s.message)
+                    Title(QuickVoiceCopy.floating(s.message))
                     if (s.retry && !textOnly) Action(VoiceCopy.RETRY, primary = true, onClick = viewModel::retry)
                     Action(QuickVoiceCopy.OPEN_APP, primary = !s.retry || textOnly, onClick = onOpenApp)
                 }
@@ -109,12 +113,12 @@ fun QuickVoiceScreen(
 
 @Composable
 private fun Denied(hint: String?, onOpenApp: () -> Unit) {
-    Title(if (hint == null || hint == VoiceCopy.MIC_DENIED) QuickVoiceCopy.MIC_DENIED else hint)
+    Title(QuickVoiceCopy.floating(hint ?: VoiceCopy.MIC_DENIED))
     Action(QuickVoiceCopy.OPEN_APP, primary = true, onClick = onOpenApp)
 }
 
 @Composable
-private fun Title(text: String, mic: Boolean = false, check: Boolean = false) {
+private fun Title(text: String, mic: Boolean = false, check: Boolean = false, live: Boolean = true) {
     val c = BrujulaTheme.colors
     if (mic || check) {
         Box(Modifier.size(56.dp).background(c.accent, CircleShape), contentAlignment = Alignment.Center) {
@@ -122,7 +126,7 @@ private fun Title(text: String, mic: Boolean = false, check: Boolean = false) {
         }
     }
     Text(
-        text, Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
+        text, Modifier.fillMaxWidth().then(if (live) Modifier.semantics { liveRegion = LiveRegionMode.Polite } else Modifier),
         color = c.text, textAlign = TextAlign.Center,
         fontFamily = BrujulaTheme.type.display, fontWeight = FontWeight.Bold, fontSize = 20.sp, lineHeight = 28.sp,
     )

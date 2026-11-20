@@ -42,6 +42,7 @@ class QuickVoiceActivity : ComponentActivity() {
                         pending = c.pendingDictations,
                         requestDrain = { c.syncScope.launch { runCatching { c.drainPendingDictations() } } },
                         queueWithoutKey = true,
+                        floating = true,
                     )
                 }
             },
@@ -84,6 +85,8 @@ class QuickVoiceActivity : ComponentActivity() {
                         viewModel = vm,
                         onClose = ::finish,
                         onOpenApp = {
+                            // Un error definitivo no se pierde: el texto pasa a la cola antes de abrir la app.
+                            vm.queueForApp()
                             startActivity(QuickVoicePolicy.voiceIntent(this))
                             finish()
                         },
