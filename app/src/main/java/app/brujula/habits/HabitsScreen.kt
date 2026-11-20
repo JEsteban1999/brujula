@@ -53,10 +53,13 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -67,6 +70,8 @@ import app.brujula.core.theme.BrujulaTheme
 import app.brujula.core.time.formatDayEs
 import app.brujula.core.time.formatTime
 import app.brujula.routine.logicalDay
+import app.brujula.suggestions.SuggestionCard
+import app.brujula.suggestions.SuggestionService
 import app.brujula.today.vector
 import app.brujula.ui.pressScale
 import app.brujula.ui.rememberReducedMotion
@@ -103,10 +108,24 @@ fun HabitsScreen(
             }
         }
         item(key = "streak") { StreakCard(state, reduced) }
+        state.suggestion?.let { card ->
+            item(key = "suggestion") {
+                SuggestionCardView(
+                    card, reduced, onAccept = viewModel::acceptSuggestion, onDismiss = viewModel::dismissSuggestion,
+                    onUndo = viewModel::undoSuggestion,
+                )
+            }
+        }
         item(key = "wellness") {
             WellnessSection(
                 rows = state.wellness, reduced = reduced, onAdd = viewModel::add, onUndo = viewModel::undo,
                 onActive = viewModel::setActive, onMenu = { menuFor = it; confirmDelete = false }, onNew = onNewWellness,
+            )
+        }
+        item(key = "suggest-request") {
+            SuggestRequest(
+                showButton = state.suggestion == null, busy = state.suggestionBusy, message = state.suggestionMessage,
+                onRequest = viewModel::requestSuggestion, onCloseMessage = viewModel::dismissSuggestionMessage,
             )
         }
     }
@@ -200,7 +219,7 @@ private fun RingCard(card: HabitCard, reduced: Boolean, onMenu: () -> Unit, onAd
         label = "ring",
     )
     val addSource = remember { MutableInteractionSource() }
-    val every = (h.schedule as? HabitSchedule.Every)?.intervalMin
+    val everyNote = h.everyNote()
     CardShell(onMenu, h.name) {
         Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(140.dp).semantics { contentDescription = "${card.count} de $target" }, contentAlignment = Alignment.Center) {
@@ -231,7 +250,7 @@ private fun RingCard(card: HabitCard, reduced: Boolean, onMenu: () -> Unit, onAd
                 val next = card.nextAt
                 val text = buildString {
                     if (next != null) append("Próximo aviso a las ${formatTime(next.toLocalTime())}. ")
-                    if (every != null) append("Cada $every min mientras estás despierto.")
+                    if (everyNote != null) append(everyNote)
                 }.trim()
                 if (text.isNotEmpty()) Text(text, color = c.textMuted, fontSize = 13.sp, lineHeight = 18.sp)
                 Box(
@@ -359,6 +378,98 @@ private fun StreakCard(state: HabitsUiState, reduced: Boolean) {
                     ) {
                         if (done) Text("✓", color = c.onAccent2, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
                     }
+                }
+            }
+        }
+    }
+}
+
+/** Tarjeta de la sugerencia de Claude (boceto `Habitos.dc.html`): texto, `Sí, porfa` y `Así está bien`; aceptada: `Listo: …` y `Deshacer`. */
+@Composable
+private fun SuggestionCardView(
+    card: SuggestionCard,
+    reduced: Boolean,
+    onAccept: () -> Unit,
+    onDismiss: () -> Unit,
+    onUndo: () -> Unit,
+) {
+    val c = BrujulaTheme.colors
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.soft).padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+            val tint = c.accentText
+            Canvas(Modifier.padding(top = 1.dp).size(18.dp)) {
+                val k = size.width / 24f
+                val p = Path().apply {
+                    moveTo(12f * k, 3f * k); lineTo(13.8f * k, 8.2f * k); lineTo(19f * k, 10f * k); lineTo(13.8f * k, 11.8f * k)
+                    lineTo(12f * k, 17f * k); lineTo(10.2f * k, 11.8f * k); lineTo(5f * k, 10f * k); lineTo(10.2f * k, 8.2f * k)
+                    close()
+                }
+                drawPath(p, tint, style = Stroke(2f * k, join = StrokeJoin.Round))
+            }
+            Text(
+                if (card.accepted) card.doneText.orEmpty() else card.message,
+                Modifier.weight(1f), color = c.text, fontSize = 13.5.sp, lineHeight = 19.sp,
+            )
+        }
+        if (card.accepted) {
+            SuggestionButton("Deshacer", primary = false, reduced, onUndo)
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SuggestionButton("Sí, porfa", primary = true, reduced, onAccept)
+                SuggestionButton("Así está bien", primary = false, reduced, onDismiss)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SuggestionButton(label: String, primary: Boolean, reduced: Boolean, onClick: () -> Unit) {
+    val c = BrujulaTheme.colors
+    val source = remember { MutableInteractionSource() }
+    Box(
+        Modifier.defaultMinSize(minHeight = 48.dp).pressScale(source, reduced).clip(RoundedCornerShape(999.dp))
+            .background(if (primary) c.accent else c.surface)
+            .clickable(interactionSource = source, indication = null, role = Role.Button, onClick = onClick)
+            .padding(horizontal = 18.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, color = if (primary) c.onAccent else c.text, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+/** Sin tarjeta: el botón de texto para pedir una sugerencia; mientras corre dice qué hace, y el resultado sale como mensaje. */
+@Composable
+private fun SuggestRequest(
+    showButton: Boolean,
+    busy: Boolean,
+    message: String?,
+    onRequest: () -> Unit,
+    onCloseMessage: () -> Unit,
+) {
+    val c = BrujulaTheme.colors
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (busy) {
+            Text(
+                SuggestionService.THINKING, color = c.textMuted, fontSize = 13.sp,
+                modifier = Modifier.defaultMinSize(minHeight = 48.dp).padding(vertical = 14.dp)
+                    .semantics { liveRegion = LiveRegionMode.Polite },
+            )
+        } else if (showButton) {
+            TextButton(onClick = onRequest, Modifier.defaultMinSize(minHeight = 48.dp)) {
+                Text("Pedir una sugerencia a Claude", color = c.accentText, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            }
+        }
+        if (message != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    message, Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite },
+                    color = c.textMuted, fontSize = 13.sp, lineHeight = 18.sp,
+                )
+                TextButton(onClick = onCloseMessage, Modifier.defaultMinSize(minHeight = 48.dp)) {
+                    Text("Entendido", color = c.accentText, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
             }
         }

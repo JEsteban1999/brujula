@@ -154,6 +154,10 @@ interface HabitDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertLog(e: HabitLogEntity): Long
 
+    /** Registros (hechos y saltados) de los días lógicos [from]..[to], ambos incluidos. */
+    @Query("SELECT * FROM habit_logs WHERE logicalDay BETWEEN :from AND :to")
+    suspend fun logsBetween(from: LocalDate, to: LocalDate): List<HabitLogEntity>
+
     @Query("SELECT habitId, COUNT(*) AS count FROM habit_logs WHERE logicalDay = :day AND skipped = 0 GROUP BY habitId")
     fun observeCounts(day: LocalDate): Flow<List<HabitCountRow>>
 
@@ -162,6 +166,9 @@ interface HabitDao {
             "WHERE habitId = :habitId AND logicalDay = :day AND skipped = 0 ORDER BY at DESC, id DESC LIMIT 1)",
     )
     suspend fun deleteLastDone(habitId: Long, day: LocalDate)
+
+    @Query("SELECT COUNT(*) FROM habit_logs")
+    fun observeLogCount(): Flow<Int>
 
     @Query("SELECT reminderKey FROM habit_logs WHERE reminderKey IS NOT NULL")
     fun observeHandledKeys(): Flow<List<String>>
@@ -184,4 +191,33 @@ interface WorkClassificationDao {
 
     @Query("SELECT source FROM work_classifications WHERE `key` = :key")
     suspend fun sourceOf(key: String): String?
+}
+
+@Dao
+interface SleepDao {
+    @Query("SELECT * FROM sleep_records WHERE night BETWEEN :from AND :to ORDER BY night")
+    fun observeRange(from: LocalDate, to: LocalDate): Flow<List<SleepRecordEntity>>
+
+    @Query("SELECT * FROM sleep_records WHERE night = :night")
+    suspend fun get(night: LocalDate): SleepRecordEntity?
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertIgnore(e: SleepRecordEntity): Long
+
+    @Query("UPDATE sleep_records SET bedAt = :at WHERE night = :night")
+    suspend fun updateBedAt(night: LocalDate, at: LocalDateTime): Int
+
+    @Query("UPDATE sleep_records SET wakeAt = :at WHERE night = :night AND wakeAt IS NULL")
+    suspend fun updateWakeIfAbsent(night: LocalDate, at: LocalDateTime): Int
+
+    @Transaction
+    suspend fun setBedAt(night: LocalDate, at: LocalDateTime) {
+        insertIgnore(SleepRecordEntity(night, null, null))
+        updateBedAt(night, at)
+    }
+
+    @Transaction
+    suspend fun setWakeIfAbsent(night: LocalDate, at: LocalDateTime): Boolean {
+        insertIgnore(SleepRecordEntity(night, null, null))
+        return updateWakeIfAbsent(night, at) > 0
+    }
 }

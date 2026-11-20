@@ -27,6 +27,8 @@ import app.brujula.claude.PlanContext
 import app.brujula.claude.PlanContextProvider
 import app.brujula.claude.lunchWindow
 import app.brujula.planning.BedtimeSource
+import app.brujula.sleep.SleepRepository
+import app.brujula.sleep.wakeNightFor
 import app.brujula.planning.DaySnapshotProvider
 import app.brujula.planning.ProposalExecutor
 import app.brujula.planning.ProposalLock
@@ -57,6 +59,10 @@ import app.brujula.data.db.Migrations
 import app.brujula.data.db.Seed
 import app.brujula.habits.HabitRepository
 import app.brujula.routine.RoutineRepository
+import app.brujula.suggestions.HabitSuggester
+import app.brujula.suggestions.SuggestionContextProvider
+import app.brujula.suggestions.SuggestionService
+import app.brujula.suggestions.SuggestionStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -65,6 +71,9 @@ import kotlinx.coroutines.launch
 import app.brujula.routine.logicalDay
 import app.brujula.ui.DeepLinks
 import app.brujula.ui.Routes
+import app.brujula.widget.WidgetUpdater
+import app.brujula.widget.startWidgetRefresh
+import app.brujula.widget.widgetChanges
 import java.time.LocalDate
 
 private val Context.routineDataStore by preferencesDataStore(name = "routine")
@@ -129,6 +138,52 @@ class AppContainer(val context: Context) {
 
     /** Propuestas de Claude guardadas (D1). */
     val proposalRepository: ProposalRepository by lazy { ProposalRepository(database.proposalDao()) }
+
+    /** Sueño real de cada noche (D1/D2). */
+    val sleepRepository: SleepRepository by lazy { SleepRepository(database.sleepDao()) }
+
+    /** Sugerencias de hábitos guardadas (D14), en el mismo DataStore `routine`. */
+    val suggestionStore: SuggestionStore by lazy { SuggestionStore(context.applicationContext.routineDataStore) }
+
+    private var suggestionContextProviderOverride: SuggestionContextProvider? = null
+
+    /** Conteos agregados para sugerir (D12/D15): lee el store de sugerencias (no el servicio: sin ciclo). Sustituible en pruebas. */
+    var suggestionContextProvider: SuggestionContextProvider
+        get() = suggestionContextProviderOverride ?: SuggestionContextProvider(
+            clock, habitRepository, routineRepository, rejected = { suggestionStore.rejected(clock.now()) },
+        )
+        set(value) { suggestionContextProviderOverride = value }
+
+    private var habitSuggesterOverride: HabitSuggester? = null
+
+    /** Pide y valida una sugerencia de hábito con el gateway vigente (no guarda ni aplica). Sustituible en pruebas. */
+    var habitSuggester: HabitSuggester
+        get() = habitSuggesterOverride ?: HabitSuggester(
+            DelegatingGateway { claudeGateway }, { suggestionContextProvider.current() }, isOnline = { isOnline(context) },
+        )
+        set(value) { habitSuggesterOverride = value }
+
+    private var suggestionServiceOverride: SuggestionService? = null
+    private val defaultSuggestionService: SuggestionService by lazy {
+        SuggestionService(
+            store = suggestionStore,
+            suggester = habitSuggester,
+            habitRepository = habitRepository,
+            resync = ReminderResync { reminderSync.resync() },
+            clock = object : Clock {
+                override fun now() = clock.now()
+                override fun today() = clock.today()
+            },
+            syncScope = syncScope,
+            hasKey = { claudeKeyStore.hasKey.first() },
+            isOnline = { isOnline(context) },
+        )
+    }
+
+    /** Guarda, pide, acepta y deshace sugerencias de hábitos; un solo servicio (sus cerrojos). Sustituible en pruebas. */
+    var suggestionService: SuggestionService
+        get() = suggestionServiceOverride ?: defaultSuggestionService
+        set(value) { suggestionServiceOverride = value }
 
     /** Nota de la tarjeta de Claude en Hoy (D15). */
     val claudeNotes: ClaudeNotes by lazy { ClaudeNotes(context.applicationContext.routineDataStore) }
@@ -242,6 +297,7 @@ class AppContainer(val context: Context) {
         ReminderSync(
             clock, routineRepository, activityRepository, habitRepository, reminderScheduler,
             plannedDays = { proposalRepository.acceptedDays() },
+            sleepRecords = { from, to -> sleepRepository.observeRange(from, to).first() },
             bedtime = {
                 // Un fallo leyendo la agenda no debe tumbar el resto de los avisos.
                 try {
@@ -306,6 +362,7 @@ open class BrujulaApp : Application() {
         // Copias a Google pendientes (citas guardadas sin permiso, o con la copia apagada); idempotente.
         container.syncScope.launch { container.reconcileGoogleCopies() }
         launchReminderResync()
+        launchWidgetRefresh()
         launchPendingDrain()
     }
 
@@ -328,6 +385,17 @@ open class BrujulaApp : Application() {
         }.onFailure { Log.e("BrujulaApp", "No pude vigilar la red", it) }
     }
 
+    /** Repinta el widget (si hay uno puesto) al abrir la app y 1 s después de cada cambio de datos; sin widgets no calcula nada. */
+    private fun launchWidgetRefresh() {
+        val c = container
+        startWidgetRefresh(
+            appScope,
+            widgetChanges(c.routineRepository, c.activityRepository, c.habitRepository, c.workClassificationRepository),
+            hasWidgets = { WidgetUpdater.hasWidgets(this) },
+            update = { WidgetUpdater.updateAll(this) },
+        )
+    }
+
     /** Reprograma al abrir la app y cada vez que cambian rutina, actividades, habitos o registros. */
     private fun launchReminderResync() {
         val c = container
@@ -341,3 +409,10 @@ open class BrujulaApp : Application() {
 
 val Context.container: AppContainer
     get() = (applicationContext as BrujulaApp).container
+
+/** Primera apertura de la mañana (D2): guarda `wakeAt` de la noche anterior, una sola vez. */
+suspend fun AppContainer.recordWakeIfMorning() {
+    val now = clock.now()
+    val night = wakeNightFor(now, routineRepository.routine.first()) ?: return
+    sleepRepository.recordWake(night, now)
+}

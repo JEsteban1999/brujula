@@ -451,8 +451,47 @@ class ReceiversTest {
         assertEquals("today", routeOf(morning.actions[0].actionIntent))
         assertEquals("voice", routeOf(morning.actions[1].actionIntent))
         val bed = byTitle.getValue("Hora de ir a dormir")
-        assertTrue(bed.actions.isNullOrEmpty())
+        assertEquals(listOf("Ya me acuesto"), bed.actions.map { it.title.toString() })
         assertEquals(null, routeOf(bed.contentIntent))
+    }
+
+    @Test fun bedtimeNotificationOffersSleepAction() {
+        Notifications.show(ctx, planningReminder(ReminderKind.BEDTIME, "bed:202611182345", LocalDate.of(2026, 11, 18), "Hora de ir a dormir", "Para dormir 8 h, acuéstate a las 0:15."))
+        val n = shadowOf(nm).allNotifications.single()
+        assertTrue(n.actions.any { it.title.toString() == "Ya me acuesto" })
+    }
+
+    @Test fun sleepNowActionRecordsBedtime() {
+        // Noche propia de esta prueba: Room persiste entre pruebas Robolectric.
+        val night = LocalDate.of(2026, 10, 15)
+        val clockNow = night.plusDays(1).atTime(0, 20)
+        ctx.container.clock = FixedClock(clockNow)
+        val key = "bed:202610152345"
+        Notifications.show(ctx, planningReminder(ReminderKind.BEDTIME, key, night, "Hora de ir a dormir", "Para dormir 8 h, acuéstate a las 0:15."))
+        val intent = Intent(ctx, NotificationActionReceiver::class.java).setAction(NotificationActionReceiver.ACTION_SLEEP_NOW)
+            .putExtra(NotificationActionReceiver.EXTRA_KEY, key)
+            .putExtra(NotificationActionReceiver.EXTRA_DAY, night.toString())
+            .putExtra(NotificationActionReceiver.EXTRA_TITLE, "Hora de ir a dormir")
+            .putExtra(NotificationActionReceiver.EXTRA_BODY, "Para dormir 8 h, acuéstate a las 0:15.")
+            .putExtra(NotificationActionReceiver.EXTRA_KIND, ReminderKind.BEDTIME.name)
+        NotificationActionReceiver().onReceive(ctx, intent)
+        awaitCalls(1)
+        assertTrue(shadowOf(nm).allNotifications.isEmpty())
+        val rec = runBlocking { ctx.container.sleepRepository.observeRange(night, night).first()[night] }
+        assertEquals(clockNow, rec?.bedAt)
+    }
+
+    @Test fun realBedtimeNotificationActionReachesReceiver() {
+        val night = LocalDate.of(2026, 10, 16)
+        val clockNow = night.plusDays(1).atTime(0, 10)
+        ctx.container.clock = FixedClock(clockNow)
+        Notifications.show(ctx, planningReminder(ReminderKind.BEDTIME, "bed:202610162345", night, "Hora de ir a dormir", "Para dormir 8 h, acuéstate a las 0:15."))
+        val n = shadowOf(nm).allNotifications.single()
+        val action = n.actions.single { it.title.toString() == "Ya me acuesto" }
+        NotificationActionReceiver().onReceive(ctx, shadowOf(action.actionIntent).savedIntent)
+        awaitCalls(1)
+        val rec = runBlocking { ctx.container.sleepRepository.observeRange(night, night).first()[night] }
+        assertEquals(clockNow, rec?.bedAt)
     }
 
     @Test fun laterActionOnlyCancels() {

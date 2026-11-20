@@ -152,6 +152,10 @@ fun VoiceScreen(
                 VoiceState.SavedOffline -> Message(
                     VoiceCopy.OFFLINE, null, reduced, primary = VoiceCopy.DONE, onPrimary = onClose,
                 )
+                // Solo con queueWithoutKey (la ventanita del widget); esta pantalla no lo usa.
+                VoiceState.SavedNeedsKey -> Message(
+                    QuickVoiceCopy.SAVED_NO_KEY, null, reduced, primary = VoiceCopy.DONE, onPrimary = onClose,
+                )
             }
         }
 
@@ -164,7 +168,7 @@ fun VoiceScreen(
 private fun stepLabel(s: VoiceState) = when (s) {
     is VoiceState.Listening -> "Escuchando"
     VoiceState.Thinking, is VoiceState.OpenProposal -> "Interpretando"
-    is VoiceState.Result, VoiceState.Undone, VoiceState.SavedOffline -> "Listo"
+    is VoiceState.Result, VoiceState.Undone, VoiceState.SavedOffline, VoiceState.SavedNeedsKey -> "Listo"
     else -> "Dictar"
 }
 

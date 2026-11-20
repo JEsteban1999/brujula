@@ -143,6 +143,7 @@ object Notifications {
                 b.addAction(0, "Ver mi día", activity(context, (r.key + DeepLinks.TODAY).hashCode(), DeepLinks.intent(context, DeepLinks.TODAY).putExtra(EXTRA_CANCEL_ID, id)))
                 b.addAction(0, "Ajustar", activity(context, (r.key + DeepLinks.VOICE).hashCode(), DeepLinks.intent(context, DeepLinks.VOICE).putExtra(EXTRA_CANCEL_ID, id)))
             }
+            ReminderKind.BEDTIME -> b.addAction(0, "Ya me acuesto", actionIntent(context, r, NotificationActionReceiver.ACTION_SLEEP_NOW))
             else -> Unit
         }
         post(context, id, b)

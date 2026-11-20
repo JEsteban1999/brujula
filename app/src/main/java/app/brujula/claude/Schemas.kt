@@ -13,7 +13,7 @@ import com.fasterxml.jackson.module.kotlin.kotlinModule
  *
  * No se usa la derivación del SDK desde la clase (`format(Class)` / `outputConfig(Class)`): pasa por victools, que llama a
  * `Method.getAnnotatedReturnType()`, y ART no tiene ese método (NoSuchMethodError en el teléfono). Estos mapas reproducen
- * exactamente lo que el SDK derivaba de [DictationResult], [ClassificationResult] y [PlanResult]; SchemasTest lo compara en la JVM.
+ * exactamente lo que el SDK derivaba de [DictationResult], [ClassificationResult], [PlanResult] y [SuggestionResult]; SchemasTest lo compara en la JVM.
  *
  * Igual que en el derivado, todas las propiedades son obligatorias: las nulables de Kotlin admiten `null` en su `type`.
  */
@@ -125,13 +125,51 @@ internal object Schemas {
         ),
     )
 
+    private val SUGGESTION_ITEM = obj(
+        "Una sugerencia. Solo se llenan los campos que aplican a su cambio; los demás van en null.",
+        mapOf(
+            "habitRef" to prop("string", "La referencia H… del hábito, tal como aparece en la lista."),
+            "message" to prop(
+                "string",
+                "Para el usuario: 1 o 2 frases en español colombiano, tuteo, sin emojis, que terminan en una pregunta.",
+            ),
+            "change" to prop("string", "interval | times | target"),
+            "intervalMin" to nullable(
+                "integer",
+                "Solo interval: cada cuántos minutos avisar (15 a 240). Con fromTime, es el intervalo desde esa hora; sin fromTime, el de todo el día.",
+            ),
+            "fromTime" to nullable(
+                "string",
+                "Solo interval, opcional: desde qué hora avisar más seguido, en 24 h, HH:mm, dentro de la vigilia de un día laboral. null cambia el intervalo de todo el día.",
+            ),
+            "times" to mapOf(
+                "type" to listOf("array", "null"),
+                "items" to mapOf("type" to "string"),
+                "description" to "Solo times: las nuevas horas fijas en 24 h, HH:mm (1 a 12, sin repetir).",
+            ),
+            "dailyTarget" to nullable("integer", "Solo target: la nueva meta diaria (1 a 20)."),
+        ),
+    )
+
+    /** Schema de [SuggestionResult] / [SuggestionItem]. */
+    val SUGGESTION: Map<String, Any> = mapOf("\$schema" to DRAFT) + obj(
+        "Como mucho una sugerencia de cambio para un hábito que ya existe.",
+        mapOf(
+            "suggestions" to mapOf(
+                "type" to "array",
+                "items" to SUGGESTION_ITEM,
+                "description" to "Una sugerencia o ninguna. Vacía si no hay un patrón claro.",
+            ),
+        ),
+    )
+
     /** Formato `json_schema` para el endpoint beta (dictado y planificación). */
     fun betaFormat(schema: Map<String, Any>): BetaJsonOutputFormat =
         BetaJsonOutputFormat.builder()
             .schema(BetaJsonOutputFormat.Schema.builder().apply { schema.forEach { (k, v) -> putAdditionalProperty(k, JsonValue.from(v)) } }.build())
             .build()
 
-    /** Formato `json_schema` para el endpoint no beta (clasificación). */
+    /** Formato `json_schema` para el endpoint no beta (clasificación y sugerencias). */
     fun format(schema: Map<String, Any>): JsonOutputFormat =
         JsonOutputFormat.builder()
             .schema(JsonOutputFormat.Schema.builder().apply { schema.forEach { (k, v) -> putAdditionalProperty(k, JsonValue.from(v)) } }.build())

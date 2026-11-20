@@ -17,12 +17,18 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import app.brujula.suggestions.HabitSuggester
+import app.brujula.suggestions.SuggestionHarness
+import app.brujula.suggestions.SuggestionKind
+import app.brujula.suggestions.SuggestionService
+import kotlinx.coroutines.test.advanceUntilIdle
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -189,5 +195,73 @@ class HabitsViewModelTest {
         assertEquals(0, rows.getValue("Postura").target)
         assertEquals(2, rows.getValue("Comer a horas").target)
         assertEquals(0, rows.getValue("Comer a horas").count)
+    }
+
+    private fun TestScope.suggestingVm(h: SuggestionHarness) = HabitsViewModel(
+        clock = h.clock, routineRepository = h.routine, activityRepository = activities, habitRepository = habits,
+        resync = { h.resyncs++ }, scopeOverride = backgroundScope, tickMs = 0, suggestions = h.service,
+    )
+
+    @Test fun suggestionCardFlowsToState() = runTest {
+        val h = SuggestionHarness(backgroundScope, tmp.root, db)
+        val id = h.water()
+        h.answer(h.faster(id))
+        val vm = suggestingVm(h)
+        // La corrida automática de al abrir (sin datos suficientes no llama a Claude) termina antes de pedir a mano.
+        assertNull(vm.state.first { it.cards.isNotEmpty() && !it.suggestionBusy }.suggestion)
+        // Sin datos suficientes: mensaje, y se puede cerrar.
+        vm.requestSuggestion()
+        assertEquals(HabitSuggester.NOT_ENOUGH, vm.state.first { it.suggestionMessage != null }.suggestionMessage)
+        vm.dismissSuggestionMessage()
+        assertNull(vm.state.first { it.suggestionMessage == null && !it.suggestionBusy }.suggestionMessage)
+        // Con datos: la tarjeta llega al estado.
+        h.seedLogs(id, 3)
+        vm.requestSuggestion()
+        val shown = vm.state.first { it.suggestion != null }
+        assertEquals(false, shown.suggestion!!.accepted)
+        assertTrue(shown.suggestion!!.message.startsWith("Por las tardes"))
+        assertEquals(false, vm.state.first { !it.suggestionBusy }.suggestionBusy)
+    }
+
+    @Test fun acceptAndDismissCallService() = runTest {
+        val h = SuggestionHarness(backgroundScope, tmp.root, db)
+        val id = h.water()
+        h.seedLogs(id, 3)
+        h.answer(h.faster(id))
+        val vm = suggestingVm(h)
+        vm.state.first { it.cards.isNotEmpty() && !it.suggestionBusy }
+        vm.requestSuggestion()
+        vm.state.first { it.suggestion != null }
+        vm.acceptSuggestion()
+        val accepted = vm.state.first { it.suggestion?.accepted == true }.suggestion!!
+        assertEquals("Listo: desde las 15:00 te aviso cada 60 min.", accepted.doneText)
+        assertEquals(HabitSchedule.Every(90, FasterStretch(LocalTime.of(15, 0), 60)), habits.observeHabits().first().single().schedule)
+        assertEquals(1, h.resyncs)
+        vm.undoSuggestion()
+        assertEquals(SuggestionService.UNDONE_TEXT, vm.state.first { it.suggestion == null && it.suggestionMessage != null }.suggestionMessage)
+        assertEquals(HabitSchedule.Every(90), habits.observeHabits().first().single().schedule)
+
+        // Rechazar: la tarjeta se va y el cambio queda silenciado.
+        vm.dismissSuggestionMessage()
+        h.answer(h.target(id))
+        vm.requestSuggestion()
+        vm.state.first { it.suggestion != null && !it.suggestion!!.accepted }
+        vm.dismissSuggestion()
+        vm.state.first { it.suggestion == null && !it.suggestionBusy }
+        assertTrue((id to SuggestionKind.TARGET) in h.store.rejected(h.clock.now()))
+    }
+
+    @Test fun openingHabitsTriggersAuto() = runTest {
+        val h = SuggestionHarness(backgroundScope, tmp.root, db)
+        val id = h.water()
+        h.seedLogs(id, 7)
+        h.answer(h.faster(id))
+        val vm = suggestingVm(h)
+        assertEquals(true, vm.state.first { it.suggestion != null }.suggestion != null)
+        assertEquals(1, h.gateway.suggestCalls)
+        // Otra pantalla abierta el mismo día no vuelve a llamar.
+        suggestingVm(h)
+        advanceUntilIdle()
+        assertEquals(1, h.gateway.suggestCalls)
     }
 }

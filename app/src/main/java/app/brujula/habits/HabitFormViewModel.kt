@@ -34,6 +34,8 @@ data class HabitFormState(
     val icon: HabitIcon = HabitIcon.GENERIC,
     val mode: HabitMode = HabitMode.EVERY,
     val intervalMin: Int = 90,
+    /** Tramo "más seguido desde" (lo agrega una sugerencia aceptada): al editar se conserva tal cual; se puede quitar. */
+    val faster: FasterStretch? = null,
     val times: List<LocalTime> = emptyList(),
     val dailyTarget: Int = 10,
     /** Falso mientras la meta sea la calculada; al tocarla el usuario deja de recalcularse. */
@@ -100,6 +102,7 @@ class HabitFormViewModel(
                         },
                         beforeBedMin = (h.schedule as? HabitSchedule.BeforeBed)?.minutes ?: it.beforeBedMin,
                         intervalMin = (h.schedule as? HabitSchedule.Every)?.intervalMin ?: it.intervalMin,
+                        faster = (h.schedule as? HabitSchedule.Every)?.faster,
                         times = (h.schedule as? HabitSchedule.AtTimes)?.times ?: it.times,
                     )
                 }
@@ -115,8 +118,14 @@ class HabitFormViewModel(
     fun setName(v: String) = edit { it.copy(name = v, nameError = null) }
     fun setIcon(v: HabitIcon) = edit { it.copy(icon = v) }
     fun setMode(v: HabitMode) = edit {
-        autoTarget(it.copy(mode = v, intervalError = null, timesError = null, workOnly = it.workOnly && v != HabitMode.BEFORE_BED))
+        autoTarget(
+            it.copy(
+                mode = v, intervalError = null, timesError = null, workOnly = it.workOnly && v != HabitMode.BEFORE_BED,
+                faster = it.faster.takeIf { _ -> v == HabitMode.EVERY },
+            ),
+        )
     }
+    fun removeFaster() = edit { it.copy(faster = null) }
     fun setBeforeBedMin(v: Int) = edit { it.copy(beforeBedMin = v.coerceIn(MIN_BEFORE_BED_MIN, MAX_BEFORE_BED_MIN)) }
     fun setWorkOnly(v: Boolean) = edit { autoTarget(it.copy(workOnly = v && it.mode != HabitMode.BEFORE_BED)) }
     fun setIntervalMin(v: Int) = edit { autoTarget(it.copy(intervalMin = v, intervalError = null)) }
@@ -159,7 +168,8 @@ class HabitFormViewModel(
         }
         val beforeBed = s.mode == HabitMode.BEFORE_BED
         val schedule = when (s.mode) {
-            HabitMode.EVERY -> HabitSchedule.Every(s.intervalMin)
+            // El tramo "más seguido desde" tiene que ser más rápido que la base; si ya no lo es, se quita.
+            HabitMode.EVERY -> HabitSchedule.Every(s.intervalMin, s.faster?.takeIf { s.intervalMin > it.intervalMin })
             HabitMode.AT_TIMES -> HabitSchedule.AtTimes(s.times.distinct().sorted())
             HabitMode.BEFORE_BED -> HabitSchedule.BeforeBed(s.beforeBedMin)
         }

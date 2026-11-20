@@ -52,6 +52,7 @@ import app.brujula.core.theme.BrujulaTheme
 fun BottomBar(
     currentRoute: String?,
     onToday: () -> Unit,
+    onWeek: () -> Unit,
     onHabits: () -> Unit,
     onSettings: () -> Unit,
     onVoice: () -> Unit,
@@ -66,8 +67,7 @@ fun BottomBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             NavItem("Hoy", Icons.Outlined.WbSunny, currentRoute == Routes.TODAY, true, onToday)
-            // Semana llega en una fase posterior.
-            NavItem("Semana", Icons.Outlined.CalendarMonth, false, false, {}, hint = "Pronto")
+            NavItem("Semana", Icons.Outlined.CalendarMonth, currentRoute == Routes.WEEK, true, onWeek)
             AddButton(onVoice, onAdd)
             NavItem("Hábitos", Icons.Outlined.CheckCircleOutline, currentRoute == Routes.HABITS, true, onHabits)
             NavItem("Ajustes", Icons.Outlined.Tune, currentRoute == Routes.ROUTINE, true, onSettings)

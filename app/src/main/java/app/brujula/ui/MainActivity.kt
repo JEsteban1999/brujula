@@ -32,6 +32,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.app.NotificationManagerCompat
 import app.brujula.container
+import app.brujula.recordWakeIfMorning
+import kotlinx.coroutines.launch
 import app.brujula.reminders.Notifications
 import app.brujula.core.theme.BrujulaTheme
 import app.brujula.core.theme.darkFlow
@@ -58,6 +60,12 @@ class MainActivity : ComponentActivity() {
         intent.removeExtra(DeepLinks.EXTRA_TOKEN)
         if (route == null) return
         pendingRoute.value = route
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Primera apertura de la mañana = despertar (D2); fuera del hilo principal y de la pantalla.
+        container.syncScope.launch { runCatching { container.recordWakeIfMorning() } }
     }
 
     override fun onNewIntent(intent: Intent) {

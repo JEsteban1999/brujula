@@ -8,7 +8,8 @@ import app.brujula.activities.Occurrence
 import app.brujula.activities.Overrides
 import app.brujula.activities.WorkStatus
 import app.brujula.activities.freeSlots
-import app.brujula.activities.workMinutes
+import app.brujula.planning.SnapshotInputs
+import app.brujula.planning.buildDaySnapshot
 import app.brujula.activities.workStatus
 import app.brujula.calendar.CalendarSource
 import app.brujula.calendar.ExternalEvent
@@ -56,6 +57,12 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 
 data class HabitChip(val habitId: Long, val name: String, val icon: HabitIcon, val count: Int, val target: Int)
+
+/** Los hábitos que muestran Hoy y el widget: activos, esenciales, con meta, que tocan ese día; los dos primeros. */
+fun todayHabitChips(habits: List<app.brujula.habits.Habit>, counts: Map<Long, Int>, day: LocalDate): List<HabitChip> = habits
+    .filter { it.active && it.group == app.brujula.habits.HabitGroup.ESSENTIAL && it.dailyTarget > 0 && day.dayOfWeek in it.days }
+    .take(MAX_VISIBLE_HABITS)
+    .map { HabitChip(it.id, it.name, it.icon, counts[it.id] ?: 0, it.dailyTarget) }
 
 /** Bloque de la línea de tiempo: actividad propia o evento importado (solo lectura, "Fijo"). */
 sealed interface TimelineBlock {
@@ -260,19 +267,14 @@ class TodayViewModel(
         workMarks: Map<String, Boolean>,
     ): TodayUiState {
         val window = routine.awakeWindow(day)
-        // Dia logico: todo lo que empieza en el (04:00 a 03:59), ya sea por fecha de calendario de ayer, hoy o manana,
-        // mas lo de ayer que aun cruza la vigilia de hoy.
-        val logical = logicalOccurrences(day, activities, done, overrides)
-        val spill = spillOccurrences(day, activities, done, window, overrides)
-        val ownBlocks = (spill + logical).map { TimelineBlock.Own(it, now in it.span) }
-        val external = eventsOnLogicalDay(day, rawExternal, window)
-        val timed = external.filter { !it.allDay }
-        val externalBlocks = timed.map {
-            TimelineBlock.External(it, classifications?.isWork(it, workMarks) ?: false, now in it.span)
-        }
+        // La única cuenta del día (la misma de Propuesta, Noche y Semana): propios con overrides + externos con hora y trabajo.
+        val snapshot = buildDaySnapshot(
+            day, SnapshotInputs(routine, activities, done, overrides, rawExternal) { classifications?.isWork(it, workMarks) ?: false },
+        )
+        val ownBlocks = snapshot.own.map { TimelineBlock.Own(it, now in it.span) }
+        val externalBlocks = snapshot.external.map { TimelineBlock.External(it.event, it.countsAsWork, now in it.event.span) }
         val timeline = (ownBlocks + externalBlocks).sortedBy { it.span.start }
-        val logicalSpan = TimeSpan(day.atTime(LOGICAL_DAY_START), day.plusDays(1).atTime(LOGICAL_DAY_START))
-        val minutes = workMinutes(logical, externalBlocks.filter { it.countsAsWork }.map { it.event }, logicalSpan)
+        val minutes = snapshot.summary.workMinutes
         val type = dayTypeOf(day)
         val goal = if (type.isRest) null else routine.workGoalMin
         return TodayUiState(
@@ -280,12 +282,9 @@ class TodayViewModel(
             workMinutes = minutes,
             workGoal = goal,
             workStatus = goal?.let { workStatus(minutes, it) },
-            habits = habits
-                .filter { it.active && it.group == app.brujula.habits.HabitGroup.ESSENTIAL && it.dailyTarget > 0 && day.dayOfWeek in it.days }
-                .take(MAX_VISIBLE_HABITS)
-                .map { HabitChip(it.id, it.name, it.icon, counts[it.id] ?: 0, it.dailyTarget) },
+            habits = todayHabitChips(habits, counts, day),
             timeline = timeline,
-            allDay = external.filter { it.allDay },
+            allDay = eventsOnLogicalDay(day, rawExternal, window).filter { it.allDay },
             freeSlots = freeSlots(window, timeline.map { it.span }),
             permissions = perms,
             day = day,

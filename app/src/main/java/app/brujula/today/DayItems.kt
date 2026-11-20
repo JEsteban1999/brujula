@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 
 /** El día lógico empieza a las 04:00. */
@@ -57,6 +58,29 @@ suspend fun CalendarSource.eventsAroundLogicalDay(selectedIds: Set<Long>?, day: 
 suspend fun CalendarSource.selectedEventsAroundOrEmpty(selectedIds: Flow<Set<Long>?>, day: LocalDate): List<ExternalEvent> = try {
     val ids = selectedIds.first()
     withContext(Dispatchers.IO) { eventsAroundLogicalDay(ids, day) }
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    emptyList()
+}
+
+/**
+ * Eventos de los calendarios elegidos que se cruzan con [from, to), fuera del hilo principal: una sola consulta para
+ * varios días. Mismas reglas de permiso y de error que [selectedEventsAroundOrEmpty]: sin permiso, sin calendarios
+ * elegidos o con un proveedor que falla da una lista vacía; la cancelación se relanza.
+ *
+ * Contrato de rango para una semana lógica con lunes `M`: `[M 04:00 − 1 día, M + 7 días 04:00)`. El día extra al inicio
+ * trae los eventos de la tarde anterior que cruzan hacia el lunes (el filtro por día lógico los asigna después).
+ */
+suspend fun CalendarSource.selectedEventsBetweenOrEmpty(
+    selectedIds: Flow<Set<Long>?>,
+    from: LocalDateTime,
+    to: LocalDateTime,
+): List<ExternalEvent> = try {
+    val ids = selectedIds.first()
+    withContext(Dispatchers.IO) {
+        if (ids.isNullOrEmpty() || !hasReadPermission()) emptyList() else events(ids, from, to)
+    }
 } catch (e: CancellationException) {
     throw e
 } catch (e: Exception) {

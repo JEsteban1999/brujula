@@ -7,6 +7,7 @@ import app.brujula.habits.Habit
 import app.brujula.habits.HabitIcon
 import app.brujula.habits.HabitSchedule
 import app.brujula.routine.Routine
+import app.brujula.sleep.SleepRecord
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -34,6 +35,21 @@ class ReminderPlannerTest {
     @Test fun noHabitReminderBetweenBedAndWake() {
         val r = plan(d.atTime(23, 0))
         assertTrue(r.none { it.at.isAfter(d.plusDays(1).atTime(0, 30)) && it.at.isBefore(d.plusDays(1).atTime(8, 15)) })
+    }
+
+    @Test fun habitRemindersStopAfterYaMeAcuestoUntilWake() {
+        val now = d.atTime(21, 0)
+        val bedAt = d.atTime(21, 30)
+        fun habitTimes(sleep: Map<LocalDate, SleepRecord>) =
+            ReminderPlanner.plan(now, Routine(), listOf(water), emptyMap(), emptySet(), emptyList(), emptySet(), sleep = sleep)
+                .filter { it.kind == ReminderKind.HABIT }.map { it.at }
+        assertTrue("sin registro, avisa antes de la hora de acostarse de la rutina", d.atTime(21, 45) in habitTimes(emptyMap()))
+        val after = habitTimes(mapOf(d to SleepRecord(d, bedAt, null)))
+        assertTrue(after.none { it > bedAt && it < d.plusDays(1).atTime(8, 15) })
+        assertTrue("al despertar vuelve a avisar", after.any { it >= d.plusDays(1).atTime(8, 15) })
+        // Un despertar registrado termina la noche antes.
+        val woke = habitTimes(mapOf(d to SleepRecord(d, bedAt, d.plusDays(1).atTime(6, 0))))
+        assertTrue(woke.none { it > bedAt && it < d.plusDays(1).atTime(6, 0) })
     }
 
     @Test fun handledKeysAndReachedTargetAreSkipped() {
@@ -273,5 +289,15 @@ class ReminderPlannerTest {
         // Una hora de dormir tardía no atrasa el aviso: manda la hora configurada.
         val late = app.brujula.routine.BedtimeChoice(thu, thu.plusDays(1).atTime(0, 15), 480, remind = false)
         assertEquals(thu.atTime(22, 45), planning(thu.atTime(12, 0), bedtime = late).single { it.kind == ReminderKind.PLAN_NIGHT }.at)
+    }
+
+    @Test fun fasterStretchRemindsHourlyFromThreePm() {
+        val faster = water.copy(schedule = HabitSchedule.Every(90, app.brujula.habits.FasterStretch(LocalTime.of(15, 0), 60)))
+        val r = ReminderPlanner.plan(d.atTime(13, 0), Routine(), listOf(faster), emptyMap(), emptySet(), emptyList(), emptySet())
+            .filter { it.kind == ReminderKind.HABIT && it.day == d }
+        assertEquals(listOf(d.atTime(14, 15)) + (15..23).map { d.atTime(it, 0) } + d.plusDays(1).atTime(0, 0), r.map { it.at })
+        // Al llegar a la meta del día se pausan también los del tramo rápido.
+        val reached = ReminderPlanner.plan(d.atTime(13, 0), Routine(), listOf(faster), mapOf(d to mapOf(1L to 8)), emptySet(), emptyList(), emptySet())
+        assertTrue(reached.none { it.kind == ReminderKind.HABIT && it.day == d })
     }
 }

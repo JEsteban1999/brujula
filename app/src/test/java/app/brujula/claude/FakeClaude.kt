@@ -18,7 +18,17 @@ class FakeClaudeGateway(
     var dictation: GatewayResult<DictationResult> = GatewayResult.Error(retryable = false),
     var classification: GatewayResult<ClassificationResult> = GatewayResult.Error(retryable = false),
     var plan: GatewayResult<PlanResult> = GatewayResult.Error(retryable = false),
+    var suggestion: GatewayResult<SuggestionResult> = GatewayResult.Error(retryable = false),
 ) : ClaudeGateway {
+    var suggestCalls = 0
+    var lastSuggestSystem: String? = null
+    var lastSuggestUser: String? = null
+    override suspend fun suggest(system: String, user: String): GatewayResult<SuggestionResult> {
+        suggestCalls++
+        lastSuggestSystem = system
+        lastSuggestUser = user
+        return suggestion
+    }
     var planCalls = 0
     var lastPlanSystem: String? = null
     var lastPlanUser: String? = null

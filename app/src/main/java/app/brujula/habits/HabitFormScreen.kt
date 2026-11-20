@@ -161,6 +161,18 @@ fun HabitFormScreen(viewModel: HabitFormViewModel, onClose: () -> Unit, modifier
                         color = c.textMuted, fontSize = 12.sp,
                     )
                     ErrorText(state.intervalError)
+                    // En horario de trabajo el tramo no aplica (se ignora), así que no se muestra.
+                    state.faster?.takeIf { !state.workOnly }?.let { f ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Más seguido desde las ${formatTime(f.from)}: cada ${f.intervalMin} min",
+                                Modifier.weight(1f), color = c.text, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                            )
+                            TextButton(onClick = viewModel::removeFaster, Modifier.defaultMinSize(minHeight = 48.dp)) {
+                                Text("Quitar", color = c.accentText, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
+                            }
+                        }
+                    }
                 }
             } else {
                 TimesCard(state, viewModel, reduced)

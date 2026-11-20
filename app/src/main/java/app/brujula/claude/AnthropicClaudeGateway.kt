@@ -40,6 +40,7 @@ class AnthropicClaudeGateway internal constructor(
     private val dictationParams: (String, String) -> BetaMessageCreateParams = DictationCall::params,
     private val classificationParams: (String, String) -> MessageCreateParams = ClassificationCall::params,
     private val planParams: (String, String) -> BetaMessageCreateParams = PlanCall::params,
+    private val suggestionParams: (String, String) -> MessageCreateParams = SuggestionCall::params,
     private val keyTestParams: () -> MessageCreateParams = ::keyTestParams,
 ) : ClaudeGateway {
     constructor(keyStore: ClaudeKeyStore) : this(keyStore::read)
@@ -94,6 +95,33 @@ class AnthropicClaudeGateway internal constructor(
             }
             val p = params()
             read(clientFor(key).beta().messages().create(p, options()))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            DictationCall.failureOf(e, what)
+        } catch (e: LinkageError) {
+            DictationCall.incompatible(e, what)
+        }
+    }
+
+    override suspend fun suggest(system: String, user: String): GatewayResult<SuggestionResult> =
+        call("Sugerencia", { suggestionParams(system, user) }, SuggestionCall::requestOptions, SuggestionCall::read)
+
+    /** Como [callBeta], pero por el endpoint no beta (Haiku sin respaldo en el servidor). */
+    private suspend fun <T> call(
+        what: String,
+        params: () -> MessageCreateParams,
+        options: () -> RequestOptions,
+        read: (Message) -> GatewayResult<T>,
+    ): GatewayResult<T> = withContext(Dispatchers.IO) {
+        try {
+            val key = readKey()
+            if (key == null) {
+                dropClient()
+                return@withContext GatewayResult.NoKey
+            }
+            val p = params()
+            read(clientFor(key).messages().create(p, options()))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -300,17 +328,52 @@ internal object ClassificationCall {
             .build()
 
     /** Revisa stopReason antes de leer el contenido. */
-    fun read(response: Message): GatewayResult<ClassificationResult> {
-        val stop = response.stopReason().orElse(null)
-        if (stop == StopReason.REFUSAL) return GatewayResult.Refused
-        if (stop == StopReason.MAX_TOKENS) return GatewayResult.Error(retryable = true)
-        if (stop != StopReason.END_TURN) return GatewayResult.Error(retryable = false)
-        return try {
-            val block = response.content().lastOrNull { it.isText() } ?: return GatewayResult.Error(retryable = false)
-            GatewayResult.Ok(StructuredJson.parse(block.asText().text(), ClassificationResult::class.java))
-        } catch (e: Exception) {
-            DictationCall.warn("Respuesta de clasificación ilegible: ${e.javaClass.simpleName}")
-            GatewayResult.Error(retryable = false)
-        }
+    fun read(response: Message): GatewayResult<ClassificationResult> =
+        readStructured(response, ClassificationResult::class.java, "clasificación")
+}
+
+/** Como el [readStructured] beta, para una respuesta del endpoint no beta: stopReason primero, después el último texto. */
+internal fun <T : Any> readStructured(response: Message, type: Class<T>, what: String): GatewayResult<T> {
+    val stop = response.stopReason().orElse(null)
+    if (stop == StopReason.REFUSAL) return GatewayResult.Refused
+    if (stop == StopReason.MAX_TOKENS) return GatewayResult.Error(retryable = true)
+    if (stop != StopReason.END_TURN) return GatewayResult.Error(retryable = false)
+    return try {
+        val block = response.content().lastOrNull { it.isText() } ?: return GatewayResult.Error(retryable = false)
+        GatewayResult.Ok(StructuredJson.parse(block.asText().text(), type))
+    } catch (e: Exception) {
+        DictationCall.warn("Respuesta de $what ilegible: ${e.javaClass.simpleName}")
+        GatewayResult.Error(retryable = false)
     }
+}
+
+/**
+ * Petición de sugerencias de hábitos (D11): Claude Haiku 5.5 por el endpoint NO beta, esfuerzo MEDIUM (el predeterminado de
+ * Haiku 5.5), 16000 tokens (el razonamiento adaptativo de Haiku 5.5 cuenta contra el tope) y 60 s por petición. Sin `fallbacks` (Haiku 5.5 los rechaza con 400), sin `thinking`, temperatura
+ * ni prefill: un rechazo (stopReason == REFUSAL) es simplemente "sin sugerencias". Schema escrito a mano [Schemas.SUGGESTION];
+ * los fallos se clasifican con [DictationCall.failureOf] / [DictationCall.incompatible] con la etiqueta "Sugerencia".
+ */
+internal object SuggestionCall {
+    private const val MAX_TOKENS = 16000L
+
+    fun params(system: String, user: String): MessageCreateParams =
+        MessageCreateParams.builder()
+            .model(ClaudeModels.SUGGESTIONS)
+            .maxTokens(MAX_TOKENS)
+            .system(system)
+            .addUserMessage(user)
+            .outputConfig(
+                OutputConfig.builder()
+                    .effort(OutputConfig.Effort.MEDIUM)
+                    .format(Schemas.format(Schemas.SUGGESTION))
+                    .build(),
+            )
+            .build()
+
+    /** Corre en segundo plano sin nadie esperando: más margen que los 30 s del cliente. */
+    val TIMEOUT: Duration = Duration.ofSeconds(60)
+
+    fun requestOptions(): RequestOptions = RequestOptions.builder().timeout(TIMEOUT).build()
+
+    fun read(response: Message): GatewayResult<SuggestionResult> = readStructured(response, SuggestionResult::class.java, "sugerencia")
 }

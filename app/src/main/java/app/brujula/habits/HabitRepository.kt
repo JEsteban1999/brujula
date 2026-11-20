@@ -5,6 +5,7 @@ import app.brujula.data.db.HabitLogEntity
 import app.brujula.data.db.toEntity
 import app.brujula.data.db.toModel
 import app.brujula.routine.logicalDay
+import app.brujula.suggestions.HabitLog
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.time.LocalDate
@@ -43,6 +44,13 @@ class HabitRepository(private val dao: HabitDao) {
     }
 
     suspend fun undoLast(habitId: Long, day: LocalDate) = dao.deleteLastDone(habitId, day)
+
+    /** Registros de los días lógicos [from]..[to] (ambos incluidos), para las sugerencias: solo hábito, hora, día y si se saltó. */
+    suspend fun logsBetween(from: LocalDate, to: LocalDate): List<HabitLog> =
+        dao.logsBetween(from, to).map { HabitLog(it.habitId, it.at, it.logicalDay, it.skipped) }
+
+    /** Cambia con cualquier registro (hecho, saltado o deshecho); lo observa el widget. */
+    fun observeLogCount(): Flow<Int> = dao.observeLogCount()
 
     fun observeHandledKeys(): Flow<Set<String>> = dao.observeHandledKeys().map { it.toSet() }
 }

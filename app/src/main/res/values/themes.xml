@@ -8,6 +8,15 @@
         <item name="android:windowBackground">@color/brujula_night</item>
     </style>
 
+    <!-- Ventanita de dictado del widget: translúcida sobre la pantalla de inicio; el único atenuado lo dibuja Compose. -->
+    <style name="Theme.Brujula.Floating" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+
     <style name="Theme.Brujula.Starting" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/brujula_night</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/avd_splash_icon</item>

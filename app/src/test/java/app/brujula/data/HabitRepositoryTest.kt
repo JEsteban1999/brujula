@@ -9,6 +9,10 @@ import app.brujula.habits.Habit
 import app.brujula.habits.HabitIcon
 import app.brujula.habits.HabitRepository
 import app.brujula.habits.HabitSchedule
+import app.brujula.habits.FasterStretch
+import app.brujula.data.db.decodeSchedule
+import app.brujula.data.db.encode
+import app.brujula.suggestions.HabitLog
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -103,5 +107,41 @@ class HabitRepositoryTest {
     @Test fun unknownIconFallsBackToGeneric() = runTest {
         val e = app.brujula.data.db.HabitEntity(1, "X", "NOPE", "every:60", 1, "1,2", true)
         assertEquals(HabitIcon.GENERIC, e.toModel().icon)
+    }
+
+    @Test fun scheduleWithFasterRoundTrip() = runTest {
+        val faster = HabitSchedule.Every(90, FasterStretch(LocalTime.of(15, 0), 60))
+        assertEquals("every:90|15:00/60", faster.encode())
+        assertEquals(faster, decodeSchedule(faster.encode()))
+        val id = repo.upsert(water().copy(schedule = faster))
+        assertEquals(faster, repo.observeHabits().first().single { it.id == id }.schedule)
+        // Quitar el tramo vuelve al texto de siempre.
+        assertEquals("every:90", HabitSchedule.Every(90).encode())
+    }
+
+    @Test fun oldEveryTextStillReads() {
+        assertEquals(HabitSchedule.Every(90), decodeSchedule("every:90"))
+        assertEquals(HabitSchedule.AtTimes(listOf(LocalTime.of(9, 0), LocalTime.of(13, 0))), decodeSchedule("at:09:00,13:00"))
+        assertEquals(HabitSchedule.BeforeBed(45), decodeSchedule("bed:45"))
+        // Un sufijo que esta versión no entiende se ignora: queda el intervalo base.
+        assertEquals(HabitSchedule.Every(90), decodeSchedule("every:90|algo"))
+        assertEquals(HabitSchedule.Every(90), decodeSchedule("every:90|25:00/60"))
+        assertEquals(HabitSchedule.Every(90), decodeSchedule("every:90|15:00/0"))
+    }
+
+    @Test fun logsBetweenFiltersByLogicalDay() = runTest {
+        val id = repo.upsert(water())
+        repo.logDone(id, LocalDateTime.of(2026, 11, 10, 9, 0)) // fuera (antes)
+        repo.logDone(id, LocalDateTime.of(2026, 11, 12, 0, 30)) // día lógico 11: fuera
+        repo.logDone(id, LocalDateTime.of(2026, 11, 13, 1, 0)) // día lógico 12: dentro
+        repo.logSkip(id, LocalDateTime.of(2026, 11, 15, 15, 0), "k1")
+        repo.logDone(id, LocalDateTime.of(2026, 11, 18, 9, 0))
+        repo.logDone(id, LocalDateTime.of(2026, 11, 19, 3, 59)) // día lógico 18: dentro
+        repo.logDone(id, LocalDateTime.of(2026, 11, 19, 4, 0)) // día lógico 19: fuera
+        val logs = repo.logsBetween(LocalDate.of(2026, 11, 12), LocalDate.of(2026, 11, 18))
+        assertEquals(4, logs.size)
+        assertEquals(setOf(LocalDate.of(2026, 11, 12), LocalDate.of(2026, 11, 15), LocalDate.of(2026, 11, 18)), logs.map { it.logicalDay }.toSet())
+        val skip = logs.single { it.skipped }
+        assertEquals(HabitLog(id, LocalDateTime.of(2026, 11, 15, 15, 0), LocalDate.of(2026, 11, 15), true), skip)
     }
 }
