@@ -20,6 +20,7 @@ import app.brujula.habits.HabitIcon
 import app.brujula.habits.HabitRepository
 import app.brujula.habits.HabitSchedule
 import app.brujula.routine.RoutineRepository
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -139,5 +140,28 @@ class DaySnapshotProviderTest {
         assertTrue(snap.external.isEmpty())
         assertEquals(60, snap.summary.workMinutes)
         assertEquals(listOf("Informe"), snap.own.map { it.activity.title })
+    }
+
+    @Test fun buildDaySnapshotMatchesProvider() = runTest {
+        val daily = ext(1, "Daily", thu.atTime(14, 0), thu.atTime(15, 0))
+        activities.upsert(Activity(title = "Informe", type = ActivityType.WORK, date = thu, start = LocalTime.of(9, 0), durationMin = 120))
+        activities.upsert(Activity(title = "Gimnasio", type = ActivityType.EXERCISE, date = thu, start = LocalTime.of(18, 30), durationMin = 60))
+        calendar.eventList = listOf(daily, ext(2, "Cumpleaños", thu.atTime(20, 0), thu.atTime(21, 0)), ext(3, "Vacaciones", thu.atStartOfDay(), thu.plusDays(1).atStartOfDay(), allDay = true))
+        marks.set(classificationKey(daily), true)
+        val water = habits.upsert(Habit(name = "Tomar agua", icon = HabitIcon.WATER, schedule = HabitSchedule.Every(60), dailyTarget = 8))
+        habits.logDone(water, thu.atTime(9, 0))
+
+        val fromProvider = provider().snapshot(thu)
+        val inputs = SnapshotInputs(
+            routine = app.brujula.routine.Routine(),
+            activities = activities.observeAll().first(),
+            done = activities.observeDoneKeys().first(),
+            overrides = activities.observeOverrides().first(),
+            external = calendar.eventList,
+        ) { it.eventId == 1L }
+        val activeWater = habits.observeHabits().first().first { it.icon == HabitIcon.WATER }
+        val pure = buildDaySnapshot(thu, inputs, activeWater, 1)
+
+        assertEquals(fromProvider, pure)
     }
 }
