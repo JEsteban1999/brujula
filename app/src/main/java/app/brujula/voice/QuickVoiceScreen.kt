@@ -33,6 +33,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -68,7 +69,8 @@ fun QuickVoiceScreen(
         // Hermano de la tarjeta (no su padre): así su nodo "Cerrar" no absorbe los textos de la tarjeta.
         Box(
             Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClickLabel = "Cerrar", onClick = onClose),
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClickLabel = "Cerrar", onClick = onClose)
+                .semantics { contentDescription = "Cerrar" },
         )
         Column(
             Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(12.dp)

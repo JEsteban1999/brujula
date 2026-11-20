@@ -261,6 +261,51 @@ class VoiceViewModelTest {
         assertEquals(listOf("dentista"), r.pending.all().map { it.text })
     }
 
+    @Test fun floatingApplyFailureThenLeaveQueuesOnce() = runTest {
+        val vs = screenScope()
+        val r = rig(outcomes = arrayOf(ok("Ejercicio")), floating = true, vmScope = vs)
+        r.exec.failApply = true
+        r.vm.submitText("ejercicio")
+        runCurrent()
+        assertTrue((r.vm.state.value as VoiceState.Error).retry)
+        leave(r, vs)
+        assertEquals(listOf("ejercicio"), r.pending.all().map { it.text })
+    }
+
+    @Test fun floatingQueueFailureThenLeaveQueuesOnce() = runTest {
+        val vs = screenScope()
+        val real: DataStore<Preferences> = PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "q.preferences_pb") }
+        var failures = 1
+        val flaky = object : DataStore<Preferences> {
+            override val data = real.data
+            override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences {
+                if (failures-- > 0) throw java.io.IOException("boom")
+                return real.updateData(transform)
+            }
+        }
+        val pending = PendingDictations(flaky)
+        val vm = VoiceViewModel(
+            FakeSpeechInput(), FakeInterpreter(InterpretOutcome.Offline), FakeExecutor(), pending, now = { 1L },
+            scopeOverride = vs, leaveScope = backgroundScope, floating = true,
+        )
+        vm.submitText("dentista")
+        runCurrent()
+        assertEquals(VoiceCopy.QUEUE_FAILED, (vm.state.value as VoiceState.Error).message)
+        vs.cancel()
+        ViewModelStore().also { it.put("k", vm) }.clear()
+        runCurrent()
+        assertEquals(listOf("dentista"), pending.all().map { it.text })
+    }
+
+    @Test fun floatingRefusedDismissedWithoutOpeningAppQueuesNothing() = runTest {
+        val vs = screenScope()
+        val r = rig(outcomes = arrayOf(InterpretOutcome.Refused("No")), floating = true, vmScope = vs)
+        r.vm.submitText("algo")
+        runCurrent()
+        leave(r, vs)
+        assertTrue(r.pending.all().isEmpty())
+    }
+
     @Test fun floatingRefusedCarriesTextOnlyWhenOpeningApp() = runTest {
         val r = rig(outcomes = arrayOf(InterpretOutcome.Refused("No")), floating = true)
         r.vm.submitText("algo")

@@ -379,6 +379,7 @@ class VoiceViewModel(
 
     private fun fail(message: String, retry: Boolean, text: String?, back: String, full: String) {
         lastText = text
+        handedOff = false
         if (floating) {
             // Sin campo de texto: el dictado queda aparte, nunca en el borrador.
             if (retry) unsent = full else carry = full
@@ -394,12 +395,13 @@ class VoiceViewModel(
     }
 
     /** Encola (una sola vez) el dictado del error definitivo o pendiente; la ventanita lo llama antes de abrir la app. */
-    fun queueForApp() = queueDetached(takeLeftover())
+    fun queueForApp() = queueDetached(takeLeftover(includeCarry = true))
 
     /** El dictado que quedó sin procesar, calculado una sola vez: quien llegue primero se lo lleva y borra todo. */
-    private fun takeLeftover(): String? {
+    private fun takeLeftover(includeCarry: Boolean): String? {
         val answering = base?.takeIf { lastPartial.isNotBlank() }?.let { "$it. $lastPartial" }
-        val text = answering ?: unsent ?: carry
+        // El error definitivo (carry) solo se encola si el usuario abre la app desde él.
+        val text = answering ?: unsent ?: carry.takeIf { includeCarry }
         base = null
         lastPartial = ""
         unsent = null
@@ -418,6 +420,6 @@ class VoiceViewModel(
         job?.cancel()
         speech.destroy()
         // Con un envío en vuelo o ya entregado a apply/cola, manda la captura de cancelación de `interpret`.
-        if (floating && !inFlight && !handedOff) queueDetached(takeLeftover())
+        if (floating && !inFlight) queueDetached(takeLeftover(includeCarry = false))
     }
 }
