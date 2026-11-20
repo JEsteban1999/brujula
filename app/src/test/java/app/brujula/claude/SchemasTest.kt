@@ -41,6 +41,18 @@ class SchemasTest {
         assertEquals(expected, schemaOf(handWritten))
     }
 
+    @Test fun suggestionSchemaMatchesTheSdkDerivedOne() {
+        val derived = NonBetaStructuredOutputConfig.builder<SuggestionResult>().format(SuggestionResult::class.java).build()
+        val handWritten = SuggestionCall.params("s", "u").outputConfig().get()
+        val expected = schemaOf(derived.rawOutputConfig)
+        assertEquals(setOf("suggestions"), expected.path("properties").fieldNames().asSequence().toSet())
+        assertEquals(
+            setOf("habitRef", "message", "change", "intervalMin", "fromTime", "times", "dailyTarget"),
+            expected.path("properties").path("suggestions").path("items").path("properties").fieldNames().asSequence().toSet(),
+        )
+        assertEquals(expected, schemaOf(handWritten))
+    }
+
     @Test fun planSchemaMatchesTheSdkDerivedOne() {
         val derived = BetaStructuredOutputConfig.builder<PlanResult>().format(PlanResult::class.java).build()
         val handWritten = PlanCall.params("s", "u").outputConfig().get()

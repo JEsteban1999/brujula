@@ -154,6 +154,10 @@ interface HabitDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertLog(e: HabitLogEntity): Long
 
+    /** Registros (hechos y saltados) de los días lógicos [from]..[to], ambos incluidos. */
+    @Query("SELECT * FROM habit_logs WHERE logicalDay BETWEEN :from AND :to")
+    suspend fun logsBetween(from: LocalDate, to: LocalDate): List<HabitLogEntity>
+
     @Query("SELECT habitId, COUNT(*) AS count FROM habit_logs WHERE logicalDay = :day AND skipped = 0 GROUP BY habitId")
     fun observeCounts(day: LocalDate): Flow<List<HabitCountRow>>
 

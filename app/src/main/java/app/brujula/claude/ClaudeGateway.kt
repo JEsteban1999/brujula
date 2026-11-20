@@ -33,4 +33,7 @@ interface ClaudeGateway {
 
     /** Propone cambios para un día (Opus 5.5, salida estructurada). Nunca lanza (salvo cancelación). */
     suspend fun plan(system: String, user: String): GatewayResult<PlanResult>
+
+    /** Sugiere un cambio de hábito a partir de conteos agregados (Haiku 5.5, salida estructurada). Nunca lanza (salvo cancelación). */
+    suspend fun suggest(system: String, user: String): GatewayResult<SuggestionResult>
 }

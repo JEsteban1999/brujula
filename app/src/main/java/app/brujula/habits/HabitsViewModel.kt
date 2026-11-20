@@ -150,10 +150,22 @@ fun Habit.summary(): String {
     val work = if (window == HabitWindow.WORK) " en horario de trabajo" else ""
     return when (val s = schedule) {
         is HabitSchedule.Every ->
-            "Cada ${if (s.intervalMin >= 120 && s.intervalMin % 60 == 0) "${s.intervalMin / 60} h" else "${s.intervalMin} min"}$work"
+            "Cada ${if (s.intervalMin >= 120 && s.intervalMin % 60 == 0) "${s.intervalMin / 60} h" else "${s.intervalMin} min"}$work" +
+                (activeFaster()?.let { " · desde las ${formatTime(it.from)} cada ${it.intervalMin} min" } ?: "")
         is HabitSchedule.AtTimes -> s.times.sorted().map { formatTime(it) }.let { t ->
             (if (t.size > 1) t.dropLast(1).joinToString(", ") + " y " + t.last() else t.firstOrNull().orEmpty()) + work
         }
         is HabitSchedule.BeforeBed -> "${s.minutes} min antes de dormir"
     }
+}
+
+/** El tramo "más seguido desde" que de verdad aplica: solo en la ventana AWAKE. */
+fun Habit.activeFaster(): FasterStretch? =
+    (schedule as? HabitSchedule.Every)?.faster?.takeIf { window == HabitWindow.AWAKE && it.intervalMin > 0 }
+
+/** Texto de la tarjeta de Hábitos para un hábito "cada N min" (null en otros horarios). */
+fun Habit.everyNote(): String? {
+    val s = schedule as? HabitSchedule.Every ?: return null
+    val faster = activeFaster() ?: return "Cada ${s.intervalMin} min mientras estás despierto."
+    return "Cada ${s.intervalMin} min mientras estás despierto; desde las ${formatTime(faster.from)}, cada ${faster.intervalMin} min."
 }

@@ -272,4 +272,46 @@ class HabitFormViewModelTest {
         vm.setWorkOnly(false)
         assertTrue(vm.state.value.dailyTarget > 14)
     }
+
+    private val faster = FasterStretch(LocalTime.of(15, 0), 60)
+
+    @Test fun editKeepsFasterStretch() = runTest {
+        val id = habits.upsert(
+            Habit(name = "Agua", icon = HabitIcon.WATER, schedule = HabitSchedule.Every(90, faster), dailyTarget = 8),
+        )
+        val vm = vm(id)
+        assertEquals(faster, vm.state.first { it.ready }.faster)
+        vm.setName("Agua fresca")
+        vm.setIntervalMin(75)
+        vm.save()
+        vm.state.first { it.saved }
+        assertEquals(HabitSchedule.Every(75, faster), habits.observeHabits().first().single().schedule)
+    }
+
+    @Test fun removeFasterSavesPlainEvery() = runTest {
+        val id = habits.upsert(
+            Habit(name = "Agua", icon = HabitIcon.WATER, schedule = HabitSchedule.Every(90, faster), dailyTarget = 8),
+        )
+        val vm = vm(id)
+        vm.state.first { it.ready }
+        vm.removeFaster()
+        assertNull(vm.state.value.faster)
+        vm.save()
+        vm.state.first { it.saved }
+        assertEquals(HabitSchedule.Every(90), habits.observeHabits().first().single().schedule)
+    }
+
+    @Test fun switchingModeDropsFasterStretch() = runTest {
+        val id = habits.upsert(
+            Habit(name = "Agua", icon = HabitIcon.WATER, schedule = HabitSchedule.Every(90, faster), dailyTarget = 8),
+        )
+        val vm = vm(id)
+        vm.state.first { it.ready }
+        vm.setMode(HabitMode.EVERY)
+        assertEquals(faster, vm.state.value.faster)
+        vm.setMode(HabitMode.AT_TIMES)
+        assertNull(vm.state.value.faster)
+        vm.setMode(HabitMode.EVERY)
+        assertNull(vm.state.value.faster)
+    }
 }

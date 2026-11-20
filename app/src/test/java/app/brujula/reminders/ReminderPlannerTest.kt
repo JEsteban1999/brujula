@@ -274,4 +274,14 @@ class ReminderPlannerTest {
         val late = app.brujula.routine.BedtimeChoice(thu, thu.plusDays(1).atTime(0, 15), 480, remind = false)
         assertEquals(thu.atTime(22, 45), planning(thu.atTime(12, 0), bedtime = late).single { it.kind == ReminderKind.PLAN_NIGHT }.at)
     }
+
+    @Test fun fasterStretchRemindsHourlyFromThreePm() {
+        val faster = water.copy(schedule = HabitSchedule.Every(90, app.brujula.habits.FasterStretch(LocalTime.of(15, 0), 60)))
+        val r = ReminderPlanner.plan(d.atTime(13, 0), Routine(), listOf(faster), emptyMap(), emptySet(), emptyList(), emptySet())
+            .filter { it.kind == ReminderKind.HABIT && it.day == d }
+        assertEquals(listOf(d.atTime(14, 15)) + (15..23).map { d.atTime(it, 0) } + d.plusDays(1).atTime(0, 0), r.map { it.at })
+        // Al llegar a la meta del día se pausan también los del tramo rápido.
+        val reached = ReminderPlanner.plan(d.atTime(13, 0), Routine(), listOf(faster), mapOf(d to mapOf(1L to 8)), emptySet(), emptyList(), emptySet())
+        assertTrue(reached.none { it.kind == ReminderKind.HABIT && it.day == d })
+    }
 }

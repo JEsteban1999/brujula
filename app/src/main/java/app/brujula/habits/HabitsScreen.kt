@@ -200,7 +200,7 @@ private fun RingCard(card: HabitCard, reduced: Boolean, onMenu: () -> Unit, onAd
         label = "ring",
     )
     val addSource = remember { MutableInteractionSource() }
-    val every = (h.schedule as? HabitSchedule.Every)?.intervalMin
+    val everyNote = h.everyNote()
     CardShell(onMenu, h.name) {
         Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(140.dp).semantics { contentDescription = "${card.count} de $target" }, contentAlignment = Alignment.Center) {
@@ -231,7 +231,7 @@ private fun RingCard(card: HabitCard, reduced: Boolean, onMenu: () -> Unit, onAd
                 val next = card.nextAt
                 val text = buildString {
                     if (next != null) append("Próximo aviso a las ${formatTime(next.toLocalTime())}. ")
-                    if (every != null) append("Cada $every min mientras estás despierto.")
+                    if (everyNote != null) append(everyNote)
                 }.trim()
                 if (text.isNotEmpty()) Text(text, color = c.textMuted, fontSize = 13.sp, lineHeight = 18.sp)
                 Box(

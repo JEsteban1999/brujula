@@ -97,4 +97,48 @@ class HabitTimesTest {
         assertTrue(late.none { it < d.atTime(9, 0) })
         assertTrue(work(HabitSchedule.AtTimes(listOf(LocalTime.of(8, 5)))).timesFor(d, Routine()).isEmpty())
     }
+
+    private fun fasterWater(from: LocalTime) =
+        water.copy(schedule = HabitSchedule.Every(90, FasterStretch(from, 60)))
+
+    @Test fun fasterStretchFromThreePm() {
+        val t = fasterWater(LocalTime.of(15, 0)).timesFor(d, Routine())
+        val expected = listOf(d.atTime(9, 45), d.atTime(11, 15), d.atTime(12, 45), d.atTime(14, 15)) +
+            (15..23).map { d.atTime(it, 0) } + d.plusDays(1).atTime(0, 0)
+        assertEquals(expected, t)
+        assertEquals(14, t.size)
+    }
+
+    @Test fun fasterStretchDropsCloseBase() {
+        val t = fasterWater(LocalTime.of(14, 30)).timesFor(d, Routine())
+        assertEquals(listOf(d.atTime(9, 45), d.atTime(11, 15), d.atTime(12, 45), d.atTime(14, 30), d.atTime(15, 30)), t.take(5))
+        assertTrue(d.atTime(14, 15) !in t)
+    }
+
+    @Test fun fasterStretchBeforeWakeMeansFasterAllDayAndAfterMidnightStillCounts() {
+        val all = fasterWater(LocalTime.of(6, 0)).timesFor(d, Routine())
+        assertEquals(d.atTime(8, 15), all.first())
+        assertEquals(d.atTime(9, 15), all[1])
+        // 00:15 con acostarse 00:30: el tramo empieza pasada la medianoche (un solo aviso rápido).
+        val late = fasterWater(LocalTime.of(0, 15)).timesFor(d, Routine())
+        assertEquals(d.plusDays(1).atTime(0, 15), late.last())
+        assertEquals(water.timesFor(d, Routine()), late.dropLast(1))
+    }
+
+    @Test fun fasterIgnoredInWorkWindow() {
+        val plain = work(HabitSchedule.Every(60)).timesFor(d, Routine())
+        assertEquals(plain, work(HabitSchedule.Every(60, FasterStretch(LocalTime.of(15, 0), 30))).timesFor(d, Routine()))
+    }
+
+    @Test fun summaryAndCardTextMentionFasterStretch() {
+        val faster = fasterWater(LocalTime.of(15, 0))
+        assertEquals("Cada 90 min · desde las 15:00 cada 60 min", faster.summary())
+        assertEquals("Cada 90 min", water.summary())
+        assertEquals("Cada 90 min mientras estás despierto; desde las 15:00, cada 60 min.", faster.everyNote())
+        assertEquals("Cada 90 min mientras estás despierto.", water.everyNote())
+        assertEquals(null, balm(9).everyNote())
+        // En horario de trabajo el tramo no aplica y no se menciona.
+        val workFaster = work(HabitSchedule.Every(60, FasterStretch(LocalTime.of(15, 0), 30)))
+        assertEquals("Cada 60 min en horario de trabajo", workFaster.summary())
+    }
 }
