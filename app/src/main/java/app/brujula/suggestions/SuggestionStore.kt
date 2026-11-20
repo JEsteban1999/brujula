@@ -38,13 +38,23 @@ class SuggestionStore(private val dataStore: DataStore<Preferences>) {
     /** Guarda [s] como la sugerencia pendiente; la pendiente anterior pasa a `STALE`. */
     suspend fun savePending(s: HabitSuggestion, id: Long): StoredSuggestion {
         val stored = StoredSuggestion(id, s, SuggestionStatus.PENDING, null)
-        update { state ->
-            val older = state.entries.filter { it.id != id }.map {
-                if (it.status == SuggestionStatus.PENDING) it.copy(status = SuggestionStatus.STALE) else it
-            }
-            state.copy(entries = (listOf(stored) + older).take(MAX_ENTRIES))
-        }
+        update { it.withPending(stored) }
         return stored
+    }
+
+    private fun State.withPending(stored: StoredSuggestion): State {
+        val older = entries.filter { it.id != stored.id }.map {
+            if (it.status == SuggestionStatus.PENDING) it.copy(status = SuggestionStatus.STALE) else it
+        }
+        return copy(entries = (listOf(stored) + older).take(MAX_ENTRIES))
+    }
+
+    /** Una corrida en la que Claude respondió: guarda la sugerencia (si hay) y la marca del intento en una sola escritura. */
+    suspend fun recordRun(s: HabitSuggestion?, id: Long, at: LocalDateTime) {
+        update { state ->
+            val withSuggestion = if (s == null) state else state.withPending(StoredSuggestion(id, s, SuggestionStatus.PENDING, null))
+            withSuggestion.copy(lastAttempt = at, lastRun = at)
+        }
     }
 
     suspend fun setStatus(id: Long, status: SuggestionStatus, at: LocalDateTime) {

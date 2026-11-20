@@ -14,12 +14,15 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.time.LocalDateTime
 
 /** Lo que muestra la tarjeta de Hábitos: la sugerencia pendiente, o la aceptada hoy con su "Listo: …". */
 data class SuggestionCard(val id: Long, val message: String, val accepted: Boolean, val doneText: String?)
@@ -45,23 +48,34 @@ class SuggestionService(
     private val hasKey: suspend () -> Boolean,
     private val isOnline: suspend () -> Boolean,
 ) {
+    /** Un solo vuelo (automática o a mano): se toma al empezar y se suelta al terminar. No se muestra. */
+    private val flight = Mutex()
     private val requesting = MutableStateFlow(false)
 
-    /** Hay una petición a Claude en curso (automática o pedida a mano). */
+    /** Hay una llamada a Claude en curso de verdad (no mientras se revisan las condiciones). */
     val running: StateFlow<Boolean> = requesting.asStateFlow()
+
+    private suspend fun suggestWhileRunning(minDays: Int): SuggestOutcome {
+        requesting.value = true
+        try {
+            return suggester.suggest(minDays)
+        } finally {
+            requesting.value = false
+        }
+    }
     private val decideMutex = Mutex()
 
     /** La pendiente más nueva, o la aceptada en el día lógico de hoy. */
-    fun card(): Flow<SuggestionCard?> = store.entries.map { list ->
+    fun card(ticks: Flow<LocalDateTime> = flow { emit(clock.now()) }): Flow<SuggestionCard?> = combine(store.entries, ticks) { list, now ->
         val pending = list.firstOrNull { it.status == SuggestionStatus.PENDING }
         val shown = pending ?: list.firstOrNull {
-            it.status == SuggestionStatus.ACCEPTED && it.decidedAt?.let { d -> logicalDay(d) == logicalDay(clock.now()) } == true
+            it.status == SuggestionStatus.ACCEPTED && it.decidedAt?.let { d -> logicalDay(d) == logicalDay(now) } == true
         }
         shown?.let {
             val accepted = it.status == SuggestionStatus.ACCEPTED
             SuggestionCard(it.id, it.suggestion.message, accepted, if (accepted) it.suggestion.doneText() else null)
         }
-    }
+    }.distinctUntilChanged()
 
     /**
      * Corrida automática (D12), en [syncScope]: ≥ 7 días desde la última corrida exitosa, ≥ 1 día desde el último intento,
@@ -69,7 +83,7 @@ class SuggestionService(
      * pasada y un fallo espera al día siguiente (o a una pedida a mano). null si no corre.
      */
     fun maybeRunAuto(): Job? {
-        if (!requesting.compareAndSet(false, true)) return null
+        if (!flight.tryLock()) return null
         return syncScope.launch {
             try {
                 runAuto()
@@ -79,26 +93,32 @@ class SuggestionService(
                 // Un fallo local (DataStore, base) no reintenta hasta mañana.
                 runCatching { withContext(NonCancellable) { store.markAttempt(clock.now(), success = false) } }
             } finally {
-                requesting.value = false
+                flight.unlock()
             }
         }
     }
 
     private suspend fun runAuto() {
         val now = clock.now()
-        store.lastRun()?.let { if (it.plusDays(AUTO_EVERY_DAYS) > now) return }
-        store.lastAttempt()?.let { if (it.plusDays(1) > now) return }
+        // Una marca en el futuro (reloj atrasado) no bloquea: se trata como vencida.
+        store.lastRun()?.let { if (it <= now && it.plusDays(AUTO_EVERY_DAYS) > now) return }
+        store.lastAttempt()?.let { if (it <= now && it.plusDays(1) > now) return }
         if (!hasKey() || !isOnline()) return
-        record(suggester.suggest(HabitSuggester.MIN_DAYS_AUTO))
+        if (!suggester.hasEnoughData(HabitSuggester.MIN_DAYS_AUTO)) return
+        record(suggestWhileRunning(HabitSuggester.MIN_DAYS_AUTO))
     }
 
     /** Pedida a mano: ignora el límite semanal pero pide [HabitSuggester.MIN_DAYS_ON_DEMAND] días de registros. */
     suspend fun requestNow(): SuggestRequestResult {
         if (!hasKey()) return SuggestRequestResult.Message(HabitSuggester.NO_KEY)
         if (!isOnline()) return SuggestRequestResult.Message(HabitSuggester.OFFLINE)
-        if (!requesting.compareAndSet(false, true)) return SuggestRequestResult.Message(THINKING)
+        if (!flight.tryLock()) {
+            if (requesting.value) return SuggestRequestResult.Message(THINKING)
+            // La corrida automática solo está revisando condiciones: se espera su turno en vez de mostrar un aviso.
+            flight.lock()
+        }
         try {
-            return when (val outcome = suggester.suggest(HabitSuggester.MIN_DAYS_ON_DEMAND)) {
+            return when (val outcome = suggestWhileRunning(HabitSuggester.MIN_DAYS_ON_DEMAND)) {
                 is SuggestOutcome.Ok -> {
                     record(outcome)
                     if (outcome.suggestion == null) SuggestRequestResult.Message(HabitSuggester.NONE) else SuggestRequestResult.Shown
@@ -113,7 +133,7 @@ class SuggestionService(
                 }
             }
         } finally {
-            requesting.value = false
+            flight.unlock()
         }
     }
 
@@ -125,10 +145,8 @@ class SuggestionService(
         val now = clock.now()
         withContext(NonCancellable) {
             when (outcome) {
-                is SuggestOutcome.Ok -> {
-                    outcome.suggestion?.let { store.savePending(it, nextId()) }
-                    store.markAttempt(now, success = true)
-                }
+                // La sugerencia y la marca del intento se guardan en una sola escritura.
+                is SuggestOutcome.Ok -> store.recordRun(outcome.suggestion, nextId(), now)
                 is SuggestOutcome.Refused -> store.markAttempt(now, success = true)
                 is SuggestOutcome.Failed, SuggestOutcome.Offline, SuggestOutcome.InvalidKey -> store.markAttempt(now, success = false)
                 SuggestOutcome.NotEnoughData, SuggestOutcome.NoKey -> Unit

@@ -8,7 +8,11 @@ import app.brujula.claude.GatewayResult
 import app.brujula.data.db.BrujulaDatabase
 import app.brujula.habits.FasterStretch
 import app.brujula.habits.HabitSchedule
+import kotlinx.coroutines.flow.MutableStateFlow
+import app.cash.turbine.test
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -66,6 +70,8 @@ class SuggestionServiceTest {
 
     @Test fun autoSkipsWhenRecentNoKeyOfflineOrLittleData() = runTest {
         val h = harness()
+        val seen = mutableListOf<Boolean>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { h.service.running.collect { seen += it } }
         h.due()
         h.store.markAttempt(now.minusDays(3), success = true) // corrida reciente (y último intento hace 3 días)
         h.service.maybeRunAuto()!!.join()
@@ -91,6 +97,51 @@ class SuggestionServiceTest {
         assertEquals(emptyList<StoredSuggestion>(), h.store.entries.first())
         // Sin llamada real no cuenta como intento.
         assertEquals(now.minusDays(9), h.store.lastAttempt())
+        assertEquals("si una condición lo salta, nunca se anuncia 'mirando'", listOf(false), seen)
+    }
+
+    @Test fun runningOnlyDuringTheCall() = runTest {
+        val h = harness()
+        val seen = mutableListOf<Boolean>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { h.service.running.collect { seen += it } }
+        h.due()
+        h.service.maybeRunAuto()!!.join()
+        assertEquals(listOf(false, true, false), seen)
+    }
+
+    @Test fun futureMarksDoNotBlockAuto() = runTest {
+        val h = harness()
+        val id = h.water()
+        h.seedLogs(id, 7)
+        h.answer(h.faster(id))
+        h.store.markAttempt(now.plusDays(20), success = true) // reloj movido hacia atrás
+        h.service.maybeRunAuto()!!.join()
+        assertEquals(1, h.gateway.suggestCalls)
+        assertEquals(now, h.store.lastRun())
+    }
+
+    @Test fun acceptedCardDropsAtRolloverWithoutStoreEmission() = runTest {
+        val h = harness()
+        val (_, sid) = h.pending()
+        h.service.accept(sid)
+        h.clock.current = now.toLocalDate().plusDays(1).atTime(3, 59)
+        val ticks = MutableStateFlow(h.clock.current)
+        h.service.card(ticks).test {
+            assertTrue(awaitItem()!!.accepted)
+            h.clock.current = now.toLocalDate().plusDays(1).atTime(4, 0)
+            ticks.value = h.clock.current
+            assertNull(awaitItem())
+        }
+    }
+
+    @Test fun undoOnDeletedHabitKeepsAndWritesNothing() = runTest {
+        val h = harness()
+        val (habitId, sid) = h.pending()
+        h.service.accept(sid)
+        h.habits.delete(habitId)
+        assertEquals(SuggestionService.KEPT, h.service.undo(sid))
+        assertEquals(emptyList<app.brujula.habits.Habit>(), h.habits.observeHabits().first())
+        assertEquals(1, h.resyncs)
     }
 
     @Test fun autoFailureRetriesNextDayOnly() = runTest {

@@ -101,7 +101,7 @@ class HabitsViewModel(
         }
 
     val state: StateFlow<HabitsUiState> =
-        combine(base, suggestions?.card() ?: flowOf(null), busy, suggestions?.running ?: flowOf(false), message) { s, card, isBusy, auto, msg ->
+        combine(base, suggestions?.card(ticker) ?: flowOf(null), busy, suggestions?.running ?: flowOf(false), message) { s, card, isBusy, auto, msg ->
             // También cuenta la corrida automática: Claude está mirando los hábitos aunque nadie lo haya pedido.
             s.copy(suggestion = card, suggestionBusy = isBusy || auto, suggestionMessage = msg)
         }.stateIn(scope, SharingStarted.Eagerly, HabitsUiState(emptyList(), emptyList(), 0, List(7) { false }, List(7) { false }))

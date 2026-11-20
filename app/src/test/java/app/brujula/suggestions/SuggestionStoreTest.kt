@@ -62,8 +62,9 @@ class SuggestionStoreTest {
         assertNull(store.lastRun())
         assertNull(store.lastAttempt())
         assertEquals(emptySet<Pair<Long, SuggestionKind>>(), store.rejected(now))
-        // Escribir sobre algo ilegible funciona.
+        // Escribir sobre algo ilegible funciona y deja copia.
         store.savePending(suggestion(), 1)
+        assertEquals("{esto no es json", ds.data.first()[stringPreferencesKey("habit_suggestions_backup")])
         assertEquals(1, store.entries.first().size)
 
         // Un elemento dañado se salta; los demás se conservan.
@@ -97,5 +98,16 @@ class SuggestionStoreTest {
         assertEquals(setOf(3L to SuggestionKind.INTERVAL, 4L to SuggestionKind.TIMES), store.rejected(now.plusDays(1)))
         assertEquals(setOf(3L to SuggestionKind.INTERVAL), store.rejected(now.plusDays(25)))
         assertEquals(emptySet<Pair<Long, SuggestionKind>>(), store.rejected(now.plusDays(31)))
+    }
+
+    @Test fun recordRunSavesSuggestionAndMarksTogether() = runTest {
+        val store = SuggestionStore(PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "f.preferences_pb") })
+        store.recordRun(suggestion(), 7, now)
+        assertEquals(listOf(7L), store.entries.first().map { it.id })
+        assertEquals(now, store.lastRun())
+        assertEquals(now, store.lastAttempt())
+        store.recordRun(null, 8, now.plusDays(1))
+        assertEquals(SuggestionStatus.PENDING, store.entries.first().single().status)
+        assertEquals(now.plusDays(1), store.lastRun())
     }
 }

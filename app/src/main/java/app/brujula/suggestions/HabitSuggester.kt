@@ -34,6 +34,15 @@ class HabitSuggester(
     private val contextProvider: suspend () -> SuggestionContext,
     private val isOnline: suspend () -> Boolean = { true },
 ) {
+    /** Barato y sin llamar a Claude: false solo si hay datos locales y son pocos (si el contexto falla, lo decide [suggest]). */
+    suspend fun hasEnoughData(minDaysWithLogs: Int): Boolean = try {
+        contextProvider().daysWithLogs >= minDaysWithLogs
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        true
+    }
+
     suspend fun suggest(minDaysWithLogs: Int): SuggestOutcome {
         val ctx = try {
             contextProvider()
