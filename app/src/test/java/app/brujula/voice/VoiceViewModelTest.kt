@@ -37,12 +37,12 @@ class VoiceViewModelTest {
 
     private var drains = 0
 
-    private fun TestScope.rig(speech: FakeSpeechInput = FakeSpeechInput(), vararg outcomes: InterpretOutcome): Rig {
+    private fun TestScope.rig(speech: FakeSpeechInput = FakeSpeechInput(), vararg outcomes: InterpretOutcome, queueWithoutKey: Boolean = false): Rig {
         val ds: DataStore<Preferences> = PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "p.preferences_pb") }
         val pending = PendingDictations(ds)
         val interp = FakeInterpreter(*outcomes)
         val exec = FakeExecutor()
-        return Rig(speech, interp, exec, pending, VoiceViewModel(speech, interp, exec, pending, now = { 1000L }, scopeOverride = backgroundScope, requestDrain = { drains++ }))
+        return Rig(speech, interp, exec, pending, VoiceViewModel(speech, interp, exec, pending, now = { 1000L }, scopeOverride = backgroundScope, requestDrain = { drains++ }, queueWithoutKey = queueWithoutKey))
     }
 
     @Test fun finalSpeechGoesThinkingThenResultWithLabelsAndUndo() = runTest {
@@ -140,6 +140,32 @@ class VoiceViewModelTest {
         runCurrent()
         assertEquals(VoiceState.Error(DictationInterpreter.NO_KEY, retry = false), r.vm.state.value)
         assertEquals("algo", r.vm.draft.value)
+        assertTrue(r.pending.all().isEmpty())
+    }
+
+    @Test fun noKeyQueuesWhenQueueWithoutKey() = runTest {
+        val before = drains
+        val r = rig(outcomes = arrayOf(InterpretOutcome.NoKey), queueWithoutKey = true)
+        r.vm.submitText("algo")
+        runCurrent()
+        assertEquals(VoiceState.SavedNeedsKey, r.vm.state.value)
+        assertEquals(listOf("algo"), r.pending.all().map { it.text })
+        assertEquals("Sin pedir drenado", before, drains)
+    }
+
+    @Test fun invalidKeyQueuesWhenQueueWithoutKey() = runTest {
+        val r = rig(outcomes = arrayOf(InterpretOutcome.InvalidKey), queueWithoutKey = true)
+        r.vm.submitText("algo")
+        runCurrent()
+        assertEquals(VoiceState.SavedNeedsKey, r.vm.state.value)
+        assertEquals(listOf("algo"), r.pending.all().map { it.text })
+    }
+
+    @Test fun noKeyKeepsErrorByDefault() = runTest {
+        val r = rig(outcomes = arrayOf(InterpretOutcome.NoKey))
+        r.vm.submitText("algo")
+        runCurrent()
+        assertTrue(r.vm.state.value is VoiceState.Error)
         assertTrue(r.pending.all().isEmpty())
     }
 

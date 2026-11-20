@@ -17,6 +17,7 @@ import app.brujula.routine.logicalDay
 import app.brujula.today.HabitChip
 import app.brujula.today.todayHabitChips
 import app.brujula.ui.DeepLinks
+import app.brujula.voice.QuickVoiceActivity
 import kotlinx.coroutines.flow.first
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -118,8 +119,7 @@ object WidgetUpdater {
         val body = activity(context, REQ_BODY, DeepLinks.TODAY)
         v.setOnClickPendingIntent(R.id.widget_root, body)
         v.setOnClickPendingIntent(R.id.widget_top, body)
-        // Task 7 cambia esto por la ventanita de dictado.
-        v.setOnClickPendingIntent(R.id.widget_mic, activity(context, REQ_MIC, DeepLinks.VOICE))
+        v.setOnClickPendingIntent(R.id.widget_mic, micIntent(context))
         return v
     }
 
@@ -163,6 +163,14 @@ object WidgetUpdater {
     private fun activity(context: Context, request: Int, route: String): PendingIntent =
         PendingIntent.getActivity(
             context, request, DeepLinks.intent(context, route), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
+    /** El micrófono abre la ventanita de dictado (no exportada): intent explícito e inmutable. */
+    internal fun micIntent(context: Context): PendingIntent =
+        PendingIntent.getActivity(
+            context, REQ_MIC,
+            Intent(context, QuickVoiceActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
     private fun refreshIntent(context: Context): PendingIntent =

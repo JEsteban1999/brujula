@@ -38,6 +38,14 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".voice.QuickVoiceActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="app.brujula.quickvoice"
+            android:theme="@style/Theme.Brujula.Floating" />
+
         <receiver
             android:name=".reminders.ReminderReceiver"
             android:exported="false" />

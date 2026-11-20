@@ -74,6 +74,8 @@ sealed interface VoiceState {
     data class Error(val message: String, val retry: Boolean) : VoiceState
     /** Guardado para interpretarlo cuando vuelva internet. */
     data object SavedOffline : VoiceState
+    /** Guardado porque falta la clave de Claude (o no vale); solo con `queueWithoutKey`. Se agenda al arreglar la clave. */
+    data object SavedNeedsKey : VoiceState
 }
 
 class VoiceViewModel(
@@ -85,6 +87,8 @@ class VoiceViewModel(
     private val scopeOverride: CoroutineScope? = null,
     /** Pide procesar la cola de pendientes (producción: `drainPendingDictations` en `syncScope`). */
     private val requestDrain: () -> Unit = {},
+    /** La ventanita del widget no puede mandar a Tu rutina: sin clave (o clave inválida) el dictado va a la cola. */
+    private val queueWithoutKey: Boolean = false,
 ) : ViewModel() {
     private val scope: CoroutineScope get() = scopeOverride ?: viewModelScope
 
@@ -229,8 +233,10 @@ class VoiceViewModel(
             val back = if (base != null) answer else full
             when (outcome) {
                 is InterpretOutcome.Ok -> applyOk(outcome, full, back)
-                InterpretOutcome.NoKey -> fail(DictationInterpreter.NO_KEY, retry = false, text = null, back = back, full = full)
-                InterpretOutcome.InvalidKey -> fail(DictationInterpreter.INVALID_KEY, retry = false, text = null, back = back, full = full)
+                InterpretOutcome.NoKey, InterpretOutcome.InvalidKey -> if (queueWithoutKey) queueNeedsKey(full) else fail(
+                    if (outcome == InterpretOutcome.NoKey) DictationInterpreter.NO_KEY else DictationInterpreter.INVALID_KEY,
+                    retry = false, text = null, back = back, full = full,
+                )
                 InterpretOutcome.Offline -> queue(full)
                 is InterpretOutcome.Refused -> fail(outcome.message, retry = false, text = null, back = back, full = full)
                 is InterpretOutcome.Failed ->
@@ -321,6 +327,20 @@ class VoiceViewModel(
         base = null
         lastText = null
         _state.value = VoiceState.SavedOffline
+    }
+
+    private suspend fun queueNeedsKey(full: String) {
+        handedOff = true
+        try {
+            withContext(NonCancellable) { pending.add(full, now()) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return fail(VoiceCopy.QUEUE_FAILED, retry = true, text = full, back = full, full = full)
+        }
+        base = null
+        lastText = null
+        _state.value = VoiceState.SavedNeedsKey
     }
 
     private fun fail(message: String, retry: Boolean, text: String?, back: String, full: String) {
