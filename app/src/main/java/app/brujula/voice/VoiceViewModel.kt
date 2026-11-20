@@ -96,6 +96,8 @@ class VoiceViewModel(
      * recuperables y salir de un error o una pregunta pasan el texto a la cola.
      */
     private val floating: Boolean = false,
+    /** Alcance que sobrevive a la pantalla para encolar al salir (producción: `syncScope`); `viewModelScope` ya está cancelado en `onCleared`. */
+    private val leaveScope: CoroutineScope? = null,
 ) : ViewModel() {
     private val scope: CoroutineScope get() = scopeOverride ?: viewModelScope
 
@@ -133,8 +135,10 @@ class VoiceViewModel(
     /** Solo en modo ventanita: dictado de un error definitivo; pasa a la cola solo si el usuario abre la app desde ahí. */
     private var carry: String? = null
     /** Fuera del ciclo de la pantalla: sobrevive a `onCleared` (que cancela `viewModelScope`). */
-    private val detached: CoroutineScope get() = scopeOverride ?: detachedScope
+    private val detached: CoroutineScope get() = leaveScope ?: detachedScope
     private val detachedScope by lazy { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
+    /** Un envío está en vuelo: de él se encarga la captura de cancelación de `interpret`, no `onCleared`. */
+    private var inFlight = false
 
     /**
      * Lo que escribe el usuario manda: si escribe mientras se escucha, se cancela el reconocedor y se vuelve a reposo
@@ -204,6 +208,8 @@ class VoiceViewModel(
         }
         if (_state.value == VoiceState.Thinking) return
         speech.cancel()
+        lastPartial = ""
+        inFlight = true
         val full = base?.let { "$it. $clean" } ?: clean
         _draft.value = ""
         _state.value = VoiceState.Thinking
@@ -215,6 +221,7 @@ class VoiceViewModel(
         if (text == null) { start(); return }
         if (_state.value == VoiceState.Thinking) return
         if (floating) _draft.value = ""
+        inFlight = true
         _state.value = VoiceState.Thinking
         job = scope.launch { interpret(text, answer = _draft.value) }
     }
@@ -269,6 +276,7 @@ class VoiceViewModel(
                     else fail(outcome.message, outcome.retryable, if (outcome.retryable) full else null, back, full)
             }
             settled = true
+            inFlight = false
         } catch (e: CancellationException) {
             // Salir de la pantalla en pleno "entendiendo": el dictado pasa a la cola y se procesa enseguida.
             if (!settled && !handedOff) {
@@ -386,11 +394,20 @@ class VoiceViewModel(
     }
 
     /** Encola (una sola vez) el dictado del error definitivo o pendiente; la ventanita lo llama antes de abrir la app. */
-    fun queueForApp() = queueDetached(unsent ?: carry)
+    fun queueForApp() = queueDetached(takeLeftover())
 
-    private fun queueDetached(text: String?) {
+    /** El dictado que quedó sin procesar, calculado una sola vez: quien llegue primero se lo lleva y borra todo. */
+    private fun takeLeftover(): String? {
+        val answering = base?.takeIf { lastPartial.isNotBlank() }?.let { "$it. $lastPartial" }
+        val text = answering ?: unsent ?: carry
+        base = null
+        lastPartial = ""
         unsent = null
         carry = null
+        return text
+    }
+
+    private fun queueDetached(text: String?) {
         if (text.isNullOrBlank()) return
         detached.launch {
             withContext(NonCancellable) { runCatching { pending.add(text, now()) }.onSuccess { requestDrain() } }
@@ -398,13 +415,9 @@ class VoiceViewModel(
     }
 
     override fun onCleared() {
-        val running = job?.isActive == true
         job?.cancel()
         speech.destroy()
-        // Con Claude entendiendo, la cancelación de arriba ya encola; aquí solo error recuperable o pregunta pendiente.
-        if (floating && !running) {
-            val answering = base?.takeIf { lastPartial.isNotBlank() }?.let { "$it. $lastPartial" }
-            queueDetached(answering ?: unsent)
-        }
+        // Con un envío en vuelo o ya entregado a apply/cola, manda la captura de cancelación de `interpret`.
+        if (floating && !inFlight && !handedOff) queueDetached(takeLeftover())
     }
 }

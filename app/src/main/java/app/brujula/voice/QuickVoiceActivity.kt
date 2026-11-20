@@ -43,6 +43,7 @@ class QuickVoiceActivity : ComponentActivity() {
                         requestDrain = { c.syncScope.launch { runCatching { c.drainPendingDictations() } } },
                         queueWithoutKey = true,
                         floating = true,
+                        leaveScope = c.syncScope,
                     )
                 }
             },

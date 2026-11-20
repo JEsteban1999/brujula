@@ -64,11 +64,12 @@ fun QuickVoiceScreen(
     // Con un "Deshacer" en curso se pausa; al terminar (Deshecho o fallo) arranca de nuevo.
     LaunchedEffect(state, undoing) { if (!undoing) QuickVoicePolicy.closeWhenDue(state, onClose) }
 
-    Box(
-        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClickLabel = "Cerrar", onClick = onClose),
-        contentAlignment = Alignment.BottomCenter,
-    ) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+        // Hermano de la tarjeta (no su padre): así su nodo "Cerrar" no absorbe los textos de la tarjeta.
+        Box(
+            Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClickLabel = "Cerrar", onClick = onClose),
+        )
         Column(
             Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(12.dp)
                 .clip(RoundedCornerShape(24.dp)).background(c.bg).border(1.dp, c.line, RoundedCornerShape(24.dp))

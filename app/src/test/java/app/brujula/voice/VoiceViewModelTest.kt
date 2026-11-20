@@ -11,6 +11,9 @@ import app.brujula.claude.Validated
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -37,12 +40,12 @@ class VoiceViewModelTest {
 
     private var drains = 0
 
-    private fun TestScope.rig(speech: FakeSpeechInput = FakeSpeechInput(), vararg outcomes: InterpretOutcome, queueWithoutKey: Boolean = false, floating: Boolean = false): Rig {
+    private fun TestScope.rig(speech: FakeSpeechInput = FakeSpeechInput(), vararg outcomes: InterpretOutcome, queueWithoutKey: Boolean = false, floating: Boolean = false, vmScope: CoroutineScope? = null): Rig {
         val ds: DataStore<Preferences> = PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "p.preferences_pb") }
         val pending = PendingDictations(ds)
         val interp = FakeInterpreter(*outcomes)
         val exec = FakeExecutor()
-        return Rig(speech, interp, exec, pending, VoiceViewModel(speech, interp, exec, pending, now = { 1000L }, scopeOverride = backgroundScope, requestDrain = { drains++ }, queueWithoutKey = queueWithoutKey, floating = floating))
+        return Rig(speech, interp, exec, pending, VoiceViewModel(speech, interp, exec, pending, now = { 1000L }, scopeOverride = vmScope ?: backgroundScope, leaveScope = backgroundScope, requestDrain = { drains++ }, queueWithoutKey = queueWithoutKey, floating = floating))
     }
 
     @Test fun finalSpeechGoesThinkingThenResultWithLabelsAndUndo() = runTest {
@@ -182,19 +185,80 @@ class VoiceViewModelTest {
         assertEquals(listOf("ejercicio"), r.pending.all().map { it.text })
     }
 
-    @Test fun floatingLeavingNeedsMoreQueuesOnce() = runTest {
-        val r = rig(outcomes = arrayOf(InterpretOutcome.Ok(listOf(Validated.Question("¿A qué hora?")), "")), floating = true)
+    /** Orden de producción: `clear()` cierra el alcance de la pantalla y solo después llama a `onCleared`. */
+    private fun TestScope.leave(r: Rig, vmScope: CoroutineScope) {
+        vmScope.cancel()
+        ViewModelStore().also { it.put("k", r.vm) }.clear()
+        runCurrent()
+    }
+
+    private fun TestScope.screenScope() = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+
+    private fun TestScope.needsMore(vmScope: CoroutineScope): Rig {
+        val r = rig(outcomes = arrayOf(InterpretOutcome.Ok(listOf(Validated.Question("¿A qué hora?")), ""), ok("Dentista")), floating = true, vmScope = vmScope)
         r.vm.submitText("dentista")
         runCurrent()
         assertTrue(r.vm.state.value is VoiceState.NeedsMore)
+        return r
+    }
+
+    @Test fun floatingLeavingNeedsMoreQueuesOnce() = runTest {
+        val vs = screenScope()
+        val r = needsMore(vs)
         r.vm.start()
         r.speech.emit(SpeechEvent.Partial("a las cuatro"))
-        ViewModelStore().also { it.put("k", r.vm) }.clear()
-        runCurrent()
+        leave(r, vs)
         assertEquals(listOf("dentista. a las cuatro"), r.pending.all().map { it.text })
+    }
+
+    @Test fun floatingLeavingWhileThinkingAnswerQueuesFullTextOnce() = runTest {
+        val vs = screenScope()
+        val r = needsMore(vs)
+        r.interp.gate = CompletableDeferred()
+        r.vm.start()
+        r.speech.emit(SpeechEvent.Partial("a las"))
+        r.speech.emit(SpeechEvent.Final("a las cuatro"))
+        runCurrent()
+        assertEquals(VoiceState.Thinking, r.vm.state.value)
+        leave(r, vs)
+        assertEquals(listOf("dentista. a las cuatro"), r.pending.all().map { it.text })
+    }
+
+    @Test fun floatingLeavingAfterApplyHandedOffQueuesNothing() = runTest {
+        val vs = screenScope()
+        val r = rig(outcomes = arrayOf(ok("Ejercicio")), floating = true, vmScope = vs)
+        r.exec.applyGate = CompletableDeferred()
+        r.vm.submitText("ejercicio")
+        runCurrent()
+        leave(r, vs)
+        r.exec.applyGate!!.complete(Unit)
+        runCurrent()
+        assertTrue(r.pending.all().isEmpty())
+        assertEquals(1, r.exec.applied.size)
+    }
+
+    @Test fun floatingQueueForAppThenClearQueuesOnce() = runTest {
+        val vs = screenScope()
+        val r = needsMore(vs)
+        r.vm.start()
+        r.speech.emit(SpeechEvent.Partial("a las cuatro"))
+        r.speech.emit(SpeechEvent.Failure(SpeechFailure.NO_MATCH))
         r.vm.queueForApp()
         runCurrent()
+        leave(r, vs)
         assertEquals(1, r.pending.all().size)
+    }
+
+    @Test fun floatingStalePartialDoesNotGarbleQueuedBase() = runTest {
+        val vs = screenScope()
+        val r = rig(outcomes = arrayOf(InterpretOutcome.Ok(listOf(Validated.Question("¿A qué hora?")), "")), floating = true, vmScope = vs)
+        r.vm.start()
+        r.speech.emit(SpeechEvent.Partial("dent"))
+        r.speech.emit(SpeechEvent.Final("dentista"))
+        runCurrent()
+        assertTrue(r.vm.state.value is VoiceState.NeedsMore)
+        leave(r, vs)
+        assertEquals(listOf("dentista"), r.pending.all().map { it.text })
     }
 
     @Test fun floatingRefusedCarriesTextOnlyWhenOpeningApp() = runTest {
@@ -213,6 +277,7 @@ class VoiceViewModelTest {
         r.vm.submitText("ejercicio")
         runCurrent()
         assertEquals(VoiceState.Error(DictationInterpreter.TOO_SLOW, retry = true), r.vm.state.value)
+        assertEquals("ejercicio", r.vm.draft.value)
         assertTrue(r.pending.all().isEmpty())
     }
 
