@@ -73,7 +73,10 @@ class SuggestionContextProvider(
         val today = logicalDay(now)
         val routine = routineRepository.routine.first()
         val habits = habitRepository.observeHabits().first()
+        // Solo cuentan los registros de hábitos activos: son los únicos que ve Claude.
+        val activeIds = habits.filter { it.active }.map { it.id }.toSet()
         val logs = habitRepository.logsBetween(today.minusDays(SUGGESTION_DAYS.toLong()), today.minusDays(1))
+            .filter { it.habitId in activeIds }
         return SuggestionContext(
             now = now,
             today = today,

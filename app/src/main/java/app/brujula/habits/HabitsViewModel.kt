@@ -12,10 +12,16 @@ import app.brujula.routine.Routine
 import app.brujula.routine.RoutineRepository
 import app.brujula.routine.dayTypeOf
 import app.brujula.routine.logicalDay
+import app.brujula.suggestions.SuggestRequestResult
+import app.brujula.suggestions.SuggestionCard
+import app.brujula.suggestions.SuggestionService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
@@ -46,6 +52,12 @@ data class HabitsUiState(
     val weekDone: List<Boolean>,
     /** Lunes a domingo: true si ese día es de descanso. */
     val weekRest: List<Boolean>,
+    /** La sugerencia de Claude para mostrar (pendiente, o aceptada hoy), si hay. */
+    val suggestion: SuggestionCard? = null,
+    /** Una petición a Claude (`Pedir una sugerencia`) en curso. */
+    val suggestionBusy: Boolean = false,
+    /** Resultado de la última acción de sugerencias (sin sugerencia, sin red, no toqué…), hasta cerrarlo. */
+    val suggestionMessage: String? = null,
 )
 
 private const val TICK_MS = 30_000L
@@ -58,6 +70,7 @@ class HabitsViewModel(
     private val resync: ReminderResync = ReminderResync { },
     scopeOverride: CoroutineScope? = null,
     private val tickMs: Long = TICK_MS,
+    private val suggestions: SuggestionService? = null,
 ) : ViewModel() {
     private val scope: CoroutineScope = scopeOverride ?: viewModelScope
 
@@ -69,8 +82,11 @@ class HabitsViewModel(
         }
     }
 
+    private val busy = MutableStateFlow(false)
+    private val message = MutableStateFlow<String?>(null)
+
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val state: StateFlow<HabitsUiState> = ticker
+    private val base: Flow<HabitsUiState> = ticker
         .flatMapLatest { now ->
             val day = logicalDay(now)
             combine(
@@ -83,7 +99,17 @@ class HabitsViewModel(
                 build(now, day, routine, habits, counts, activities, done)
             }
         }
-        .stateIn(scope, SharingStarted.Eagerly, HabitsUiState(emptyList(), emptyList(), 0, List(7) { false }, List(7) { false }))
+
+    val state: StateFlow<HabitsUiState> =
+        combine(base, suggestions?.card() ?: flowOf(null), busy, suggestions?.running ?: flowOf(false), message) { s, card, isBusy, auto, msg ->
+            // También cuenta la corrida automática: Claude está mirando los hábitos aunque nadie lo haya pedido.
+            s.copy(suggestion = card, suggestionBusy = isBusy || auto, suggestionMessage = msg)
+        }.stateIn(scope, SharingStarted.Eagerly, HabitsUiState(emptyList(), emptyList(), 0, List(7) { false }, List(7) { false }))
+
+    init {
+        // Al abrir Hábitos: como mucho una corrida automática por semana; vive en el ámbito de la app, no de la pantalla.
+        suggestions?.maybeRunAuto()
+    }
 
     private fun build(
         now: LocalDateTime,
@@ -135,6 +161,44 @@ class HabitsViewModel(
             habitRepository.setActive(habitId, active)
             runCatching { resync.resync() }
         }
+    }
+
+    fun acceptSuggestion() {
+        val service = suggestions ?: return
+        val id = state.value.suggestion?.id ?: return
+        scope.launch { service.accept(id)?.let { message.value = it } }
+    }
+
+    fun dismissSuggestion() {
+        val service = suggestions ?: return
+        val id = state.value.suggestion?.id ?: return
+        scope.launch { service.dismiss(id) }
+    }
+
+    fun undoSuggestion() {
+        val service = suggestions ?: return
+        val id = state.value.suggestion?.id ?: return
+        scope.launch { message.value = service.undo(id) }
+    }
+
+    fun requestSuggestion() {
+        val service = suggestions ?: return
+        if (state.value.suggestionBusy || !busy.compareAndSet(false, true)) return
+        message.value = null
+        scope.launch {
+            try {
+                when (val r = service.requestNow()) {
+                    SuggestRequestResult.Shown -> Unit
+                    is SuggestRequestResult.Message -> message.value = r.text
+                }
+            } finally {
+                busy.value = false
+            }
+        }
+    }
+
+    fun dismissSuggestionMessage() {
+        message.value = null
     }
 
     fun delete(habitId: Long) {

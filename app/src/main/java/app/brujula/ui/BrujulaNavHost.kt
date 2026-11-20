@@ -294,6 +294,7 @@ fun BrujulaNavHost(
                                 activityRepository = container.activityRepository,
                                 habitRepository = container.habitRepository,
                                 resync = container.reminderSync,
+                                suggestions = container.suggestionService,
                             )
                         }
                     },

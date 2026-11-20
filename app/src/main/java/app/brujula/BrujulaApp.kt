@@ -59,6 +59,10 @@ import app.brujula.data.db.Migrations
 import app.brujula.data.db.Seed
 import app.brujula.habits.HabitRepository
 import app.brujula.routine.RoutineRepository
+import app.brujula.suggestions.HabitSuggester
+import app.brujula.suggestions.SuggestionContextProvider
+import app.brujula.suggestions.SuggestionService
+import app.brujula.suggestions.SuggestionStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -134,6 +138,49 @@ class AppContainer(val context: Context) {
 
     /** Sueño real de cada noche (D1/D2). */
     val sleepRepository: SleepRepository by lazy { SleepRepository(database.sleepDao()) }
+
+    /** Sugerencias de hábitos guardadas (D14), en el mismo DataStore `routine`. */
+    val suggestionStore: SuggestionStore by lazy { SuggestionStore(context.applicationContext.routineDataStore) }
+
+    private var suggestionContextProviderOverride: SuggestionContextProvider? = null
+
+    /** Conteos agregados para sugerir (D12/D15): lee el store de sugerencias (no el servicio: sin ciclo). Sustituible en pruebas. */
+    var suggestionContextProvider: SuggestionContextProvider
+        get() = suggestionContextProviderOverride ?: SuggestionContextProvider(
+            clock, habitRepository, routineRepository, rejected = { suggestionStore.rejected(clock.now()) },
+        )
+        set(value) { suggestionContextProviderOverride = value }
+
+    private var habitSuggesterOverride: HabitSuggester? = null
+
+    /** Pide y valida una sugerencia de hábito con el gateway vigente (no guarda ni aplica). Sustituible en pruebas. */
+    var habitSuggester: HabitSuggester
+        get() = habitSuggesterOverride ?: HabitSuggester(
+            DelegatingGateway { claudeGateway }, { suggestionContextProvider.current() }, isOnline = { isOnline(context) },
+        )
+        set(value) { habitSuggesterOverride = value }
+
+    private var suggestionServiceOverride: SuggestionService? = null
+    private val defaultSuggestionService: SuggestionService by lazy {
+        SuggestionService(
+            store = suggestionStore,
+            suggester = habitSuggester,
+            habitRepository = habitRepository,
+            resync = ReminderResync { reminderSync.resync() },
+            clock = object : Clock {
+                override fun now() = clock.now()
+                override fun today() = clock.today()
+            },
+            syncScope = syncScope,
+            hasKey = { claudeKeyStore.hasKey.first() },
+            isOnline = { isOnline(context) },
+        )
+    }
+
+    /** Guarda, pide, acepta y deshace sugerencias de hábitos; un solo servicio (sus cerrojos). Sustituible en pruebas. */
+    var suggestionService: SuggestionService
+        get() = suggestionServiceOverride ?: defaultSuggestionService
+        set(value) { suggestionServiceOverride = value }
 
     /** Nota de la tarjeta de Claude en Hoy (D15). */
     val claudeNotes: ClaudeNotes by lazy { ClaudeNotes(context.applicationContext.routineDataStore) }

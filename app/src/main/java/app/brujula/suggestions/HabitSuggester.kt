@@ -5,6 +5,7 @@ import app.brujula.claude.DictationInterpreter
 import app.brujula.claude.GatewayResult
 import app.brujula.claude.SuggestionItem
 import app.brujula.habits.FasterStretch
+import app.brujula.habits.Habit
 import app.brujula.habits.HabitSchedule
 import app.brujula.habits.HabitWindow
 import kotlinx.coroutines.CancellationException
@@ -101,6 +102,8 @@ fun validate(item: SuggestionItem, ctx: SuggestionContext): HabitSuggestion? {
                 if (habit.window != HabitWindow.AWAKE) return null
                 val from = parseHm(fromText) ?: return null
                 if (!inWorkdayAwake(from, ctx)) return null
+                // Un tramo "más seguido" tiene que ser de verdad más seguido que el intervalo base.
+                if (min >= current.intervalMin) return null
                 HabitChange(HabitSchedule.Every(current.intervalMin, FasterStretch(from, min)), habit.dailyTarget)
             }
         }
@@ -109,6 +112,7 @@ fun validate(item: SuggestionItem, ctx: SuggestionContext): HabitSuggestion? {
             val raw = item.times ?: return null
             val parsed = raw.map { parseHm(it.trim()) ?: return null }.distinct().sorted()
             if (parsed.size !in 1..MAX_SUGGESTED_TIMES) return null
+            if (parsed.any { !inHabitWindow(it, habit, ctx) }) return null
             // A horas fijas la meta es una por cada hora (como en el formulario).
             HabitChange(HabitSchedule.AtTimes(parsed), parsed.size)
         }
@@ -127,6 +131,12 @@ fun validate(item: SuggestionItem, ctx: SuggestionContext): HabitSuggestion? {
 }
 
 private fun parseHm(text: String): LocalTime? = runCatching { LocalTime.parse(text, HM) }.getOrNull()
+
+/** [t] cae en la ventana del hábito de un día laboral: la vigilia (AWAKE) o los bloques de trabajo dentro de la vigilia (WORK). */
+private fun inHabitWindow(t: LocalTime, habit: Habit, ctx: SuggestionContext): Boolean {
+    if (!inWorkdayAwake(t, ctx)) return false
+    return habit.window != HabitWindow.WORK || ctx.routine.workBlocks.any { (from, to) -> t >= from && t < to }
+}
 
 /** [t] cae dentro de la vigilia de un día laboral (de levantarse a acostarse; acostarse puede ser pasada la medianoche). */
 private fun inWorkdayAwake(t: LocalTime, ctx: SuggestionContext): Boolean {

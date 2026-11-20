@@ -90,6 +90,34 @@ class HabitSuggesterTest {
         assertNotNull("Sin desde sí se puede", validate(interval(from = null), ctx(habits = listOf(workOnly))))
     }
 
+    @Test fun stretchIntervalMustBeStrictlyFasterThanBase() {
+        assertNull("igual al base", validate(interval(min = 90), ctx()))
+        assertNull("más lento que el base", validate(interval(min = 120), ctx()))
+        assertNotNull(validate(interval(min = 75), ctx()))
+        // Sin desde, cambia todo el intervalo y puede ser mayor.
+        assertNotNull(validate(interval(min = 120, from = null), ctx()))
+        // La referencia es el intervalo base, no el del tramo actual.
+        val slowBase = water.copy(schedule = HabitSchedule.Every(60, FasterStretch(LocalTime.of(17, 0), 30)))
+        assertNull(validate(interval(min = 60), ctx(habits = listOf(slowBase))))
+        assertNotNull(validate(interval(min = 45), ctx(habits = listOf(slowBase))))
+    }
+
+    @Test fun suggestedTimesMustFitTheHabitWindow() {
+        // AWAKE: de levantarse (8:15) a acostarse (0:30).
+        assertNull(validate(times("H4", "09:00", "06:00"), ctx()))
+        assertNull(validate(times("H4", "03:00"), ctx()))
+        assertNull(validate(times("H4", "08:00"), ctx()))
+        assertNotNull(validate(times("H4", "08:30", "23:45", "00:15"), ctx()))
+        // WORK: dentro de los bloques de trabajo (8–12 y 14–18) y de la vigilia.
+        val work = balm.copy(window = HabitWindow.WORK, schedule = HabitSchedule.AtTimes(listOf(LocalTime.of(10, 0))), dailyTarget = 1)
+        val c = ctx(habits = listOf(work))
+        assertNotNull(validate(times("H4", "09:00", "14:00", "17:30"), c))
+        assertNull("entre bloques", validate(times("H4", "09:00", "13:00"), c))
+        assertNull("fuera del trabajo", validate(times("H4", "19:00"), c))
+        assertNull("antes de levantarse aunque sea hora de trabajo", validate(times("H4", "08:05"), c))
+        assertNull("el fin del bloque no cuenta", validate(times("H4", "12:00"), c))
+    }
+
     @Test fun unknownRefRejected() {
         assertNull(validate(interval(ref = "H99"), ctx()))
         assertNull(validate(interval(ref = "A3"), ctx()))

@@ -111,12 +111,25 @@ class SuggestionPromptTest {
         assertTrue(u, u.contains("Ya rechazaste (no repitas): H$id target"))
     }
 
+    @Test fun daysWithLogsCountOnlyActiveHabits() = runTest {
+        val habits = HabitRepository(db.habitDao())
+        val active = habits.upsert(water.copy(id = 0))
+        val inactive = habits.upsert(water.copy(id = 0, name = "Viejo", active = false))
+        habits.logDone(active, day(18).atTime(10, 0))
+        listOf(10, 11, 12).forEach { habits.logDone(inactive, day(it).atTime(10, 0)) }
+        val routine = RoutineRepository(PreferenceDataStoreFactory.create(scope = backgroundScope) { File(tmp.root, "r2.preferences_pb") })
+        val c = SuggestionContextProvider(FixedClock(now), habits, routine).current()
+        assertEquals("Los registros de un hábito inactivo no cuentan", 1, c.daysWithLogs)
+        assertEquals(listOf("H$active"), c.stats.map { it.ref })
+    }
+
     @Test fun systemStatesTheRules() {
         val s = SuggestionPrompt.system()
         listOf(
             "Brújula", "conteos agregados", "como mucho una", "lista vacía", "interval", "fromTime", "times", "target",
             "Nunca crees, borres ni desactives", "vigilia", "rechaz", "tuteo", "sin emojis", "pregunta",
             "Por las tardes casi no tomas agua. ¿Te aviso más seguido después de las 3 pm?",
+            "Los avisos se detienen cuando se llega a la meta del día; pocos \"hechos\" tarde no significa que falten avisos.",
         ).forEach { assertTrue("Falta \"$it\" en el system", s.contains(it)) }
     }
 }
