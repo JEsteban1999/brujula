@@ -48,6 +48,8 @@ import app.brujula.voice.VoiceScreen
 import app.brujula.voice.VoiceViewModel
 import app.brujula.today.TodayScreen
 import app.brujula.today.TodayViewModel
+import app.brujula.week.WeekScreen
+import app.brujula.week.WeekViewModel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
@@ -56,6 +58,7 @@ import java.time.LocalDateTime
 
 object Routes {
     const val TODAY = "today"
+    const val WEEK = "week"
     const val HABITS = "habits"
     const val ROUTINE = "routine"
     const val VOICE = "voice"
@@ -97,7 +100,7 @@ object Routes {
     }
 }
 
-private val TopLevel = setOf(Routes.TODAY, Routes.HABITS, Routes.ROUTINE)
+private val TopLevel = setOf(Routes.TODAY, Routes.WEEK, Routes.HABITS, Routes.ROUTINE)
 
 /**
  * [pendingRoute]: ruta de un enlace de notificación (ya filtrada por la lista blanca de [DeepLinks]); se navega a ella al
@@ -136,6 +139,7 @@ fun BrujulaNavHost(
                 BottomBar(
                     currentRoute = route,
                     onToday = { navController.navigateTop(Routes.TODAY) },
+                    onWeek = { navController.navigateTop(Routes.WEEK) },
                     onHabits = { navController.navigateTop(Routes.HABITS) },
                     onSettings = { navController.navigateTop(Routes.ROUTINE) },
                     onVoice = { navController.navigate(Routes.VOICE) { launchSingleTop = true } },
@@ -173,6 +177,30 @@ fun BrujulaNavHost(
                     onEditActivity = { navController.navigate(Routes.activityForm(id = it)) },
                     onAddAt = { navController.navigate(Routes.activityForm(start = it)) },
                     onAskClaude = { day, request -> navController.navigate(Routes.proposal(day, request?.take(DeepLinks.MAX_REQUEST))) },
+                )
+            }
+            composable(Routes.WEEK) {
+                val container = LocalContext.current.container
+                val vm: WeekViewModel = viewModel(
+                    factory = viewModelFactory {
+                        initializer {
+                            WeekViewModel(
+                                clock = container.clock,
+                                routineRepository = container.routineRepository,
+                                activityRepository = container.activityRepository,
+                                calendarSource = container.calendarSource,
+                                classifications = container.workClassificationRepository,
+                                sleepRepository = container.sleepRepository,
+                                resync = container.reminderSync,
+                            )
+                        }
+                    },
+                )
+                WeekScreen(
+                    viewModel = vm,
+                    onEditActivity = { navController.navigate(Routes.activityForm(id = it)) },
+                    onAddAt = { navController.navigate(Routes.activityForm(start = it)) },
+                    onAskClaude = { navController.navigate(Routes.proposal(it)) },
                 )
             }
             composable(

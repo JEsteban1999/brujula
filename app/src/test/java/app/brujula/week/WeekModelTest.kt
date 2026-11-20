@@ -84,6 +84,21 @@ class WeekModelTest {
         assertEquals(168, w.totals.workAverage)
     }
 
+    @Test fun futureWeekWithoutPlannedWorkHasNoAverage() {
+        val w = build(inputs(), monday = mon.plusDays(7))
+        assertNull(w.totals.workAverage)
+        assertEquals("Planeado", w.totals.workLabel)
+    }
+
+    @Test fun spokenDurationAlwaysSaysMinutes() {
+        assertEquals("6 h 5 min", durationText(365))
+        assertEquals("6 h", durationText(360))
+        assertEquals("45 min", durationText(45))
+        assertEquals("6 h 05", compactDuration(365))
+        assertEquals("6 h 40", compactDuration(400))
+        assertEquals("6 h", compactDuration(360))
+    }
+
     @Test fun exerciseDoneOverScheduled() {
         val gym = Activity(id = 5, title = "Gimnasio", type = ActivityType.EXERCISE, date = mon, start = LocalTime.of(18, 30), durationMin = 60, repeat = Repeat.WORKDAYS)
         val w = build(inputs(listOf(gym), done = setOf(5L to tue)))
@@ -145,8 +160,8 @@ class WeekModelTest {
     @Test fun barLabelsAndAccessibleText() {
         val w = build(inputs(listOf(work(1, tue, 8, 390), work(2, wed.plusDays(1), 8, 390))))
         assertEquals("6.5h", w.days[1].barLabel)
-        assertEquals("Martes 17: 6 h 30 de trabajo", w.days[1].a11y)
-        assertEquals("Jueves 19: 6 h 30 de trabajo planeado", w.days[3].a11y)
+        assertEquals("Martes 17: 6 h 30 min de trabajo", w.days[1].a11y)
+        assertEquals("Jueves 19: 6 h 30 min de trabajo planeado", w.days[3].a11y)
         assertEquals("Viernes 20: sin trabajo", w.days[4].a11y)
         assertEquals("–", w.days[4].barLabel)
         assertEquals(360..420, w.goal)

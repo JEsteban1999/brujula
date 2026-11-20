@@ -57,13 +57,24 @@ fun workStatusLabel(status: WorkStatus): String = when (status) {
     WorkStatus.ABOVE_GOAL -> "Sobre tu meta"
 }
 
-/** `6 h 30`, `6 h`, `45 min`. */
+/** Para voz (TalkBack): `6 h 5 min`, `6 h`, `45 min`; con resto siempre dice los minutos. */
 internal fun durationText(minutes: Int): String {
     val h = minutes / 60
     val m = minutes % 60
     return when {
         h == 0 -> "$m min"
         m == 0 -> "$h h"
-        else -> "$h h $m"
+        else -> "$h h $m min"
+    }
+}
+
+/** Para tarjetas: `6 h 05`, `6 h`, `45 min`. */
+fun compactDuration(minutes: Int): String {
+    val h = minutes / 60
+    val m = minutes % 60
+    return when {
+        h == 0 -> "$m min"
+        m == 0 -> "$h h"
+        else -> "$h h ${"%02d".format(m)}"
     }
 }

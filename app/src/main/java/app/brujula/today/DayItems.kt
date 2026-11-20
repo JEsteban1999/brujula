@@ -66,7 +66,11 @@ suspend fun CalendarSource.selectedEventsAroundOrEmpty(selectedIds: Flow<Set<Lon
 
 /**
  * Eventos de los calendarios elegidos que se cruzan con [from, to), fuera del hilo principal: una sola consulta para
- * varios días. Mismas reglas de permiso y de error que [selectedEventsAroundOrEmpty].
+ * varios días. Mismas reglas de permiso y de error que [selectedEventsAroundOrEmpty]: sin permiso, sin calendarios
+ * elegidos o con un proveedor que falla da una lista vacía; la cancelación se relanza.
+ *
+ * Contrato de rango para una semana lógica con lunes `M`: `[M 04:00 − 1 día, M + 7 días 04:00)`. El día extra al inicio
+ * trae los eventos de la tarde anterior que cruzan hacia el lunes (el filtro por día lógico los asigna después).
  */
 suspend fun CalendarSource.selectedEventsBetweenOrEmpty(
     selectedIds: Flow<Set<Long>?>,

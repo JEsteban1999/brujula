@@ -110,7 +110,7 @@ fun buildWeek(monday: LocalDate, now: LocalDateTime, inputs: SnapshotInputs, sle
         // Detalle: ocurrencias del día lógico (sin spill) + externos del día lógico, los de todo el día primero.
         val logicalOwn = snap.own.filter { logicalDay(it.span.start) == day }
         val own = logicalOwn.map { o ->
-            WeekEvent.Own(o, canSkip = o.activity.repeat != Repeat.NONE && !o.activity.copyToGoogle && day >= today)
+            WeekEvent.Own(o, canSkip = o.activity.repeat != Repeat.NONE && !o.activity.copyToGoogle && o.activity.googleEventId == null && day >= today)
         }
         val external = eventsOnLogicalDay(day, inputs.external, routine.awakeWindow(day))
             .map { WeekEvent.External(it, inputs.isWork(it)) }
@@ -136,10 +136,12 @@ fun buildWeek(monday: LocalDate, now: LocalDateTime, inputs: SnapshotInputs, sle
     val counted = days.filter { !it.rest && (it.day <= today) }
     val futureWeek = monday > today
     val averaged = if (futureWeek) days.filter { !it.rest } else counted
-    val avg = if (averaged.isEmpty()) null else Math.round(averaged.sumOf { it.workMinutes }.toDouble() / averaged.size).toInt()
+    val total = averaged.sumOf { it.workMinutes }
+    // Una semana futura sin trabajo planeado no tiene promedio que mostrar (`–`, no `0 h`).
+    val avg = if (averaged.isEmpty() || (futureWeek && total == 0)) null else Math.round(total.toDouble() / averaged.size).toInt()
     val workLabel = when {
-        avg == null -> "–"
         futureWeek -> "Planeado"
+        avg == null -> "–"
         else -> workStatusLabel(workStatus(avg, goal))
     }
 
