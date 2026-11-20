@@ -2,4 +2,5 @@
 <resources>
     <string name="app_name">Brújula</string>
     <string name="app_tagline">Hacia dónde va tu día</string>
+    <string name="widget_description">Tu bloque actual, tus hábitos y el dictado</string>
 </resources>

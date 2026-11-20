@@ -4,6 +4,7 @@ import app.brujula.core.time.Clock
 import app.brujula.routine.Routine
 import app.brujula.routine.logicalDay
 import app.brujula.routine.wakeFor
+import java.time.LocalDateTime
 import android.util.Log
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -15,6 +16,10 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+
+/** Si el tema de la app es oscuro a las [now] (la regla de Automático: desde las 21:00 hasta levantarse). */
+fun Routine.isDarkAt(now: LocalDateTime): Boolean =
+    resolveDark(themeMode, now.toLocalTime(), wakeFor(logicalDay(now)))
 
 private const val THEME_TICK_MS = 30_000L
 
@@ -60,5 +65,5 @@ fun darkFlow(
                 emit(Unit)
                 delay(tickMs)
             }
-        }.map { resolveDark(r.themeMode, clock.now().toLocalTime(), r.wakeFor(logicalDay(clock.now()))) }
+        }.map { r.isDarkAt(clock.now()) }
     }.distinctUntilChanged()

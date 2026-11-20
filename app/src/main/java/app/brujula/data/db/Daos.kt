@@ -167,6 +167,9 @@ interface HabitDao {
     )
     suspend fun deleteLastDone(habitId: Long, day: LocalDate)
 
+    @Query("SELECT COUNT(*) FROM habit_logs")
+    fun observeLogCount(): Flow<Int>
+
     @Query("SELECT reminderKey FROM habit_logs WHERE reminderKey IS NOT NULL")
     fun observeHandledKeys(): Flow<List<String>>
 }

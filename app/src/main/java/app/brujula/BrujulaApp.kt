@@ -71,6 +71,9 @@ import kotlinx.coroutines.launch
 import app.brujula.routine.logicalDay
 import app.brujula.ui.DeepLinks
 import app.brujula.ui.Routes
+import app.brujula.widget.WidgetUpdater
+import app.brujula.widget.startWidgetRefresh
+import app.brujula.widget.widgetChanges
 import java.time.LocalDate
 
 private val Context.routineDataStore by preferencesDataStore(name = "routine")
@@ -358,6 +361,7 @@ open class BrujulaApp : Application() {
         // Copias a Google pendientes (citas guardadas sin permiso, o con la copia apagada); idempotente.
         container.syncScope.launch { container.reconcileGoogleCopies() }
         launchReminderResync()
+        launchWidgetRefresh()
         launchPendingDrain()
     }
 
@@ -378,6 +382,17 @@ open class BrujulaApp : Application() {
                 override fun onLost(network: Network) { transition.onChange(false) }
             })
         }.onFailure { Log.e("BrujulaApp", "No pude vigilar la red", it) }
+    }
+
+    /** Repinta el widget (si hay uno puesto) al abrir la app y 1 s después de cada cambio de datos; sin widgets no calcula nada. */
+    private fun launchWidgetRefresh() {
+        val c = container
+        startWidgetRefresh(
+            appScope,
+            widgetChanges(c.routineRepository, c.activityRepository, c.habitRepository, c.workClassificationRepository),
+            hasWidgets = { WidgetUpdater.hasWidgets(this) },
+            update = { WidgetUpdater.updateAll(this) },
+        )
     }
 
     /** Reprograma al abrir la app y cada vez que cambian rutina, actividades, habitos o registros. */

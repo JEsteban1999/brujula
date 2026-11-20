@@ -57,6 +57,12 @@ import java.time.LocalDateTime
 
 data class HabitChip(val habitId: Long, val name: String, val icon: HabitIcon, val count: Int, val target: Int)
 
+/** Los hábitos que muestran Hoy y el widget: activos, esenciales, con meta, que tocan ese día; los dos primeros. */
+fun todayHabitChips(habits: List<app.brujula.habits.Habit>, counts: Map<Long, Int>, day: LocalDate): List<HabitChip> = habits
+    .filter { it.active && it.group == app.brujula.habits.HabitGroup.ESSENTIAL && it.dailyTarget > 0 && day.dayOfWeek in it.days }
+    .take(MAX_VISIBLE_HABITS)
+    .map { HabitChip(it.id, it.name, it.icon, counts[it.id] ?: 0, it.dailyTarget) }
+
 /** Bloque de la línea de tiempo: actividad propia o evento importado (solo lectura, "Fijo"). */
 sealed interface TimelineBlock {
     val span: TimeSpan
@@ -280,10 +286,7 @@ class TodayViewModel(
             workMinutes = minutes,
             workGoal = goal,
             workStatus = goal?.let { workStatus(minutes, it) },
-            habits = habits
-                .filter { it.active && it.group == app.brujula.habits.HabitGroup.ESSENTIAL && it.dailyTarget > 0 && day.dayOfWeek in it.days }
-                .take(MAX_VISIBLE_HABITS)
-                .map { HabitChip(it.id, it.name, it.icon, counts[it.id] ?: 0, it.dailyTarget) },
+            habits = todayHabitChips(habits, counts, day),
             timeline = timeline,
             allDay = external.filter { it.allDay },
             freeSlots = freeSlots(window, timeline.map { it.span }),
