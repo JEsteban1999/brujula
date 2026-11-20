@@ -11,6 +11,7 @@ import app.brujula.activities.occurrencesOn
 import app.brujula.container
 import app.brujula.core.time.TimeSpan
 import app.brujula.routine.awakeWindow
+import app.brujula.sleep.bedtimeNightFor
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -54,6 +55,9 @@ class NotificationActionReceiver : BroadcastReceiver() {
             ACTION_SKIP -> reminder?.habitId?.let { c.habitRepository.logSkip(it, now, originalKey) }
             ACTION_EXERCISE_YES -> reminder?.let { exerciseYes(context, it.day, now) }
             ACTION_EXERCISE_NO -> reminder?.let { c.routineRepository.markExercisePromptAnswered(it.day) }
+            ACTION_SLEEP_NOW -> if (reminder?.kind == ReminderKind.BEDTIME) {
+                bedtimeNightFor(now, reminder.day)?.let { c.sleepRepository.confirmBedtime(it, now) }
+            }
             // `Mañana lo veo`: solo cierra el aviso (ya cancelado en onReceive); sin efectos.
             ACTION_LATER -> Unit
             ACTION_SNOOZE_15 -> if (reminder != null) {
@@ -125,6 +129,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
         const val ACTION_SNOOZE_15 = "app.brujula.action.SNOOZE_15"
         const val ACTION_SKIP = "app.brujula.action.SKIP"
         const val ACTION_LATER = "app.brujula.action.LATER"
+        const val ACTION_SLEEP_NOW = "app.brujula.action.SLEEP_NOW"
         const val EXTRA_KEY = "key"
         const val EXTRA_HABIT_ID = "habitId"
         const val EXTRA_HABIT_IDS = "habitIds"
@@ -135,6 +140,6 @@ class NotificationActionReceiver : BroadcastReceiver() {
         const val EXTRA_TITLE = "title"
         const val EXTRA_BODY = "body"
         const val SNOOZE_SUFFIX = ":s"
-        private val ACTIONS = setOf(ACTION_DONE, ACTION_SNOOZE_15, ACTION_SKIP, ACTION_EXERCISE_YES, ACTION_EXERCISE_NO, ACTION_LATER)
+        private val ACTIONS = setOf(ACTION_DONE, ACTION_SNOOZE_15, ACTION_SKIP, ACTION_EXERCISE_YES, ACTION_EXERCISE_NO, ACTION_LATER, ACTION_SLEEP_NOW)
     }
 }

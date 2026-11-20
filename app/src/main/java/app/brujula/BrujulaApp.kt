@@ -27,6 +27,8 @@ import app.brujula.claude.PlanContext
 import app.brujula.claude.PlanContextProvider
 import app.brujula.claude.lunchWindow
 import app.brujula.planning.BedtimeSource
+import app.brujula.sleep.SleepRepository
+import app.brujula.sleep.wakeNightFor
 import app.brujula.planning.DaySnapshotProvider
 import app.brujula.planning.ProposalExecutor
 import app.brujula.planning.ProposalLock
@@ -129,6 +131,9 @@ class AppContainer(val context: Context) {
 
     /** Propuestas de Claude guardadas (D1). */
     val proposalRepository: ProposalRepository by lazy { ProposalRepository(database.proposalDao()) }
+
+    /** Sueño real de cada noche (D1/D2). */
+    val sleepRepository: SleepRepository by lazy { SleepRepository(database.sleepDao()) }
 
     /** Nota de la tarjeta de Claude en Hoy (D15). */
     val claudeNotes: ClaudeNotes by lazy { ClaudeNotes(context.applicationContext.routineDataStore) }
@@ -341,3 +346,10 @@ open class BrujulaApp : Application() {
 
 val Context.container: AppContainer
     get() = (applicationContext as BrujulaApp).container
+
+/** Primera apertura de la mañana (D2): guarda `wakeAt` de la noche anterior, una sola vez. */
+suspend fun AppContainer.recordWakeIfMorning() {
+    val now = clock.now()
+    val night = wakeNightFor(now, routineRepository.routine.first()) ?: return
+    sleepRepository.recordWake(night, now)
+}

@@ -182,4 +182,59 @@ class MigrationTest {
         mid.close()
         assertV5Data(helper.runMigrationsAndValidate("mig15.db", 5, true))
     }
+
+    private val overrideSql = "INSERT INTO activity_overrides(activityId, day, start, durationMin, skipped) VALUES (1, '2026-11-20', '2026-11-20T18:00', 30, 0)"
+    private val proposalSql = "INSERT INTO proposals(day, createdAt, status, request, summary, payload) " +
+        "VALUES ('2026-11-20', '2026-11-19T22:00', 'PENDING', NULL, 'resumen', '{}')"
+
+    private fun assertV6Data(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.query("SELECT title, origin, googleEventId, copyToGoogle FROM activities").use { c ->
+            assertEquals(1, c.count); c.moveToFirst()
+            assertEquals("Dentista", c.getString(0)); assertEquals("UNKNOWN", c.getString(1))
+            assertEquals(77, c.getInt(2)); assertEquals(1, c.getInt(3))
+        }
+        db.query("SELECT name, schedule FROM habits").use { c ->
+            assertEquals(1, c.count); c.moveToFirst(); assertEquals("Agua", c.getString(0)); assertEquals("every:90", c.getString(1))
+        }
+        db.query("SELECT reminderKey FROM habit_logs").use { c -> assertEquals(1, c.count); c.moveToFirst(); assertEquals("k1", c.getString(0)) }
+        db.query("SELECT day FROM activity_completions WHERE activityId = 1").use { c -> assertEquals(1, c.count) }
+        db.query("SELECT `key`, source FROM work_classifications").use { c ->
+            assertEquals(1, c.count); c.moveToFirst(); assertEquals("reunion", c.getString(0)); assertEquals("USER", c.getString(1))
+        }
+        db.query("SELECT activityId, day, start, durationMin, skipped FROM activity_overrides").use { c ->
+            assertEquals(1, c.count); c.moveToFirst()
+            assertEquals("2026-11-20", c.getString(1)); assertEquals("2026-11-20T18:00", c.getString(2)); assertEquals(30, c.getInt(3))
+        }
+        db.query("SELECT status, summary, payload FROM proposals").use { c ->
+            assertEquals(1, c.count); c.moveToFirst()
+            assertEquals("PENDING", c.getString(0)); assertEquals("resumen", c.getString(1)); assertEquals("{}", c.getString(2))
+        }
+        db.query("SELECT COUNT(*) FROM sleep_records").use { c -> c.moveToFirst(); assertEquals(0, c.getInt(0)) }
+        db.execSQL("INSERT INTO sleep_records(night, bedAt, wakeAt) VALUES ('2026-11-19', '2026-11-20T00:20', NULL)")
+        db.query("SELECT night, bedAt, wakeAt FROM sleep_records").use { c ->
+            assertEquals(1, c.count); c.moveToFirst()
+            assertEquals("2026-11-19", c.getString(0)); assertEquals("2026-11-20T00:20", c.getString(1)); assertTrue(c.isNull(2))
+        }
+    }
+
+    @Test fun v5ToV6AddsSleepRecords() {
+        helper.createDatabase("mig56.db", 5).apply {
+            insertV4Rows(this)
+            execSQL(overrideSql)
+            execSQL(proposalSql)
+            close()
+        }
+        assertV6Data(helper.runMigrationsAndValidate("mig56.db", 6, true))
+    }
+
+    @Test fun v1ToV6ChainedKeepsEverything() {
+        helper.createDatabase("mig16.db", 1).apply { insertV1Rows(this); close() }
+        val mid = helper.runMigrationsAndValidate("mig16.db", 5, true)
+        mid.execSQL("INSERT INTO work_classifications(`key`, isWork, source) VALUES ('reunion', 1, 'USER')")
+        mid.execSQL("UPDATE activities SET googleEventId = 77 WHERE id = 1")
+        mid.execSQL(overrideSql)
+        mid.execSQL(proposalSql)
+        mid.close()
+        assertV6Data(helper.runMigrationsAndValidate("mig16.db", 6, true))
+    }
 }

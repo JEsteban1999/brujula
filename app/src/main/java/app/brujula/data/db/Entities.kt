@@ -131,3 +131,10 @@ fun HabitEntity.toModel() = Habit(
 )
 
 private fun habitIconOf(name: String): HabitIcon = runCatching { HabitIcon.valueOf(name) }.getOrDefault(HabitIcon.GENERIC)
+
+@Entity(tableName = "sleep_records")
+data class SleepRecordEntity(
+    @PrimaryKey val night: LocalDate,
+    val bedAt: LocalDateTime?,
+    val wakeAt: LocalDateTime?,
+)
