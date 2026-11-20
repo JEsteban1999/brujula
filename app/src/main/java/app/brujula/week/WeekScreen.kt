@@ -120,7 +120,10 @@ fun WeekScreen(
     }
 
     Box(modifier.fillMaxSize().background(c.bg)) {
+        // Datos y día elegido se leen juntos: el contenido de la lista se evalúa después y no debe mezclar
+        // una semana nueva (state.selected en vivo) con los datos de la anterior.
         val data = state.data
+        val selected = state.selected
         LazyColumn(
             Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 32.dp),
@@ -140,10 +143,12 @@ fun WeekScreen(
             if (data != null) {
                 val todayDay = data.days.firstOrNull { it.state == WeekDayState.TODAY }?.day
                 item(key = "chart") {
-                    ChartCard(data, state.selected, reduced, viewModel::select)
+                    ChartCard(data, selected, reduced, viewModel::select)
                 }
                 item(key = "totals") { TotalsRow(data.totals) }
-                val selectedDay = data.days.first { it.day == state.selected }
+                val selectedDay = data.days.firstOrNull { it.day == selected }
+                    ?: data.days.firstOrNull { it.state == WeekDayState.TODAY }
+                    ?: data.days.first()
                 item(key = "detail-header") {
                     DetailHeader(dayDetailTitle(selectedDay.day, todayDay ?: LocalDate.MIN))
                 }
